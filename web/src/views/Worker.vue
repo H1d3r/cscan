@@ -172,7 +172,7 @@
 
           <el-form-item label="服务地址">
             <code style="background: #f5f7fa; padding: 8px 12px; border-radius: 4px;">{{ installInfo.serverAddr }}</code>
-            <span style="margin-left: 10px; color: #909399; font-size: 12px;">（自动获取当前访问地址）</span>
+            <span style="margin-left: 10px; color: #909399; font-size: 12px;">（Worker 连接地址）</span>
           </el-form-item>
         </el-form>
 
@@ -183,8 +183,8 @@
             <div class="command-section">
               <p class="command-title">1. 下载配置文件：</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.serverAddr }}/static/docker-compose-worker.yaml</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.serverAddr}/static/docker-compose-worker.yaml`)">复制</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml`)">复制</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. 启动探针：</p>
@@ -195,8 +195,8 @@
 
               <p class="command-title" style="margin-top: 15px">一键执行：</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.serverAddr }}/static/docker-compose-worker.yaml && CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} docker-compose -f docker-compose-worker.yaml up -d</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.serverAddr}/static/docker-compose-worker.yaml && CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} docker-compose -f docker-compose-worker.yaml up -d`)">复制</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml && CSCAN_SERVER={{ installInfo.serverAddr }} CSCAN_KEY={{ installInfo.installKey }} docker-compose -f docker-compose-worker.yaml up -d</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml && CSCAN_SERVER=${installInfo.serverAddr} CSCAN_KEY=${installInfo.installKey} docker-compose -f docker-compose-worker.yaml up -d`)">复制</el-button>
               </div>
             </div>
           </el-tab-pane>
@@ -227,8 +227,8 @@
             <div class="command-section">
               <p class="command-title">1. 下载配置文件：</p>
               <div class="command-box">
-                <code>curl -O {{ installInfo.serverAddr }}/static/docker-compose-worker.yaml</code>
-                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.serverAddr}/static/docker-compose-worker.yaml`)">复制</el-button>
+                <code>curl -O {{ installInfo.downloadUrl }}/static/docker-compose-worker.yaml</code>
+                <el-button size="small" @click="copyToClipboard(`curl -O ${installInfo.downloadUrl}/static/docker-compose-worker.yaml`)">复制</el-button>
               </div>
 
               <p class="command-title" style="margin-top: 15px">2. 设置环境变量并启动：</p>
@@ -390,7 +390,8 @@ const installOsTab = ref('linux')
 const refreshKeyLoading = ref(false)
 const installInfo = reactive({
   installKey: '',
-  serverAddr: '',
+  serverAddr: '',    // API 服务地址（Worker 连接用）
+  downloadUrl: '',   // 下载地址（当前浏览器地址）
   commands: {}
 })
 
@@ -429,7 +430,7 @@ const filteredLogs = computed(() => {
 
 // PowerShell 命令计算属性
 const psDownloadCmd = computed(() => {
-  return `Invoke-WebRequest -Uri "${installInfo.serverAddr}/static/docker-compose-worker.yaml" -OutFile "docker-compose-worker.yaml"`
+  return `Invoke-WebRequest -Uri "${installInfo.downloadUrl}/static/docker-compose-worker.yaml" -OutFile "docker-compose-worker.yaml"`
 })
 
 const psStartCmd = computed(() => {
@@ -716,16 +717,15 @@ async function openInstallDialog() {
 
 async function loadInstallCommand() {
   try {
-    // 自动获取当前浏览器访问的服务器地址
+    // 当前浏览器访问地址（用于下载配置文件）
     const currentUrl = window.location.origin
     
-    const res = await request.post('/worker/install/command', {
-      serverAddr: currentUrl
-    })
+    const res = await request.post('/worker/install/command', {})
     if (res.code === 0) {
       installInfo.installKey = res.installKey
-      // 使用浏览器地址作为服务器地址
-      installInfo.serverAddr = currentUrl
+      // 下载地址用浏览器当前地址，API地址用后端返回的地址
+      installInfo.downloadUrl = currentUrl
+      installInfo.serverAddr = res.serverAddr ? `http://${res.serverAddr}` : currentUrl
       installInfo.commands = res.commands || {}
     } else {
       ElMessage.error(res.msg || '获取安装命令失败')

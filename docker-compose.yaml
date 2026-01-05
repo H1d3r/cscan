@@ -37,7 +37,7 @@ services:
 
   # CSCAN API 服务
   cscan-api:
-    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-api:latest
+    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-api-latest
     container_name: cscan_api
     environment:
       - TZ=Asia/Shanghai
@@ -54,7 +54,7 @@ services:
 
   # CSCAN RPC 服务
   cscan-rpc:
-    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-rpc:latest
+    image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-rpc-latest
     container_name: cscan_rpc
     environment:
       - TZ=Asia/Shanghai

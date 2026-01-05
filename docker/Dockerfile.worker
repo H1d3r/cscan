@@ -22,7 +22,18 @@ RUN CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=${VERSION}" \
 FROM docker.1ms.run/alpine:3.19
 
 # 安装运行时依赖
-RUN apk add --no-cache libpcap ca-certificates tzdata
+# 安装扫描工具和依赖（包括 libpcap 运行时库和 Chromium 用于截图）
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    unzip \
+    nmap \
+    masscan \
+    curl \
+    bind-tools \
+    libpcap \
+    chromium \
+    font-noto-cjk
 
 # 设置时区
 ENV TZ=Asia/Shanghai

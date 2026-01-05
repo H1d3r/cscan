@@ -7,6 +7,5 @@ output/
 .DS_Store
 poc/
 DEV.md
-docker-compose-arm64.yaml
 scripts/
 screenshot/
