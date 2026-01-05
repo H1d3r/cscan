@@ -26,6 +26,7 @@
 <summary>⭐ 快速开始 </summary>
 
 ```bash
+#自动选择 amd64架构 或arm64架构
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 docker-compose up -d
@@ -54,8 +55,6 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 # 5. 启动前端
 cd web; npm install; npm run dev
 ```
-
-访问 `http://localhost:3000`，默认账号 `admin / 123456`
 </details>
 
 ## License
