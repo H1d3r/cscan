@@ -5,7 +5,7 @@ web/dist/
 .vscode/
 output/
 .DS_Store
-poc/
+/poc/
 DEV.md
 scripts/
 screenshot/
