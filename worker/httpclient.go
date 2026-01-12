@@ -308,9 +308,10 @@ type HttpServiceResp struct {
 
 // HttpServiceConfig HTTP服务配置
 type HttpServiceConfig struct {
-	HttpPorts   []int  `json:"httpPorts"`
-	HttpsPorts  []int  `json:"httpsPorts"`
-	Description string `json:"description"`
+	HttpPorts    []int  `json:"httpPorts"`
+	HttpsPorts   []int  `json:"httpsPorts"`
+	NonHttpPorts []int  `json:"nonHttpPorts"`
+	Description  string `json:"description"`
 }
 
 // HttpServiceConfigResp HTTP服务配置响应

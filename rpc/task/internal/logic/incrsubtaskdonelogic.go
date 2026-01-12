@@ -132,11 +132,21 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 	// 构建通知配置列表
 	var configItems []notify.ConfigItem
 	for _, c := range configs {
-		configItems = append(configItems, notify.ConfigItem{
+		item := notify.ConfigItem{
 			Provider:        c.Provider,
 			Config:          c.Config,
 			MessageTemplate: c.MessageTemplate,
-		})
+		}
+		// 转换高危过滤配置
+		if c.HighRiskFilter != nil {
+			item.HighRiskFilter = &notify.HighRiskFilter{
+				Enabled:              c.HighRiskFilter.Enabled,
+				HighRiskFingerprints: c.HighRiskFilter.HighRiskFingerprints,
+				HighRiskPorts:        c.HighRiskFilter.HighRiskPorts,
+				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
+			}
+		}
+		configItems = append(configItems, item)
 	}
 
 	// 构建通知结果
@@ -169,7 +179,99 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 		}
 	}
 
+	// 收集高危信息（用于高危过滤判断）
+	result.HighRiskInfo = l.collectHighRiskInfo(workspaceId, mainTaskId, configItems)
+
 	// 异步发送通知
 	notify.SendNotificationAsync(l.ctx, configItems, result)
 	l.Logger.Infof("sendTaskNotification: notification queued for task %s, status=%s", mainTaskId, status)
+}
+
+// collectHighRiskInfo 收集任务的高危信息
+func (l *IncrSubTaskDoneLogic) collectHighRiskInfo(workspaceId, mainTaskId string, configs []notify.ConfigItem) *notify.HighRiskInfo {
+	// 检查是否有配置启用了高危过滤
+	hasHighRiskFilter := false
+	var allFingerprints []string
+	var allPorts []int
+	var allSeverities []string
+
+	for _, cfg := range configs {
+		if cfg.HighRiskFilter != nil && cfg.HighRiskFilter.Enabled {
+			hasHighRiskFilter = true
+			allFingerprints = append(allFingerprints, cfg.HighRiskFilter.HighRiskFingerprints...)
+			allPorts = append(allPorts, cfg.HighRiskFilter.HighRiskPorts...)
+			allSeverities = append(allSeverities, cfg.HighRiskFilter.HighRiskPocSeverities...)
+		}
+	}
+
+	// 如果没有配置启用高危过滤，不需要收集
+	if !hasHighRiskFilter {
+		return nil
+	}
+
+	info := &notify.HighRiskInfo{
+		HighRiskFingerprints:  []string{},
+		HighRiskPorts:         []int{},
+		HighRiskVulSeverities: make(map[string]int),
+	}
+
+	// 收集高危指纹（从资产的指纹中匹配）
+	if len(allFingerprints) > 0 {
+		assetModel := l.svcCtx.GetAssetModel(workspaceId)
+		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
+		if err == nil {
+			fingerprintSet := make(map[string]bool)
+			for _, fp := range allFingerprints {
+				fingerprintSet[fp] = true
+			}
+			foundFpSet := make(map[string]bool)
+			for _, asset := range assets {
+				for _, fp := range asset.Fingerprints {
+					if fingerprintSet[fp] && !foundFpSet[fp] {
+						info.HighRiskFingerprints = append(info.HighRiskFingerprints, fp)
+						foundFpSet[fp] = true
+					}
+				}
+			}
+		}
+	}
+
+	// 收集高危端口（从资产的端口中匹配）
+	if len(allPorts) > 0 {
+		assetModel := l.svcCtx.GetAssetModel(workspaceId)
+		assets, err := assetModel.FindByTaskId(l.ctx, mainTaskId)
+		if err == nil {
+			portSet := make(map[int]bool)
+			for _, port := range allPorts {
+				portSet[port] = true
+			}
+			foundPortSet := make(map[int]bool)
+			for _, asset := range assets {
+				if portSet[asset.Port] && !foundPortSet[asset.Port] {
+					info.HighRiskPorts = append(info.HighRiskPorts, asset.Port)
+					foundPortSet[asset.Port] = true
+				}
+			}
+		}
+	}
+
+	// 收集高危漏洞统计
+	if len(allSeverities) > 0 {
+		vulModel := l.svcCtx.GetVulModel(workspaceId)
+		vuls, err := vulModel.Find(l.ctx, bson.M{"task_id": mainTaskId}, 0, 0)
+		if err == nil {
+			severitySet := make(map[string]bool)
+			for _, s := range allSeverities {
+				severitySet[s] = true
+			}
+			for _, vul := range vuls {
+				if severitySet[vul.Severity] {
+					info.HighRiskVulSeverities[vul.Severity]++
+					info.HighRiskVulCount++
+				}
+			}
+		}
+	}
+
+	return info
 }

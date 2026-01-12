@@ -259,35 +259,13 @@ func filterHttpAssets(assets []*Asset) []*Asset {
 	return httpAssets
 }
 
-// isHttpAsset 判断资产是否为HTTP/HTTPS服务
-func isHttpAsset(asset *Asset) bool {
-	// 1. 优先根据IsHTTP字段判断（端口扫描阶段已设置）
-	if asset.IsHTTP {
-		return true
+// httpServiceConfig HTTP服务检测配置 - 消除特殊情况处理
+var (
+	defaultHttpServices = map[string]bool{
+		"http": true, "https": true, "http-proxy": true,
+		"https-alt": true, "http-alt": true, "ajp12": true, "esmagent": true,
 	}
-	
-	// 2. 根据Service字段判断
-	service := strings.ToLower(asset.Service)
-	
-	// 使用全局HTTP服务检查器（如果已设置）
-	if globalHttpServiceChecker != nil {
-		isHttp, found := globalHttpServiceChecker.IsHttpService(service)
-		if found {
-			return isHttp
-		}
-	} else {
-		// 回退到默认的HTTP服务列表
-		defaultHttpServices := map[string]bool{
-			"http": true, "https": true, "http-proxy": true,
-			"https-alt": true, "http-alt": true, "ajp12": true, "esmagent": true,
-		}
-		if defaultHttpServices[service] {
-			return true
-		}
-	}
-	
-	// 3. 明确的非HTTP服务，直接排除
-	nonHttpServices := map[string]bool{
+	nonHttpServices = map[string]bool{
 		"ssh": true, "ftp": true, "smtp": true, "pop3": true, "imap": true,
 		"mysql": true, "mssql": true, "oracle": true, "postgresql": true, "redis": true,
 		"mongodb": true, "memcached": true, "elasticsearch": true,
@@ -295,47 +273,104 @@ func isHttpAsset(asset *Asset) bool {
 		"rdp": true, "vnc": true, "telnet": true, "rpc": true,
 		"ntp": true, "tftp": true, "sip": true, "rtsp": true,
 	}
-	
-	// 使用全局检查器判断非HTTP服务
-	if globalHttpServiceChecker != nil {
-		isHttp, found := globalHttpServiceChecker.IsHttpService(service)
-		if found && !isHttp {
-			return false
-		}
-	} else if nonHttpServices[service] {
-		return false
-	}
-	
-	// 4. 常见HTTP端口（高置信度）
-	commonHttpPorts := map[int]bool{
+	commonHttpPorts = map[int]bool{
 		80: true, 443: true, 8080: true, 8443: true, 8000: true, 8888: true,
 		8081: true, 8082: true, 8083: true, 8084: true, 8085: true,
 		9000: true, 9001: true, 9090: true, 9443: true,
 		3000: true, 3001: true, 4000: true, 5000: true, 5001: true,
-		7001: true, 7002: true, // WebLogic
-		8180: true,             // Tomcat
+		7001: true, 7002: true, 8180: true,
 		8280: true, 8380: true, 8480: true, 8580: true,
 		10000: true, 10001: true, 10080: true, 10443: true,
-		8800: true, 8880: true, 8881: true,
-		18080: true, 28080: true,
+		8800: true, 8880: true, 8881: true, 18080: true, 28080: true,
 	}
-	if commonHttpPorts[asset.Port] {
-		return true
+)
+
+// isHttpAsset 判断资产是否为HTTP/HTTPS服务
+// 重构：使用策略链模式消除多层if/else
+func isHttpAsset(asset *Asset) bool {
+	// 策略链：按优先级依次检查
+	checks := []func(*Asset) (isHttp bool, decided bool){
+		checkByIsHTTPFlag,
+		checkByGlobalChecker,
+		checkByNonHttpPorts,      // 新增：检查非HTTP端口（优先排除）
+		checkByDefaultServices,
+		checkByNonHttpServices,
+		checkByCommonPorts,
+		checkByEmptyService,
 	}
-	
-	// 5. 如果Service为空且端口未知，标记为需要探测
-	// 这些资产会在后续通过实际HTTP请求来验证
-	if service == "" {
-		return true // 让fingerprint函数去实际探测
+
+	for _, check := range checks {
+		if isHttp, decided := check(asset); decided {
+			return isHttp
+		}
 	}
-	
 	return false
+}
+
+func checkByIsHTTPFlag(asset *Asset) (bool, bool) {
+	if asset.IsHTTP {
+		return true, true
+	}
+	return false, false
+}
+
+func checkByGlobalChecker(asset *Asset) (bool, bool) {
+	if globalHttpServiceChecker == nil {
+		return false, false
+	}
+	service := strings.ToLower(asset.Service)
+	if isHttp, found := globalHttpServiceChecker.IsHttpService(service); found {
+		return isHttp, true
+	}
+	return false, false
+}
+
+// checkByNonHttpPorts 检查是否在配置的非HTTP端口列表中
+func checkByNonHttpPorts(asset *Asset) (bool, bool) {
+	if globalHttpServiceChecker == nil {
+		return false, false
+	}
+	if globalHttpServiceChecker.IsNonHttpPort(asset.Port) {
+		return false, true // 明确排除
+	}
+	return false, false
+}
+
+func checkByDefaultServices(asset *Asset) (bool, bool) {
+	service := strings.ToLower(asset.Service)
+	if defaultHttpServices[service] {
+		return true, true
+	}
+	return false, false
+}
+
+func checkByNonHttpServices(asset *Asset) (bool, bool) {
+	service := strings.ToLower(asset.Service)
+	if nonHttpServices[service] {
+		return false, true
+	}
+	return false, false
+}
+
+func checkByCommonPorts(asset *Asset) (bool, bool) {
+	if commonHttpPorts[asset.Port] {
+		return true, true
+	}
+	return false, false
+}
+
+func checkByEmptyService(asset *Asset) (bool, bool) {
+	if strings.ToLower(asset.Service) == "" {
+		return true, true // 让fingerprint函数去实际探测
+	}
+	return false, false
 }
 
 // HttpServiceChecker HTTP服务检查器接口
 type HttpServiceChecker interface {
 	IsHttpService(serviceName string) (isHttp bool, found bool)
 	IsHttpPort(port int) bool
+	IsNonHttpPort(port int) bool
 	CheckIsHttp(serviceName string, port int) bool
 }
 

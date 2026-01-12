@@ -122,7 +122,8 @@ func (e *DomainScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 		subfinderOpts.MaxEnumerationTime = 10
 	}
 
-	var allAssets []*scanner.Asset
+	var subfinderAssets []*scanner.Asset
+	var bruteforceAssets []*scanner.Asset
 
 	// 执行 Subfinder（如果启用）
 	if config.Subfinder {
@@ -138,7 +139,7 @@ func (e *DomainScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 			if err != nil {
 				w.taskLog(task.TaskId, LevelError, "Subfinder error: %v", err)
 			} else if result != nil && len(result.Assets) > 0 {
-				allAssets = append(allAssets, result.Assets...)
+				subfinderAssets = result.Assets
 				w.taskLog(task.TaskId, LevelInfo, "Subfinder: found %d subdomains", len(result.Assets))
 			}
 		}
@@ -148,8 +149,16 @@ func (e *DomainScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	if ctrl := w.checkTaskControl(ctx.Ctx, task.TaskId); ctrl == "STOP" {
 		return &PhaseResult{Stopped: true}, nil
 	} else if ctrl == "PAUSE" {
-		return &PhaseResult{Paused: true, Assets: allAssets}, nil
+		return &PhaseResult{Paused: true, Assets: subfinderAssets}, nil
 	}
+
+	// 执行子域名暴力破解（如果配置了字典）
+	if len(config.SubdomainDictIds) > 0 {
+		bruteforceAssets = e.executeBruteforce(ctx, config, domainTaskLogger)
+	}
+
+	// 合并结果
+	allAssets := e.mergeAssets(subfinderAssets, bruteforceAssets)
 
 	// 保存结果
 	if len(allAssets) > 0 {
@@ -158,6 +167,130 @@ func (e *DomainScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	}
 
 	return &PhaseResult{Assets: allAssets}, nil
+}
+
+// executeBruteforce 执行子域名暴力破解
+func (e *DomainScanExecutor) executeBruteforce(ctx *TaskContext, config *scheduler.DomainScanConfig, taskLogger func(string, string, ...interface{})) []*scanner.Asset {
+	w := e.worker
+	task := ctx.Task
+
+	w.taskLog(task.TaskId, LevelInfo, "Starting subdomain bruteforce with %d dicts", len(config.SubdomainDictIds))
+
+	// 获取字典内容
+	dictResp, err := w.httpClient.GetSubdomainDicts(ctx.Ctx, config.SubdomainDictIds)
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "Bruteforce: get dicts failed: %v", err)
+		return nil
+	}
+	if dictResp == nil || len(dictResp.Dicts) == 0 {
+		return nil
+	}
+
+	// 合并所有字典内容
+	allWords := e.mergeDictWords(dictResp.Dicts, task.TaskId)
+	if len(allWords) == 0 {
+		return nil
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "Bruteforce: total %d unique words", len(allWords))
+
+	// 构建暴力破解选项
+	bruteforceOpts := &scanner.SubdomainBruteforceOptions{
+		Wordlist:       strings.Join(allWords, "\n"),
+		Threads:        w.config.Concurrency * 2,
+		Timeout:        5,
+		WildcardFilter: config.RemoveWildcard,
+		ResolveDNS:     config.ResolveDNS,
+		Concurrent:     w.config.Concurrency * 10,
+		RecursiveBrute: config.RecursiveBrute,
+		RecursiveDepth: 2,
+		WildcardDetect: config.WildcardDetect,
+		SubdomainCrawl: config.SubdomainCrawl,
+		TakeoverCheck:  config.TakeoverCheck,
+	}
+
+	// 获取递归爆破字典
+	if config.RecursiveBrute && len(config.RecursiveDictIds) > 0 {
+		recursiveDictResp, err := w.httpClient.GetSubdomainDicts(ctx.Ctx, config.RecursiveDictIds)
+		if err == nil && recursiveDictResp != nil && len(recursiveDictResp.Dicts) > 0 {
+			recursiveWords := e.mergeDictWords(recursiveDictResp.Dicts, task.TaskId)
+			if len(recursiveWords) > 0 {
+				bruteforceOpts.RecursiveWordlist = strings.Join(recursiveWords, "\n")
+				w.taskLog(task.TaskId, LevelInfo, "Bruteforce: recursive wordlist total %d unique words", len(recursiveWords))
+			}
+		}
+	}
+
+	// 执行暴力破解
+	bruteScanner, ok := w.scanners["subdomain_bruteforce"]
+	if !ok {
+		w.taskLog(task.TaskId, LevelWarn, "Subdomain bruteforce scanner not available")
+		return nil
+	}
+
+	bruteResult, err := bruteScanner.Scan(ctx.Ctx, &scanner.ScanConfig{
+		Target:      ctx.Target,
+		WorkspaceId: task.WorkspaceId,
+		MainTaskId:  task.MainTaskId,
+		Options:     bruteforceOpts,
+		TaskLogger:  taskLogger,
+	})
+
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "Bruteforce error: %v", err)
+		return nil
+	}
+
+	if bruteResult != nil && len(bruteResult.Assets) > 0 {
+		w.taskLog(task.TaskId, LevelInfo, "Bruteforce: found %d subdomains", len(bruteResult.Assets))
+		return bruteResult.Assets
+	}
+
+	return nil
+}
+
+// mergeDictWords 合并字典内容
+func (e *DomainScanExecutor) mergeDictWords(dicts []SubdomainDictItem, taskId string) []string {
+	wordSet := make(map[string]bool)
+	var allWords []string
+
+	for _, dict := range dicts {
+		lines := strings.Split(dict.Content, "\n")
+		for _, line := range lines {
+			word := strings.TrimSpace(line)
+			if word != "" && !strings.HasPrefix(word, "#") && !wordSet[word] {
+				wordSet[word] = true
+				allWords = append(allWords, word)
+			}
+		}
+		e.worker.taskLog(taskId, LevelInfo, "Bruteforce: loaded dict '%s'", dict.Name)
+	}
+
+	return allWords
+}
+
+// mergeAssets 合并资产列表（去重）
+func (e *DomainScanExecutor) mergeAssets(subfinderAssets, bruteforceAssets []*scanner.Asset) []*scanner.Asset {
+	assetMap := make(map[string]*scanner.Asset)
+
+	for _, asset := range subfinderAssets {
+		if asset.Host != "" {
+			assetMap[asset.Host] = asset
+		}
+	}
+	for _, asset := range bruteforceAssets {
+		if asset.Host != "" {
+			if _, exists := assetMap[asset.Host]; !exists {
+				assetMap[asset.Host] = asset
+			}
+		}
+	}
+
+	var result []*scanner.Asset
+	for _, asset := range assetMap {
+		result = append(result, asset)
+	}
+	return result
 }
 
 // PortScanExecutor 端口扫描阶段执行器

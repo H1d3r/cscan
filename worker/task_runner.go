@@ -137,6 +137,41 @@ func (r *TaskRunner) Log(level, format string, args ...interface{}) {
 	}
 }
 
+// TaskControlAction 任务控制动作
+type TaskControlAction string
+
+const (
+	TaskControlContinue TaskControlAction = "CONTINUE"
+	TaskControlStop     TaskControlAction = "STOP"
+	TaskControlPause    TaskControlAction = "PAUSE"
+	TaskControlCancel   TaskControlAction = "CANCEL"
+)
+
+// checkTaskControlSignal 统一的任务控制检查 - 消除重复的控制检查代码
+func (r *TaskRunner) checkTaskControlSignal(ctx context.Context, worker *Worker, taskId string) TaskControlAction {
+	// 检查context取消
+	select {
+	case <-ctx.Done():
+		return TaskControlCancel
+	default:
+	}
+
+	// 检查worker控制信号
+	if worker == nil {
+		return TaskControlContinue
+	}
+
+	ctrl := worker.checkTaskControl(ctx, taskId)
+	switch ctrl {
+	case "STOP":
+		return TaskControlStop
+	case "PAUSE":
+		return TaskControlPause
+	default:
+		return TaskControlContinue
+	}
+}
+
 // Run 执行任务（统一入口）
 func (r *TaskRunner) Run(ctx context.Context, task *scheduler.TaskInfo, worker *Worker) (*TaskResult, error) {
 	startTime := time.Now()
@@ -152,27 +187,24 @@ func (r *TaskRunner) Run(ctx context.Context, task *scheduler.TaskInfo, worker *
 
 	// 3. 按顺序执行各阶段
 	for _, phaseConfig := range phases {
-		// 检查上下文是否已取消
-		select {
-		case <-ctx.Done():
+		// 统一的控制检查
+		switch r.checkTaskControlSignal(ctx, worker, task.TaskId) {
+		case TaskControlCancel:
 			return r.buildResult(taskCtx, startTime, ctx.Err())
-		default:
+		case TaskControlStop:
+			r.Log(LevelInfo, "Task %s stopped before phase %s", task.TaskId, phaseConfig.Name)
+			return r.buildResult(taskCtx, startTime, nil)
+		case TaskControlPause:
+			r.Log(LevelInfo, "Task %s paused before phase %s", task.TaskId, phaseConfig.Name)
+			if worker != nil {
+				worker.saveTaskProgress(ctx, task, r.convertCompletedPhases(taskCtx.CompletedPhases), taskCtx.Assets)
+			}
+			return r.buildResult(taskCtx, startTime, nil)
 		}
 
-		// 检查任务控制信号
+		// 更新进度
 		if worker != nil {
-			ctrl := worker.checkTaskControl(ctx, task.TaskId)
-			if ctrl == "STOP" {
-				r.Log(LevelInfo, "Task %s stopped before phase %s", task.TaskId, phaseConfig.Name)
-				return r.buildResult(taskCtx, startTime, nil)
-			}
-			if ctrl == "PAUSE" {
-				r.Log(LevelInfo, "Task %s paused before phase %s", task.TaskId, phaseConfig.Name)
-				if worker != nil {
-					worker.saveTaskProgress(ctx, task, r.convertCompletedPhases(taskCtx.CompletedPhases), taskCtx.Assets)
-				}
-				return r.buildResult(taskCtx, startTime, nil)
-			}
+			worker.updateTaskProgressWithPhase(ctx, task.TaskId, phaseConfig.ProgressStart, phaseConfig.Name+"中", phaseConfig.Name)
 		}
 
 		// 执行阶段
@@ -209,6 +241,11 @@ func (r *TaskRunner) Run(ctx context.Context, task *scheduler.TaskInfo, worker *
 
 		// 标记阶段完成
 		taskCtx.CompletedPhases[phaseConfig.Phase] = true
+
+		// 递增子任务完成计数
+		if worker != nil {
+			worker.incrSubTaskDone(ctx, task, phaseConfig.Name)
+		}
 	}
 
 	return r.buildResult(taskCtx, startTime, nil)

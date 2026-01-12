@@ -19,6 +19,16 @@ type NotifyResult struct {
 	StartTime   time.Time `json:"startTime"`
 	EndTime     time.Time `json:"endTime"`
 	WorkspaceId string    `json:"workspaceId"`
+	// 高危检测结果
+	HighRiskInfo *HighRiskInfo `json:"highRiskInfo,omitempty"`
+}
+
+// HighRiskInfo 高危检测信息
+type HighRiskInfo struct {
+	HighRiskFingerprints []string `json:"highRiskFingerprints"` // 发现的高危指纹
+	HighRiskPorts        []int    `json:"highRiskPorts"`        // 发现的高危端口
+	HighRiskVulCount     int      `json:"highRiskVulCount"`     // 高危漏洞数量
+	HighRiskVulSeverities map[string]int `json:"highRiskVulSeverities"` // 按严重级别统计: critical->5, high->10
 }
 
 // Provider 通知提供者接口

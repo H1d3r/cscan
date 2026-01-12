@@ -401,19 +401,21 @@
             <el-card>
               <template #header>
                 <div class="card-header">
-                  <span>Web端口配置</span>
+                  <span>端口配置</span>
                   <el-button type="primary" size="small" @click="handleSaveWebPortsConfig" :loading="webPortsSaving">
                     <el-icon><Check /></el-icon>保存配置
                   </el-button>
                 </div>
               </template>
               <p class="tip-text">
-                配置默认的 HTTP/HTTPS 端口列表。当端口扫描无法识别服务名称时，会根据端口号判断是否为 Web 服务。
+                配置 Web 端口和非 Web 端口列表。当端口扫描无法识别服务名称时，会根据端口号判断是否进行指纹扫描。
                 <br/>
                 <span style="color: #e6a23c">注意：每次扫描前会实时从数据库获取最新配置，修改后立即生效。</span>
               </p>
               
               <el-form :model="webPortsConfig" label-width="120px" v-loading="webPortsLoading" class="web-ports-form">
+                <el-divider content-position="left">Web 端口（会进行指纹扫描）</el-divider>
+                
                 <el-form-item label="HTTP端口">
                   <div class="ports-input-wrapper">
                     <el-input
@@ -444,6 +446,25 @@
                   <div class="form-tip">常见HTTPS端口：443, 8443, 9443, 4443 等</div>
                 </el-form-item>
                 
+                <el-divider content-position="left">非 Web 端口（明确排除，不进行指纹扫描）</el-divider>
+                
+                <el-form-item label="非Web端口">
+                  <div class="ports-input-wrapper">
+                    <el-input
+                      v-model="webPortsConfig.nonHttpPortsText"
+                      type="textarea"
+                      :rows="5"
+                      placeholder="输入非Web端口，多个端口用逗号、空格或换行分隔，如: 22, 135, 445, 3306"
+                    />
+                    <div class="ports-count">
+                      共 {{ parsePortsCount(webPortsConfig.nonHttpPortsText) }} 个端口
+                    </div>
+                  </div>
+                  <div class="form-tip">
+                    常见非Web端口：22(SSH), 23(Telnet), 25(SMTP), 110(POP3), 143(IMAP), 135/139/445(Windows), 3306(MySQL), 6379(Redis) 等
+                  </div>
+                </el-form-item>
+                
                 <el-form-item label="描述">
                   <el-input v-model="webPortsConfig.description" placeholder="可选描述信息" />
                 </el-form-item>
@@ -454,6 +475,7 @@
                 <el-button size="small" @click="resetWebPortsToDefault">恢复默认配置</el-button>
                 <el-button size="small" @click="addCommonHttpPorts">添加常用HTTP端口</el-button>
                 <el-button size="small" @click="addCommonHttpsPorts">添加常用HTTPS端口</el-button>
+                <el-button size="small" @click="addCommonNonHttpPorts">添加常用非Web端口</el-button>
               </div>
             </el-card>
           </el-tab-pane>
@@ -1202,13 +1224,33 @@ SpringBoot-Actuator:
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, Delete, Upload, Search, Download, Operation, Loading, Check } from '@element-plus/icons-vue'
 import { getFingerprintList, saveFingerprint, deleteFingerprint, getFingerprintCategories, syncFingerprints, updateFingerprintEnabled, batchUpdateFingerprintEnabled, importFingerprints, clearCustomFingerprints, validateFingerprint as validateFingerprintApi, batchValidateFingerprints, matchFingerprintAssets, getHttpServiceMappingList, saveHttpServiceMapping, deleteHttpServiceMapping, getHttpServiceConfig, saveHttpServiceConfig, getActiveFingerprintList, saveActiveFingerprint, deleteActiveFingerprint, importActiveFingerprints, exportActiveFingerprints, clearActiveFingerprints, validateActiveFingerprint } from '@/api/fingerprint'
 import { saveAs } from 'file-saver'
 
-const activeTab = ref('builtin')
+const route = useRoute()
+const router = useRouter()
+
+// 有效的tab名称
+const validTabs = ['builtin', 'custom', 'activeFingerprint', 'httpServiceMapping']
+
+// 从URL获取初始tab
+const getInitialTab = () => {
+  const tab = route.query.tab
+  return validTabs.includes(tab) ? tab : 'builtin'
+}
+
+const activeTab = ref(getInitialTab())
+
+// 监听路由变化，更新activeTab
+watch(() => route.query.tab, (newTab) => {
+  if (validTabs.includes(newTab) && newTab !== activeTab.value) {
+    activeTab.value = newTab
+  }
+})
 
 // 批量操作
 const batchEnabledLoading = ref(false)
@@ -1346,12 +1388,33 @@ const webPortsSaving = ref(false)
 const webPortsConfig = reactive({
   httpPortsText: '',
   httpsPortsText: '',
+  nonHttpPortsText: '',
   description: ''
 })
 
 // 默认端口配置
 const defaultHttpPorts = [80, 8080, 8000, 8888, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 9000, 9001, 9080, 3000, 3001, 5000, 5001, 8008, 8009, 8181, 8200, 8300, 8400, 8500, 8600, 8800, 8880, 8983, 9090, 9091, 9200, 9300, 10000]
 const defaultHttpsPorts = [443, 8443, 9443, 4443, 10443]
+const defaultNonHttpPorts = [
+  // 远程管理
+  22, 23, 3389, 5900, 5901, 5902,
+  // 文件传输
+  20, 21, 69,
+  // 邮件服务
+  25, 110, 143, 465, 587, 993, 995,
+  // 数据库
+  1433, 1521, 3306, 5432, 6379, 27017, 9042,
+  // 消息队列
+  5672, 6650, 9092,
+  // 目录服务
+  389, 636,
+  // DNS
+  53,
+  // Windows服务
+  135, 137, 138, 139, 445,
+  // 其他
+  111, 161, 162, 514, 1080, 1194, 1883, 2049, 2181, 3268, 3269, 11211
+]
 
 // 主动扫描指纹
 const activeFingerprints = ref([])
@@ -1422,11 +1485,19 @@ const relatedPassiveRules = {
 }
 
 onMounted(() => {
+  // 如果URL没有tab参数，添加默认的tab参数
+  if (!route.query.tab) {
+    router.replace({ query: { ...route.query, tab: activeTab.value } })
+  }
   loadCategories()
-  loadBuiltinFingerprints()
+  // 根据当前tab加载数据
+  handleTabChange(activeTab.value)
 })
 
 function handleTabChange(tab) {
+  // Tab切换时更新URL
+  router.replace({ query: { ...route.query, tab: tab } })
+  
   if (tab === 'builtin' && builtinFingerprints.value.length === 0) {
     loadBuiltinFingerprints()
   } else if (tab === 'custom' && customFingerprints.value.length === 0) {
@@ -2259,6 +2330,7 @@ async function loadWebPortsConfig() {
       const data = res.data
       webPortsConfig.httpPortsText = (data.httpPorts || []).join(', ')
       webPortsConfig.httpsPortsText = (data.httpsPorts || []).join(', ')
+      webPortsConfig.nonHttpPortsText = (data.nonHttpPorts || []).join(', ')
       webPortsConfig.description = data.description || ''
     }
   } catch (e) {
@@ -2288,9 +2360,10 @@ function parsePortsCount(text) {
 async function handleSaveWebPortsConfig() {
   const httpPorts = parsePortsText(webPortsConfig.httpPortsText)
   const httpsPorts = parsePortsText(webPortsConfig.httpsPortsText)
+  const nonHttpPorts = parsePortsText(webPortsConfig.nonHttpPortsText)
   
   if (httpPorts.length === 0 && httpsPorts.length === 0) {
-    ElMessage.warning('请至少配置一个端口')
+    ElMessage.warning('请至少配置一个Web端口')
     return
   }
   
@@ -2299,6 +2372,7 @@ async function handleSaveWebPortsConfig() {
     const res = await saveHttpServiceConfig({
       httpPorts,
       httpsPorts,
+      nonHttpPorts,
       description: webPortsConfig.description
     })
     if (res.code === 0) {
@@ -2306,6 +2380,7 @@ async function handleSaveWebPortsConfig() {
       // 更新显示的文本（格式化后的）
       webPortsConfig.httpPortsText = httpPorts.join(', ')
       webPortsConfig.httpsPortsText = httpsPorts.join(', ')
+      webPortsConfig.nonHttpPortsText = nonHttpPorts.join(', ')
     } else {
       ElMessage.error(res.msg || '保存失败')
     }
@@ -2318,7 +2393,8 @@ async function handleSaveWebPortsConfig() {
 function resetWebPortsToDefault() {
   webPortsConfig.httpPortsText = defaultHttpPorts.join(', ')
   webPortsConfig.httpsPortsText = defaultHttpsPorts.join(', ')
-  webPortsConfig.description = '默认HTTP服务端口配置'
+  webPortsConfig.nonHttpPortsText = defaultNonHttpPorts.join(', ')
+  webPortsConfig.description = '默认端口配置'
   ElMessage.info('已恢复默认配置，请点击保存生效')
 }
 
@@ -2338,6 +2414,15 @@ function addCommonHttpsPorts() {
   const newPorts = [...new Set([...currentPorts, ...commonPorts])].sort((a, b) => a - b)
   webPortsConfig.httpsPortsText = newPorts.join(', ')
   ElMessage.info('已添加常用HTTPS端口，请点击保存生效')
+}
+
+// 添加常用非Web端口
+function addCommonNonHttpPorts() {
+  const commonPorts = [22, 23, 25, 110, 143, 135, 139, 445, 3306, 3389, 5432, 6379, 27017]
+  const currentPorts = parsePortsText(webPortsConfig.nonHttpPortsText)
+  const newPorts = [...new Set([...currentPorts, ...commonPorts])].sort((a, b) => a - b)
+  webPortsConfig.nonHttpPortsText = newPorts.join(', ')
+  ElMessage.info('已添加常用非Web端口，请点击保存生效')
 }
 
 // ==================== 主动扫描指纹相关方法 ====================

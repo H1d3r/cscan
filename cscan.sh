@@ -348,9 +348,11 @@ upgrade_cscan() {
     info "正在重启服务..."
     $COMPOSE_CMD up -d "${SERVICES[@]}" || abort "重启服务失败"
     
-    # 清理旧镜像
-    info "正在清理旧镜像..."
-    docker image prune -f >/dev/null 2>&1
+    # 清理旧的 CSCAN 镜像（只清理 cscan 相关的悬空镜像）
+    info "正在清理旧的 CSCAN 镜像..."
+    docker images --filter "dangling=true" --format "{{.Repository}}:{{.Tag}} {{.ID}}" 2>/dev/null | \
+        grep -E "registry.cn-hangzhou.aliyuncs.com/txf7/cscan-" | \
+        awk '{print $2}' | xargs -r docker rmi 2>/dev/null || true
     
     wait_for_healthy
     

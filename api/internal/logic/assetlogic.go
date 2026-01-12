@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 	"cscan/model"
@@ -224,14 +225,15 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 	var total int64
 	var assets []model.Asset
 
-	// 如果 workspaceId 为空，查询所有工作空间
-	if workspaceId == "" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.Find(l.ctx, bson.M{}, 1, 100)
-		
+	// 获取需要查询的工作空间列表
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	// 如果查询多个工作空间
+	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
 		// 收集所有工作空间的数据
 		var allAssets []model.Asset
-		for _, ws := range workspaces {
-			assetModel := l.svcCtx.GetAssetModel(ws.Id.Hex())
+		for _, wsId := range wsIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
 			wsTotal, _ := assetModel.Count(l.ctx, filter)
 			total += wsTotal
 			
@@ -389,10 +391,11 @@ func (l *AssetStatLogic) AssetStat(workspaceId string) (resp *types.AssetStatRes
 	var topIconHash []types.IconHashStatItem
 	var riskDistribution map[string]int
 
-	// 如果 workspaceId 为空，统计所有工作空间
-	if workspaceId == "" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.Find(l.ctx, bson.M{}, 1, 100)
-		
+	// 获取需要查询的工作空间列表
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	// 如果查询多个工作空间
+	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
 		portMap := make(map[int]int)
 		serviceMap := make(map[string]int)
 		appMap := make(map[string]int)
@@ -400,8 +403,8 @@ func (l *AssetStatLogic) AssetStat(workspaceId string) (resp *types.AssetStatRes
 		iconHashMap := make(map[string]*types.IconHashStatItem)
 		riskMap := make(map[string]int)
 		
-		for _, ws := range workspaces {
-			assetModel := l.svcCtx.GetAssetModel(ws.Id.Hex())
+		for _, wsId := range wsIds {
+			assetModel := l.svcCtx.GetAssetModel(wsId)
 			
 			wsTotal, _ := assetModel.Count(l.ctx, bson.M{})
 			totalAsset += wsTotal

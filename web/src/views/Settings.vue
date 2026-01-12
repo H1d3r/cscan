@@ -7,7 +7,7 @@
         </div>
       </template>
       
-      <el-tabs v-model="activeTab" tab-position="left" class="settings-tabs">
+      <el-tabs v-model="activeTab" tab-position="left" class="settings-tabs" @tab-change="handleSettingsTabChange">
         <!-- 在线API配置 -->
         <el-tab-pane label="在线API配置" name="onlineapi">
           <div class="tab-content">
@@ -164,7 +164,7 @@
         <el-tab-pane label="通知配置" name="notify">
           <div class="tab-content">
             <el-alert type="info" :closable="false" style="margin-bottom: 20px">
-              <template #title>配置任务完成通知，支持邮件、飞书、钉钉、企微、Slack、Discord、Telegram、Teams、Gotify、Webhook等渠道</template>
+              <template #title>配置任务完成通知，支持邮件、飞书、钉钉、企微、Slack、Discord、Telegram、Teams、Gotify、Webhook等渠道。可配置高危过滤，仅在检测到高危项时通知。</template>
             </el-alert>
             
             <div class="tab-action-bar">
@@ -178,6 +178,12 @@
               <el-table-column label="渠道" width="140">
                 <template #default="{ row }">
                   <el-tag>{{ getProviderName(row.provider) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="高危过滤" width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.highRiskFilter && row.highRiskFilter.enabled" type="warning" size="small">已启用</el-tag>
+                  <el-tag v-else type="info" size="small">全部通知</el-tag>
                 </template>
               </el-table-column>
               <el-table-column prop="status" label="状态" width="100">
@@ -304,7 +310,7 @@
     </el-dialog>
 
     <!-- 通知配置对话框 -->
-    <el-dialog v-model="notifyDialogVisible" :title="notifyForm.id ? '编辑通知配置' : '添加通知渠道'" width="600px">
+    <el-dialog v-model="notifyDialogVisible" :title="notifyForm.id ? '编辑通知配置' : '添加通知渠道'" width="700px">
       <el-form ref="notifyFormRef" :model="notifyForm" :rules="notifyRules" label-width="120px">
         <el-form-item label="渠道类型" prop="provider">
           <el-select v-model="notifyForm.provider" placeholder="请选择通知渠道" @change="handleProviderChange" :disabled="!!notifyForm.id">
@@ -367,6 +373,64 @@
           </el-form-item>
         </template>
         
+        <!-- 高危过滤配置 -->
+        <el-divider content-position="left">高危过滤配置</el-divider>
+        <el-form-item label="启用高危过滤">
+          <el-switch v-model="notifyForm.highRiskFilter.enabled" />
+          <span style="color: #909399; font-size: 12px; margin-left: 10px">
+            关闭时全部通知，开启后仅在检测到配置的高危项时通知
+          </span>
+        </el-form-item>
+        
+        <template v-if="notifyForm.highRiskFilter.enabled">
+          <el-form-item label="高危指纹">
+            <el-select 
+              v-model="notifyForm.highRiskFilter.highRiskFingerprints" 
+              multiple 
+              filterable 
+              allow-create
+              default-first-option
+              placeholder="选择或输入高危指纹名称"
+              style="width: 100%"
+            >
+              <el-option v-for="fp in commonFingerprints" :key="fp" :label="fp" :value="fp" />
+            </el-select>
+            <div style="color: #909399; font-size: 12px; margin-top: 4px">
+              常见高危指纹: Weblogic, Struts2, Shiro, Fastjson, Log4j, Spring等
+            </div>
+          </el-form-item>
+          
+          <el-form-item label="高危端口">
+            <el-select 
+              v-model="notifyForm.highRiskFilter.highRiskPorts" 
+              multiple 
+              filterable 
+              allow-create
+              default-first-option
+              placeholder="选择或输入高危端口"
+              style="width: 100%"
+              :reserve-keyword="false"
+            >
+              <el-option v-for="port in commonHighRiskPorts" :key="port.value" :label="port.label" :value="port.value" />
+            </el-select>
+            <div style="color: #909399; font-size: 12px; margin-top: 4px">
+              常见高危端口: 22(SSH), 3389(RDP), 6379(Redis), 27017(MongoDB)等
+            </div>
+          </el-form-item>
+          
+          <el-form-item label="高危POC级别">
+            <el-checkbox-group v-model="notifyForm.highRiskFilter.highRiskPocSeverities">
+              <el-checkbox label="critical">严重 (Critical)</el-checkbox>
+              <el-checkbox label="high">高危 (High)</el-checkbox>
+              <el-checkbox label="medium">中危 (Medium)</el-checkbox>
+              <el-checkbox label="low">低危 (Low)</el-checkbox>
+            </el-checkbox-group>
+            <div style="color: #909399; font-size: 12px; margin-top: 4px">
+              选择需要通知的漏洞严重级别
+            </div>
+          </el-form-item>
+        </template>
+        
         <el-divider content-position="left">消息模板（可选）</el-divider>
         <el-form-item label="自定义模板">
           <el-input 
@@ -389,7 +453,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import request from '@/api/request'
@@ -398,7 +462,30 @@ import { getUserList, createUser, updateUser, deleteUser, resetUserPassword } fr
 import { getNotifyProviders, getNotifyConfigList, saveNotifyConfig, deleteNotifyConfig, testNotifyConfig } from '@/api/notify'
 
 const route = useRoute()
-const activeTab = ref('onlineapi')
+const router = useRouter()
+
+// 有效的tab名称
+const validTabs = ['onlineapi', 'subfinder', 'workspace', 'organization', 'notify', 'user']
+
+// 从URL获取初始tab
+const getInitialTab = () => {
+  const tab = route.query.tab
+  return validTabs.includes(tab) ? tab : 'onlineapi'
+}
+
+const activeTab = ref(getInitialTab())
+
+// Tab切换时更新URL
+function handleSettingsTabChange(tabName) {
+  router.replace({ query: { ...route.query, tab: tabName } })
+}
+
+// 监听路由变化，更新activeTab
+watch(() => route.query.tab, (newTab) => {
+  if (validTabs.includes(newTab) && newTab !== activeTab.value) {
+    activeTab.value = newTab
+  }
+})
 const apiConfigTab = ref('fofa')
 const subfinderLoading = ref(false)
 const subfinderProviders = ref([])
@@ -470,17 +557,62 @@ const notifyDialogVisible = ref(false)
 const notifySubmitting = ref(false)
 const notifyTesting = ref(false)
 const notifyFormRef = ref()
-const notifyForm = ref({ id: '', name: '', provider: '', configData: {}, messageTemplate: '', status: 'enable' })
+const notifyForm = ref({ 
+  id: '', 
+  name: '', 
+  provider: '', 
+  configData: {}, 
+  messageTemplate: '', 
+  status: 'enable',
+  highRiskFilter: {
+    enabled: false,
+    highRiskFingerprints: [],
+    highRiskPorts: [],
+    highRiskPocSeverities: []
+  }
+})
 const notifyRules = {
   provider: [{ required: true, message: '请选择通知渠道', trigger: 'change' }],
   name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }]
 }
 const currentProviderFields = ref([])
 
+// 常见高危指纹列表
+const commonFingerprints = ref([
+  'Weblogic', 'Struts2', 'Shiro', 'Fastjson', 'Log4j', 'Spring', 'SpringBoot',
+  'Tomcat', 'JBoss', 'Jenkins', 'Elasticsearch', 'Solr', 'Zabbix', 'Grafana',
+  'phpMyAdmin', 'ThinkPHP', 'Laravel', 'Drupal', 'WordPress', 'Joomla',
+  'Redis', 'MongoDB', 'MySQL', 'PostgreSQL', 'Oracle', 'MSSQL',
+  'Nacos', 'Dubbo', 'RocketMQ', 'Kafka', 'RabbitMQ', 'ActiveMQ',
+  'Harbor', 'Kubernetes', 'Docker', 'Rancher', 'Portainer'
+])
+
+// 常见高危端口列表
+const commonHighRiskPorts = ref([
+  { label: '22 (SSH)', value: 22 },
+  { label: '23 (Telnet)', value: 23 },
+  { label: '445 (SMB)', value: 445 },
+  { label: '1433 (MSSQL)', value: 1433 },
+  { label: '1521 (Oracle)', value: 1521 },
+  { label: '3306 (MySQL)', value: 3306 },
+  { label: '3389 (RDP)', value: 3389 },
+  { label: '5432 (PostgreSQL)', value: 5432 },
+  { label: '5900 (VNC)', value: 5900 },
+  { label: '6379 (Redis)', value: 6379 },
+  { label: '7001 (Weblogic)', value: 7001 },
+  { label: '8080 (Tomcat)', value: 8080 },
+  { label: '8443 (HTTPS-Alt)', value: 8443 },
+  { label: '8848 (Nacos)', value: 8848 },
+  { label: '9000 (PHP-FPM)', value: 9000 },
+  { label: '9200 (Elasticsearch)', value: 9200 },
+  { label: '11211 (Memcached)', value: 11211 },
+  { label: '27017 (MongoDB)', value: 27017 }
+])
+
 onMounted(() => {
-  // 处理URL中的tab参数
-  if (route.query.tab) {
-    activeTab.value = route.query.tab
+  // 如果URL没有tab参数，添加默认的tab参数
+  if (!route.query.tab) {
+    router.replace({ query: { ...route.query, tab: activeTab.value } })
   }
   loadApiConfigs()
   loadSubfinderProviders()
@@ -831,20 +963,46 @@ function showNotifyDialog(row = null) {
     } catch (e) {
       configData = {}
     }
+    // 处理高危过滤配置
+    const highRiskFilter = row.highRiskFilter || {
+      enabled: false,
+      highRiskFingerprints: [],
+      highRiskPorts: [],
+      highRiskPocSeverities: []
+    }
     notifyForm.value = {
       id: row.id,
       name: row.name,
       provider: row.provider,
       configData: configData,
       messageTemplate: row.messageTemplate || '',
-      status: row.status
+      status: row.status,
+      highRiskFilter: {
+        enabled: highRiskFilter.enabled || false,
+        highRiskFingerprints: highRiskFilter.highRiskFingerprints || [],
+        highRiskPorts: highRiskFilter.highRiskPorts || [],
+        highRiskPocSeverities: highRiskFilter.highRiskPocSeverities || []
+      }
     }
     // 加载对应provider的字段
     const provider = notifyProviders.value.find(p => p.id === row.provider)
     currentProviderFields.value = provider ? provider.configFields || [] : []
   } else {
     // 新增模式
-    notifyForm.value = { id: '', name: '', provider: '', configData: {}, messageTemplate: '', status: 'enable' }
+    notifyForm.value = { 
+      id: '', 
+      name: '', 
+      provider: '', 
+      configData: {}, 
+      messageTemplate: '', 
+      status: 'enable',
+      highRiskFilter: {
+        enabled: false,
+        highRiskFingerprints: [],
+        highRiskPorts: [],
+        highRiskPocSeverities: []
+      }
+    }
     currentProviderFields.value = []
   }
   notifyDialogVisible.value = true
@@ -862,7 +1020,8 @@ async function handleNotifySubmit() {
       provider: notifyForm.value.provider,
       config: JSON.stringify(notifyForm.value.configData),
       messageTemplate: notifyForm.value.messageTemplate,
-      status: notifyForm.value.status
+      status: notifyForm.value.status,
+      highRiskFilter: notifyForm.value.highRiskFilter
     }
     
     const res = await saveNotifyConfig(data)
@@ -887,7 +1046,8 @@ async function handleNotifyStatusChange(row) {
     provider: row.provider,
     config: row.config,
     messageTemplate: row.messageTemplate,
-    status: row.status
+    status: row.status,
+    highRiskFilter: row.highRiskFilter
   }
   const res = await saveNotifyConfig(data)
   if (res.code === 0) {

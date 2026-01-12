@@ -24,3 +24,18 @@ export function deleteNotifyConfig(id) {
 export function testNotifyConfig(data) {
   return request.post('/notify/config/test', data)
 }
+
+// 获取指纹列表（用于高危指纹选择）
+export function getFingerprintList(params = {}) {
+  return request.post('/fingerprint/list', params)
+}
+
+// 获取POC严重级别选项
+export function getPocSeverityOptions() {
+  return [
+    { label: '严重 (Critical)', value: 'critical' },
+    { label: '高危 (High)', value: 'high' },
+    { label: '中危 (Medium)', value: 'medium' },
+    { label: '低危 (Low)', value: 'low' }
+  ]
+}

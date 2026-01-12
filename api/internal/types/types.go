@@ -460,10 +460,11 @@ type MainTask struct {
 }
 
 type MainTaskListReq struct {
-	Page     int    `json:"page,default=1"`
-	PageSize int    `json:"pageSize,default=20"`
-	Name     string `json:"name,optional"`
-	Status   string `json:"status,optional"`
+	Page        int    `json:"page,default=1"`
+	PageSize    int    `json:"pageSize,default=20"`
+	Name        string `json:"name,optional"`
+	Status      string `json:"status,optional"`
+	WorkspaceId string `json:"workspaceId,optional"` // 支持从请求体传递，优先级高于header
 }
 
 type MainTaskListResp struct {
@@ -510,11 +511,13 @@ type TaskProfileDeleteReq struct {
 }
 
 type MainTaskDeleteReq struct {
-	Id string `json:"id"`
+	Id          string `json:"id"`
+	WorkspaceId string `json:"workspaceId,optional"` // 任务所属工作空间ID
 }
 
 type MainTaskBatchDeleteReq struct {
-	Ids []string `json:"ids"`
+	Ids         []string `json:"ids"`
+	WorkspaceId string   `json:"workspaceId,optional"` // 任务所属工作空间ID
 }
 
 type MainTaskRetryReq struct {
@@ -1314,9 +1317,10 @@ type MatchedFingerprintInfo struct {
 // ==================== HTTP服务设置 ====================
 // HttpServiceConfig HTTP服务端口配置
 type HttpServiceConfig struct {
-	HttpPorts   []int  `json:"httpPorts"`   // HTTP端口列表
-	HttpsPorts  []int  `json:"httpsPorts"`  // HTTPS端口列表
-	Description string `json:"description"` // 描述
+	HttpPorts    []int  `json:"httpPorts"`    // HTTP端口列表
+	HttpsPorts   []int  `json:"httpsPorts"`   // HTTPS端口列表
+	NonHttpPorts []int  `json:"nonHttpPorts"` // 非HTTP端口列表（明确排除）
+	Description  string `json:"description"`  // 描述
 }
 
 // HttpServiceConfigGetResp 获取HTTP服务配置响应
@@ -1328,9 +1332,10 @@ type HttpServiceConfigGetResp struct {
 
 // HttpServiceConfigSaveReq 保存HTTP服务配置请求
 type HttpServiceConfigSaveReq struct {
-	HttpPorts   []int  `json:"httpPorts"`
-	HttpsPorts  []int  `json:"httpsPorts"`
-	Description string `json:"description,optional"`
+	HttpPorts    []int  `json:"httpPorts"`
+	HttpsPorts   []int  `json:"httpsPorts"`
+	NonHttpPorts []int  `json:"nonHttpPorts,optional"`
+	Description  string `json:"description,optional"`
 }
 
 // HttpServiceMapping HTTP服务映射
@@ -1829,14 +1834,23 @@ type SubdomainDictSimple struct {
 
 // NotifyConfig 通知配置
 type NotifyConfig struct {
-	Id              string `json:"id"`
-	Name            string `json:"name"`            // 配置名称
-	Provider        string `json:"provider"`        // 提供者类型
-	Config          string `json:"config"`          // JSON格式的配置详情
-	Status          string `json:"status"`          // enable/disable
-	MessageTemplate string `json:"messageTemplate"` // 自定义消息模板
-	CreateTime      string `json:"createTime"`
-	UpdateTime      string `json:"updateTime"`
+	Id              string          `json:"id"`
+	Name            string          `json:"name"`            // 配置名称
+	Provider        string          `json:"provider"`        // 提供者类型
+	Config          string          `json:"config"`          // JSON格式的配置详情
+	Status          string          `json:"status"`          // enable/disable
+	MessageTemplate string          `json:"messageTemplate"` // 自定义消息模板
+	CreateTime      string          `json:"createTime"`
+	UpdateTime      string          `json:"updateTime"`
+	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,omitempty"` // 高危过滤配置
+}
+
+// HighRiskFilter 高危过滤配置
+type HighRiskFilter struct {
+	Enabled              bool     `json:"enabled"`              // 是否启用高危过滤，false时全部通知
+	HighRiskFingerprints []string `json:"highRiskFingerprints"` // 高危指纹列表
+	HighRiskPorts        []int    `json:"highRiskPorts"`        // 高危端口列表
+	HighRiskPocSeverities []string `json:"highRiskPocSeverities"` // 高危POC严重级别: critical, high
 }
 
 // NotifyConfigListResp 通知配置列表响应
@@ -1848,12 +1862,13 @@ type NotifyConfigListResp struct {
 
 // NotifyConfigSaveReq 保存通知配置请求
 type NotifyConfigSaveReq struct {
-	Id              string `json:"id,optional"`
-	Name            string `json:"name,optional"`
-	Provider        string `json:"provider"`
-	Config          string `json:"config"`
-	Status          string `json:"status,optional"`
-	MessageTemplate string `json:"messageTemplate,optional"`
+	Id              string          `json:"id,optional"`
+	Name            string          `json:"name,optional"`
+	Provider        string          `json:"provider"`
+	Config          string          `json:"config"`
+	Status          string          `json:"status,optional"`
+	MessageTemplate string          `json:"messageTemplate,optional"`
+	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,optional"` // 高危过滤配置
 }
 
 // NotifyConfigDeleteReq 删除通知配置请求

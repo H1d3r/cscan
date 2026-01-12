@@ -25,9 +25,6 @@ func main() {
 	// 创建服务上下文
 	svcCtx := svc.NewServiceContext(c)
 
-	// 启动时自动导入自定义POC和指纹（包括主动指纹路径）
-	go svcCtx.ImportCustomPocAndFingerprints()
-
 	// 创建HTTP服务器
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()

@@ -20,6 +20,16 @@ type NotifyConfig struct {
 	MessageTemplate string             `bson:"message_template" json:"messageTemplate"`  // 自定义消息模板
 	CreateTime      time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime      time.Time          `bson:"update_time" json:"updateTime"`
+	// 高危过滤配置
+	HighRiskFilter *HighRiskFilter `bson:"high_risk_filter,omitempty" json:"highRiskFilter,omitempty"`
+}
+
+// HighRiskFilter 高危过滤配置
+type HighRiskFilter struct {
+	Enabled            bool     `bson:"enabled" json:"enabled"`                         // 是否启用高危过滤，false时全部通知
+	HighRiskFingerprints []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"` // 高危指纹列表
+	HighRiskPorts        []int    `bson:"high_risk_ports" json:"highRiskPorts"`               // 高危端口列表
+	HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"` // 高危POC严重级别: critical, high
 }
 
 // NotifyConfigModel 通知配置模型
@@ -133,14 +143,20 @@ func (m *NotifyConfigModel) Upsert(ctx context.Context, doc *NotifyConfig) error
 	doc.UpdateTime = now
 
 	filter := bson.M{"provider": doc.Provider}
+	setFields := bson.M{
+		"name":             doc.Name,
+		"config":           doc.Config,
+		"status":           doc.Status,
+		"message_template": doc.MessageTemplate,
+		"update_time":      now,
+	}
+	// 添加高危过滤配置
+	if doc.HighRiskFilter != nil {
+		setFields["high_risk_filter"] = doc.HighRiskFilter
+	}
+
 	update := bson.M{
-		"$set": bson.M{
-			"name":             doc.Name,
-			"config":           doc.Config,
-			"status":           doc.Status,
-			"message_template": doc.MessageTemplate,
-			"update_time":      now,
-		},
+		"$set": setFields,
 		"$setOnInsert": bson.M{
 			"_id":         primitive.NewObjectID(),
 			"provider":    doc.Provider,

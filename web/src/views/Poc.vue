@@ -1057,7 +1057,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened } from '@element-plus/icons-vue'
 import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
@@ -1067,7 +1068,26 @@ import jsYaml from 'js-yaml'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
 
-const activeTab = ref('nucleiTemplates')
+const route = useRoute()
+const router = useRouter()
+
+// 有效的tab名称
+const validTabs = ['nucleiTemplates', 'tagMapping', 'customPoc', 'dirscanDict', 'subdomainDict']
+
+// 从URL获取初始tab
+const getInitialTab = () => {
+  const tab = route.query.tab
+  return validTabs.includes(tab) ? tab : 'nucleiTemplates'
+}
+
+const activeTab = ref(getInitialTab())
+
+// 监听路由变化，更新activeTab
+watch(() => route.query.tab, (newTab) => {
+  if (validTabs.includes(newTab) && newTab !== activeTab.value) {
+    activeTab.value = newTab
+  }
+})
 
 // Nuclei默认模板
 const nucleiTemplates = ref([])
@@ -1408,14 +1428,20 @@ const batchTargetUrls = computed(() => {
 })
 
 onMounted(() => {
+  // 如果URL没有tab参数，添加默认的tab参数
+  if (!route.query.tab) {
+    router.replace({ query: { ...route.query, tab: activeTab.value } })
+  }
   // 加载AI配置
   loadAiConfig()
-  // 只加载当前标签页需要的数据
-  loadNucleiTemplateCategories()
-  loadNucleiTemplates()
+  // 根据当前tab加载数据
+  handleTabChange(activeTab.value)
 })
 
 function handleTabChange(tab) {
+  // Tab切换时更新URL
+  router.replace({ query: { ...route.query, tab: tab } })
+  
   if (tab === 'nucleiTemplates' && nucleiTemplates.value.length === 0) {
     loadNucleiTemplateCategories()
     loadNucleiTemplates()

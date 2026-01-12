@@ -187,8 +187,8 @@ if %errorlevel% neq 0 (
     goto :pause_return
 )
 
-echo [CSCAN] Cleaning old images...
-docker image prune -f >nul 2>&1
+echo [CSCAN] Cleaning old CSCAN images...
+for /f "tokens=*" %%i in ('docker images --filter "dangling=true" --filter "reference=registry.cn-hangzhou.aliyuncs.com/txf7/cscan-*" -q 2^>nul') do docker rmi %%i 2>nul
 
 echo.
 echo [CSCAN] Upgrade completed!

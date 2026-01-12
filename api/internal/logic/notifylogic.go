@@ -35,7 +35,7 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 
 	list := make([]types.NotifyConfig, 0, len(configs))
 	for _, c := range configs {
-		list = append(list, types.NotifyConfig{
+		item := types.NotifyConfig{
 			Id:              c.Id.Hex(),
 			Name:            c.Name,
 			Provider:        c.Provider,
@@ -44,7 +44,17 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 			MessageTemplate: c.MessageTemplate,
 			CreateTime:      c.CreateTime.Local().Format("2006-01-02 15:04:05"),
 			UpdateTime:      c.UpdateTime.Local().Format("2006-01-02 15:04:05"),
-		})
+		}
+		// 转换高危过滤配置
+		if c.HighRiskFilter != nil {
+			item.HighRiskFilter = &types.HighRiskFilter{
+				Enabled:              c.HighRiskFilter.Enabled,
+				HighRiskFingerprints: c.HighRiskFilter.HighRiskFingerprints,
+				HighRiskPorts:        c.HighRiskFilter.HighRiskPorts,
+				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
+			}
+		}
+		list = append(list, item)
 	}
 
 	return &types.NotifyConfigListResp{
@@ -74,22 +84,38 @@ func (l *NotifyConfigSaveLogic) NotifyConfigSave(req *types.NotifyConfigSaveReq)
 		return &types.BaseResp{Code: 400, Msg: "提供者类型不能为空"}, nil
 	}
 
+	// 转换高危过滤配置
+	var highRiskFilter *model.HighRiskFilter
+	if req.HighRiskFilter != nil {
+		highRiskFilter = &model.HighRiskFilter{
+			Enabled:              req.HighRiskFilter.Enabled,
+			HighRiskFingerprints: req.HighRiskFilter.HighRiskFingerprints,
+			HighRiskPorts:        req.HighRiskFilter.HighRiskPorts,
+			HighRiskPocSeverities: req.HighRiskFilter.HighRiskPocSeverities,
+		}
+	}
+
 	doc := &model.NotifyConfig{
 		Name:            req.Name,
 		Provider:        req.Provider,
 		Config:          req.Config,
 		Status:          req.Status,
 		MessageTemplate: req.MessageTemplate,
+		HighRiskFilter:  highRiskFilter,
 	}
 
 	if req.Id != "" {
 		// 更新
-		err = l.svcCtx.NotifyConfigModel.Update(l.ctx, req.Id, bson.M{
+		update := bson.M{
 			"name":             req.Name,
 			"config":           req.Config,
 			"status":           req.Status,
 			"message_template": req.MessageTemplate,
-		})
+		}
+		if highRiskFilter != nil {
+			update["high_risk_filter"] = highRiskFilter
+		}
+		err = l.svcCtx.NotifyConfigModel.Update(l.ctx, req.Id, update)
 		if err != nil {
 			return &types.BaseResp{Code: 500, Msg: "更新失败: " + err.Error()}, nil
 		}

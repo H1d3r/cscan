@@ -14,12 +14,13 @@ import (
 // HttpServiceConfig HTTP服务设置
 // 用于配置哪些端口和服务名称被识别为HTTP服务
 type HttpServiceConfig struct {
-	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	HttpPorts   []int              `bson:"http_ports" json:"httpPorts"`     // HTTP端口列表
-	HttpsPorts  []int              `bson:"https_ports" json:"httpsPorts"`   // HTTPS端口列表
-	Description string             `bson:"description" json:"description"`  // 描述
-	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
+	Id           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	HttpPorts    []int              `bson:"http_ports" json:"httpPorts"`         // HTTP端口列表
+	HttpsPorts   []int              `bson:"https_ports" json:"httpsPorts"`       // HTTPS端口列表
+	NonHttpPorts []int              `bson:"non_http_ports" json:"nonHttpPorts"`  // 非HTTP端口列表（明确排除）
+	Description  string             `bson:"description" json:"description"`      // 描述
+	CreateTime   time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime   time.Time          `bson:"update_time" json:"updateTime"`
 }
 
 // 注意：HttpServiceMapping 定义在 fingerprint.go 中，这里复用该定义
@@ -30,8 +31,9 @@ type HttpServiceModel struct {
 	mappingColl *mongo.Collection
 
 	// 缓存
-	httpPorts    map[int]bool   // HTTP端口缓存
-	httpsPorts   map[int]bool   // HTTPS端口缓存
+	httpPorts    map[int]bool    // HTTP端口缓存
+	httpsPorts   map[int]bool    // HTTPS端口缓存
+	nonHttpPorts map[int]bool    // 非HTTP端口缓存
 	serviceCache map[string]bool // 服务名称缓存: serviceName -> isHttp
 	mu           sync.RWMutex
 }
@@ -47,6 +49,65 @@ var defaultHttpPorts = []int{
 // 默认HTTPS端口列表
 var defaultHttpsPorts = []int{
 	443, 8443, 9443, 4443, 10443,
+}
+
+// 默认非HTTP端口列表（明确排除的端口）
+var defaultNonHttpPorts = []int{
+	// 远程管理
+	22,    // SSH
+	23,    // Telnet
+	3389,  // RDP
+	5900,  // VNC
+	5901,  // VNC
+	5902,  // VNC
+	// 文件传输
+	20,    // FTP-data
+	21,    // FTP
+	69,    // TFTP
+	// 邮件服务
+	25,    // SMTP
+	110,   // POP3
+	143,   // IMAP
+	465,   // SMTPS
+	587,   // SMTP Submission
+	993,   // IMAPS
+	995,   // POP3S
+	// 数据库
+	1433,  // MSSQL
+	1521,  // Oracle
+	3306,  // MySQL
+	5432,  // PostgreSQL
+	6379,  // Redis
+	27017, // MongoDB
+	9042,  // Cassandra
+	// 消息队列
+	5672,  // RabbitMQ AMQP
+	6650,  // Pulsar
+	9092,  // Kafka
+	// 目录服务
+	389,   // LDAP
+	636,   // LDAPS
+	// DNS
+	53,    // DNS
+	// Windows服务
+	135,   // RPC
+	137,   // NetBIOS Name
+	138,   // NetBIOS Datagram
+	139,   // NetBIOS Session
+	445,   // SMB
+	// 其他常见非HTTP服务
+	111,   // RPC Portmapper
+	161,   // SNMP
+	162,   // SNMP Trap
+	514,   // Syslog
+	1080,  // SOCKS
+	1194,  // OpenVPN
+	1883,  // MQTT
+	2049,  // NFS
+	2181,  // ZooKeeper
+	3268,  // LDAP Global Catalog
+	3269,  // LDAPS Global Catalog
+	11211, // Memcached
 }
 
 // 默认HTTP服务名称映射
@@ -95,6 +156,7 @@ func NewHttpServiceModel(db *mongo.Database) *HttpServiceModel {
 		mappingColl:  mappingColl,
 		httpPorts:    make(map[int]bool),
 		httpsPorts:   make(map[int]bool),
+		nonHttpPorts: make(map[int]bool),
 		serviceCache: make(map[string]bool),
 	}
 
@@ -111,8 +173,9 @@ func (m *HttpServiceModel) GetConfig(ctx context.Context) (*HttpServiceConfig, e
 	if err == mongo.ErrNoDocuments {
 		// 返回默认配置
 		return &HttpServiceConfig{
-			HttpPorts:  defaultHttpPorts,
-			HttpsPorts: defaultHttpsPorts,
+			HttpPorts:    defaultHttpPorts,
+			HttpsPorts:   defaultHttpsPorts,
+			NonHttpPorts: defaultNonHttpPorts,
 		}, nil
 	}
 	return &config, err
@@ -127,10 +190,11 @@ func (m *HttpServiceModel) SaveConfig(ctx context.Context, config *HttpServiceCo
 	opts := options.Update().SetUpsert(true)
 	update := bson.M{
 		"$set": bson.M{
-			"http_ports":  config.HttpPorts,
-			"https_ports": config.HttpsPorts,
-			"description": config.Description,
-			"update_time": now,
+			"http_ports":     config.HttpPorts,
+			"https_ports":    config.HttpsPorts,
+			"non_http_ports": config.NonHttpPorts,
+			"description":    config.Description,
+			"update_time":    now,
 		},
 		"$setOnInsert": bson.M{
 			"create_time": now,
@@ -231,21 +295,29 @@ func (m *HttpServiceModel) RefreshCache(ctx context.Context) {
 	if err == nil {
 		m.httpPorts = make(map[int]bool)
 		m.httpsPorts = make(map[int]bool)
+		m.nonHttpPorts = make(map[int]bool)
 		for _, port := range config.HttpPorts {
 			m.httpPorts[port] = true
 		}
 		for _, port := range config.HttpsPorts {
 			m.httpsPorts[port] = true
 		}
+		for _, port := range config.NonHttpPorts {
+			m.nonHttpPorts[port] = true
+		}
 	} else {
 		// 使用默认端口
 		m.httpPorts = make(map[int]bool)
 		m.httpsPorts = make(map[int]bool)
+		m.nonHttpPorts = make(map[int]bool)
 		for _, port := range defaultHttpPorts {
 			m.httpPorts[port] = true
 		}
 		for _, port := range defaultHttpsPorts {
 			m.httpsPorts[port] = true
+		}
+		for _, port := range defaultNonHttpPorts {
+			m.nonHttpPorts[port] = true
 		}
 	}
 
@@ -279,6 +351,13 @@ func (m *HttpServiceModel) IsHttpsPort(port int) bool {
 	return m.httpsPorts[port]
 }
 
+// IsNonHttpPort 判断端口是否为非HTTP端口（明确排除）
+func (m *HttpServiceModel) IsNonHttpPort(port int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.nonHttpPorts[port]
+}
+
 // IsHttpService 判断服务名称是否为HTTP服务
 func (m *HttpServiceModel) IsHttpService(serviceName string) (isHttp bool, found bool) {
 	m.mu.RLock()
@@ -292,12 +371,17 @@ func (m *HttpServiceModel) CheckIsHttp(serviceName string, port int) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// 1. 先检查服务名称映射
+	// 1. 先检查是否在非HTTP端口列表中（明确排除）
+	if m.nonHttpPorts[port] {
+		return false
+	}
+
+	// 2. 检查服务名称映射
 	if isHttp, found := m.serviceCache[serviceName]; found {
 		return isHttp
 	}
 
-	// 2. 再检查端口
+	// 3. 检查HTTP/HTTPS端口
 	return m.httpPorts[port] || m.httpsPorts[port]
 }
 
@@ -337,6 +421,17 @@ func (m *HttpServiceModel) GetAllHttpPorts() []int {
 	return ports
 }
 
+// GetNonHttpPorts 获取所有非HTTP端口列表
+func (m *HttpServiceModel) GetNonHttpPorts() []int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ports := make([]int, 0, len(m.nonHttpPorts))
+	for port := range m.nonHttpPorts {
+		ports = append(ports, port)
+	}
+	return ports
+}
+
 // InitDefaultData 初始化默认数据（如果数据库为空）
 func (m *HttpServiceModel) InitDefaultData(ctx context.Context) error {
 	// 检查是否已有配置
@@ -348,9 +443,10 @@ func (m *HttpServiceModel) InitDefaultData(ctx context.Context) error {
 	if count == 0 {
 		// 初始化默认端口配置
 		config := &HttpServiceConfig{
-			HttpPorts:   defaultHttpPorts,
-			HttpsPorts:  defaultHttpsPorts,
-			Description: "默认HTTP服务端口配置",
+			HttpPorts:    defaultHttpPorts,
+			HttpsPorts:   defaultHttpsPorts,
+			NonHttpPorts: defaultNonHttpPorts,
+			Description:  "默认HTTP服务端口配置",
 		}
 		if err := m.SaveConfig(ctx, config); err != nil {
 			return err

@@ -80,12 +80,12 @@ export function deleteHttpServiceMapping(data) {
 
 // 获取HTTP端口配置
 export function getHttpServiceConfig() {
-  return request.get('/api/v1/httpservice/config')
+  return request.get('/httpservice/config')
 }
 
 // 保存HTTP端口配置
 export function saveHttpServiceConfig(data) {
-  return request.post('/api/v1/httpservice/config', data)
+  return request.post('/httpservice/config', data)
 }
 
 

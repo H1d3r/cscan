@@ -2,11 +2,14 @@ package logic
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
+	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -27,8 +30,6 @@ func NewVulListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulListLo
 }
 
 func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp *types.VulListResp, err error) {
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
-
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Authority != "" {
@@ -48,16 +49,54 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 		filter["port"] = req.Port
 	}
 
-	// 查询总数
-	total, err := vulModel.Count(l.ctx, filter)
-	if err != nil {
-		return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
-	}
+	var total int64
+	var vuls []model.Vul
 
-	// 查询列表
-	vuls, err := vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
-	if err != nil {
-		return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
+	// 获取需要查询的工作空间列表
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+
+	// 如果查询多个工作空间
+	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
+		// 收集所有工作空间的数据
+		var allVuls []model.Vul
+		for _, wsId := range wsIds {
+			vulModel := l.svcCtx.GetVulModel(wsId)
+			wsTotal, _ := vulModel.Count(l.ctx, filter)
+			total += wsTotal
+			
+			wsVuls, _ := vulModel.Find(l.ctx, filter, 0, 0)
+			allVuls = append(allVuls, wsVuls...)
+		}
+		
+		// 按创建时间排序
+		sort.Slice(allVuls, func(i, j int) bool {
+			return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
+		})
+		
+		// 分页
+		start := (req.Page - 1) * req.PageSize
+		end := start + req.PageSize
+		if start > len(allVuls) {
+			start = len(allVuls)
+		}
+		if end > len(allVuls) {
+			end = len(allVuls)
+		}
+		vuls = allVuls[start:end]
+	} else {
+		vulModel := l.svcCtx.GetVulModel(workspaceId)
+
+		// 查询总数
+		total, err = vulModel.Count(l.ctx, filter)
+		if err != nil {
+			return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
+		}
+
+		// 查询列表
+		vuls, err = vulModel.Find(l.ctx, filter, req.Page, req.PageSize)
+		if err != nil {
+			return &types.VulListResp{Code: 500, Msg: "查询失败"}, nil
+		}
 	}
 
 	// 转换响应

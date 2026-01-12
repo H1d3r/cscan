@@ -10,6 +10,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/model"
 
 	"github.com/xuri/excelize/v2"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -35,21 +36,54 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("ReportDetail: taskId=%s, workspaceId=%s", req.TaskId, workspaceId)
 	
 	// 获取任务信息
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-	task, err := taskModel.FindById(l.ctx, req.TaskId)
+	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
+	var task *model.MainTask
+	var err error
+	var actualWorkspaceId string
 	
-	if err != nil {
-		l.Logger.Errorf("FindById failed: %v", err)
-		return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
+	if workspaceId == "" || workspaceId == "all" {
+		// 获取所有工作空间
+		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
+		workspaces, _ := wsModel.FindAll(l.ctx)
+		
+		// 先尝试 default 工作空间
+		wsIds := []string{"default"}
+		for _, ws := range workspaces {
+			wsIds = append(wsIds, ws.Id.Hex())
+		}
+		
+		// 遍历所有工作空间查找任务
+		for _, wsId := range wsIds {
+			taskModel := l.svcCtx.GetMainTaskModel(wsId)
+			task, err = taskModel.FindById(l.ctx, req.TaskId)
+			if err == nil && task != nil {
+				actualWorkspaceId = wsId
+				l.Logger.Infof("Found task in workspace: %s", wsId)
+				break
+			}
+		}
+		
+		if task == nil {
+			l.Logger.Errorf("FindById failed in all workspaces: %v", err)
+			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
+		}
+	} else {
+		actualWorkspaceId = workspaceId
+		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+		task, err = taskModel.FindById(l.ctx, req.TaskId)
+		if err != nil {
+			l.Logger.Errorf("FindById failed: %v", err)
+			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
+		}
 	}
 	
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId
 	// 所以查询时也需要使用 ObjectID
 	queryTaskId := task.Id.Hex()
-	l.Logger.Infof("Found task: name=%s, taskId(UUID)=%s, objectId=%s, workspaceId=%s", task.Name, task.TaskId, queryTaskId, workspaceId)
+	l.Logger.Infof("Found task: name=%s, taskId(UUID)=%s, objectId=%s, actualWorkspaceId=%s", task.Name, task.TaskId, queryTaskId, actualWorkspaceId)
 
 	// 获取资产列表
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
 	
 	// 构建查询条件：匹配主任务ID或子任务ID（子任务格式: {mainTaskId}-{index}）
 	// 注意：子任务ID格式是 {UUID}-{index}，但资产保存时使用的是 ObjectID
@@ -68,7 +102,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("Found %d assets for task (objectId=%s, UUID=%s)", len(assets), queryTaskId, task.TaskId)
 
 	// 获取漏洞列表
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
+	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
 	// 同样匹配主任务ID或子任务ID
 	vulFilter := bson.M{
 		"$or": []bson.M{
@@ -94,9 +128,9 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
 	}
-	// 如果有 workspaceId，添加过滤条件
-	if workspaceId != "" && workspaceId != "all" {
-		dirScanFilter["workspace_id"] = workspaceId
+	// 如果有 actualWorkspaceId，添加过滤条件
+	if actualWorkspaceId != "" && actualWorkspaceId != "all" {
+		dirScanFilter["workspace_id"] = actualWorkspaceId
 	}
 	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 1000)
 	if err != nil {
@@ -242,17 +276,49 @@ func NewReportExportLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Repo
 
 func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId string) ([]byte, string, error) {
 	// 获取任务信息
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
-	task, err := taskModel.FindById(l.ctx, req.TaskId)
-	if err != nil {
-		return nil, "", fmt.Errorf("任务不存在")
+	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
+	var task *model.MainTask
+	var err error
+	var actualWorkspaceId string
+	
+	if workspaceId == "" || workspaceId == "all" {
+		// 获取所有工作空间
+		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
+		workspaces, _ := wsModel.FindAll(l.ctx)
+		
+		// 先尝试 default 工作空间
+		wsIds := []string{"default"}
+		for _, ws := range workspaces {
+			wsIds = append(wsIds, ws.Id.Hex())
+		}
+		
+		// 遍历所有工作空间查找任务
+		for _, wsId := range wsIds {
+			taskModel := l.svcCtx.GetMainTaskModel(wsId)
+			task, err = taskModel.FindById(l.ctx, req.TaskId)
+			if err == nil && task != nil {
+				actualWorkspaceId = wsId
+				break
+			}
+		}
+		
+		if task == nil {
+			return nil, "", fmt.Errorf("任务不存在")
+		}
+	} else {
+		actualWorkspaceId = workspaceId
+		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+		task, err = taskModel.FindById(l.ctx, req.TaskId)
+		if err != nil {
+			return nil, "", fmt.Errorf("任务不存在")
+		}
 	}
 
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId
 	queryTaskId := task.Id.Hex()
 
 	// 获取资产列表（匹配主任务ID或子任务ID，同时兼容UUID和ObjectID格式）
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
 	assetFilter := bson.M{
 		"$or": []bson.M{
 			{"taskId": queryTaskId},
@@ -264,7 +330,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 	assets, _ := assetModel.Find(l.ctx, assetFilter, 0, 0)
 
 	// 获取漏洞列表（匹配主任务ID或子任务ID，同时兼容UUID和ObjectID格式）
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
+	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
 	vulFilter := bson.M{
 		"$or": []bson.M{
 			{"task_id": queryTaskId},
@@ -285,8 +351,8 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
 	}
-	if workspaceId != "" && workspaceId != "all" {
-		dirScanFilter["workspace_id"] = workspaceId
+	if actualWorkspaceId != "" && actualWorkspaceId != "all" {
+		dirScanFilter["workspace_id"] = actualWorkspaceId
 	}
 	dirScans, _ := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 10000)
 

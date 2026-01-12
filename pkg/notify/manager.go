@@ -22,10 +22,19 @@ func NewNotifyManager() *NotifyManager {
 
 // ConfigItem 配置项（从数据库读取）
 type ConfigItem struct {
-	Provider        string `json:"provider"`
-	Config          string `json:"config"`
-	Status          string `json:"status"`
-	MessageTemplate string `json:"messageTemplate"`
+	Provider        string          `json:"provider"`
+	Config          string          `json:"config"`
+	Status          string          `json:"status"`
+	MessageTemplate string          `json:"messageTemplate"`
+	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,omitempty"`
+}
+
+// HighRiskFilter 高危过滤配置
+type HighRiskFilter struct {
+	Enabled              bool     `json:"enabled"`              // 是否启用高危过滤
+	HighRiskFingerprints []string `json:"highRiskFingerprints"` // 高危指纹列表
+	HighRiskPorts        []int    `json:"highRiskPorts"`        // 高危端口列表
+	HighRiskPocSeverities []string `json:"highRiskPocSeverities"` // 高危POC严重级别
 }
 
 // LoadConfigs 从配置列表加载提供者

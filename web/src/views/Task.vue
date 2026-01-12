@@ -156,6 +156,17 @@
             <el-descriptions-item label="超时时间">{{ parsedConfig.domainscan?.timeout || 300 }}秒</el-descriptions-item>
             <el-descriptions-item label="并发线程">{{ parsedConfig.domainscan?.threads || 10 }}</el-descriptions-item>
             <el-descriptions-item label="DNS解析">{{ parsedConfig.domainscan?.resolveDNS ? '是' : '否' }}</el-descriptions-item>
+            <el-descriptions-item label="去除泛解析">{{ parsedConfig.domainscan?.removeWildcard ? '是' : '否' }}</el-descriptions-item>
+            <el-descriptions-item label="并发数">{{ parsedConfig.domainscan?.concurrent || 50 }}</el-descriptions-item>
+            <el-descriptions-item label="速率限制">{{ parsedConfig.domainscan?.rateLimit || 0 }}</el-descriptions-item>
+            <el-descriptions-item label="字典爆破">{{ parsedConfig.domainscan?.subdomainDictIds?.length ? '是' : '否' }}</el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.domainscan?.subdomainDictIds?.length" label="爆破字典数" :span="2">
+              {{ parsedConfig.domainscan.subdomainDictIds.length }} 个
+            </el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.domainscan?.recursiveBrute" label="递归爆破">是</el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.domainscan?.wildcardDetect" label="泛解析检测">是</el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.domainscan?.subdomainCrawl" label="子域名爬取">是</el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.domainscan?.takeoverCheck" label="接管检测">是</el-descriptions-item>
           </el-descriptions>
         </div>
         
@@ -193,8 +204,10 @@
             <el-descriptions-item label="Icon Hash">{{ parsedConfig.fingerprint?.iconHash ? '是' : '否' }}</el-descriptions-item>
             <el-descriptions-item label="自定义指纹">{{ parsedConfig.fingerprint?.customEngine ? '是' : '否' }}</el-descriptions-item>
             <el-descriptions-item label="网页截图">{{ parsedConfig.fingerprint?.screenshot ? '是' : '否' }}</el-descriptions-item>
-            <el-descriptions-item label="超时时间">{{ parsedConfig.fingerprint?.timeout || 30 }}秒</el-descriptions-item>
+            <el-descriptions-item label="主动探测">{{ parsedConfig.fingerprint?.activeScan ? '是' : '否' }}</el-descriptions-item>
+            <el-descriptions-item label="超时时间">{{ parsedConfig.fingerprint?.targetTimeout || parsedConfig.fingerprint?.timeout || 30 }}秒</el-descriptions-item>
             <el-descriptions-item label="并发数">{{ parsedConfig.fingerprint?.concurrency || 10 }}</el-descriptions-item>
+            <el-descriptions-item v-if="parsedConfig.fingerprint?.activeScan" label="主动探测超时">{{ parsedConfig.fingerprint?.activeTimeout || 5 }}秒</el-descriptions-item>
           </el-descriptions>
         </div>
         
@@ -220,9 +233,11 @@
         
         <!-- 目录扫描配置 -->
         <div v-if="parsedConfig.dirscan?.enable" class="config-detail">
-          <el-descriptions :column="3" border size="small" title="目录扫描配置">
-            <el-descriptions-item label="并发数">{{ parsedConfig.dirscan?.concurrency || 10 }}</el-descriptions-item>
+          <el-descriptions :column="4" border size="small" title="目录扫描配置">
+            <el-descriptions-item label="并发数">{{ parsedConfig.dirscan?.threads || parsedConfig.dirscan?.concurrency || 10 }}</el-descriptions-item>
             <el-descriptions-item label="超时时间">{{ parsedConfig.dirscan?.timeout || 10 }}秒</el-descriptions-item>
+            <el-descriptions-item label="跟随重定向">{{ parsedConfig.dirscan?.followRedirect ? '是' : '否' }}</el-descriptions-item>
+            <el-descriptions-item label="状态码过滤">{{ parsedConfig.dirscan?.statusCodes || '200,301,302,403' }}</el-descriptions-item>
             <el-descriptions-item label="使用字典">
               {{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' 个') : '默认字典' }}
             </el-descriptions-item>
@@ -991,7 +1006,7 @@ async function handleSubmit() {
 
 async function handleDelete(row) {
   await ElMessageBox.confirm('确定删除该任务吗？', '提示', { type: 'warning' })
-  const res = await deleteTask({ id: row.id })
+  const res = await deleteTask({ id: row.id, workspaceId: row.workspaceId })
   res.code === 0 ? (ElMessage.success('删除成功'), loadData()) : ElMessage.error(res.msg)
 }
 
@@ -999,8 +1014,14 @@ function handleSelectionChange(rows) { selectedRows.value = rows }
 
 async function handleBatchDelete() {
   if (selectedRows.value.length === 0) return
+  // 检查是否所有选中的任务都在同一个工作空间
+  const workspaceIds = [...new Set(selectedRows.value.map(row => row.workspaceId))]
+  if (workspaceIds.length > 1) {
+    ElMessage.warning('批量删除只能删除同一工作空间的任务，请分别删除')
+    return
+  }
   await ElMessageBox.confirm(`确定删除选中的 ${selectedRows.value.length} 条任务吗？`, '提示', { type: 'warning' })
-  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id) })
+  const res = await batchDeleteTask({ ids: selectedRows.value.map(row => row.id), workspaceId: workspaceIds[0] })
   res.code === 0 ? (ElMessage.success('删除成功'), selectedRows.value = [], loadData()) : ElMessage.error(res.msg)
 }
 

@@ -3036,6 +3036,7 @@ type WorkerHttpServiceChecker struct {
 	serviceCache map[string]bool // serviceName -> isHttp
 	httpPorts    map[int]bool    // HTTP端口
 	httpsPorts   map[int]bool    // HTTPS端口
+	nonHttpPorts map[int]bool    // 非HTTP端口（明确排除）
 	mu           sync.RWMutex
 }
 
@@ -3045,6 +3046,7 @@ func NewWorkerHttpServiceChecker() *WorkerHttpServiceChecker {
 		serviceCache: make(map[string]bool),
 		httpPorts:    make(map[int]bool),
 		httpsPorts:   make(map[int]bool),
+		nonHttpPorts: make(map[int]bool),
 	}
 }
 
@@ -3063,17 +3065,29 @@ func (c *WorkerHttpServiceChecker) IsHttpPort(port int) bool {
 	return c.httpPorts[port] || c.httpsPorts[port]
 }
 
+// IsNonHttpPort 判断端口是否为非HTTP端口（明确排除）
+func (c *WorkerHttpServiceChecker) IsNonHttpPort(port int) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.nonHttpPorts[port]
+}
+
 // CheckIsHttp 综合判断是否为HTTP服务（服务名称+端口）
 func (c *WorkerHttpServiceChecker) CheckIsHttp(serviceName string, port int) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// 1. 先检查服务名称映射
+	// 1. 先检查是否在非HTTP端口列表中（明确排除）
+	if c.nonHttpPorts[port] {
+		return false
+	}
+
+	// 2. 检查服务名称映射
 	if isHttp, found := c.serviceCache[serviceName]; found {
 		return isHttp
 	}
 
-	// 2. 再检查端口
+	// 3. 检查HTTP/HTTPS端口
 	return c.httpPorts[port] || c.httpsPorts[port]
 }
 
@@ -3101,6 +3115,16 @@ func (c *WorkerHttpServiceChecker) SetHttpsPorts(ports []int) {
 	c.httpsPorts = make(map[int]bool)
 	for _, port := range ports {
 		c.httpsPorts[port] = true
+	}
+}
+
+// SetNonHttpPorts 设置非HTTP端口列表
+func (c *WorkerHttpServiceChecker) SetNonHttpPorts(ports []int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nonHttpPorts = make(map[int]bool)
+	for _, port := range ports {
+		c.nonHttpPorts[port] = true
 	}
 }
 
@@ -3700,6 +3724,10 @@ func (w *Worker) loadHttpServiceMappings() {
 	if len(resp.Config.HttpsPorts) > 0 {
 		checker.SetHttpsPorts(resp.Config.HttpsPorts)
 		w.logger.Info("Loaded %d HTTPS ports from database", len(resp.Config.HttpsPorts))
+	}
+	if len(resp.Config.NonHttpPorts) > 0 {
+		checker.SetNonHttpPorts(resp.Config.NonHttpPorts)
+		w.logger.Info("Loaded %d non-HTTP ports from database", len(resp.Config.NonHttpPorts))
 	}
 
 	// 设置服务映射

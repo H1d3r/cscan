@@ -1,7 +1,7 @@
 services:
   # Redis 
   redis:
-    image: docker.1ms.run/redis:7-alpine
+    image: redis:7-alpine
     container_name: cscan_redis
     command: redis-server --appendonly yes
     volumes:
@@ -19,7 +19,7 @@ services:
 
   # MongoDB 
   mongodb:
-    image: docker.1ms.run/mongo:6
+    image: mongo:6
     container_name: cscan_mongodb
     volumes:
       - cscan_mongodb_data:/data/db

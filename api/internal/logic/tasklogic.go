@@ -35,6 +35,14 @@ func NewMainTaskListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Main
 }
 
 func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId string) (resp *types.MainTaskListResp, err error) {
+	// 优先使用请求体中的 workspaceId
+	wsId := req.WorkspaceId
+	if wsId == "" {
+		wsId = workspaceId
+	}
+	l.Logger.Infof("MainTaskList: reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s, page=%d, pageSize=%d", 
+		req.WorkspaceId, workspaceId, wsId, req.Page, req.PageSize)
+	
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Name != "" {
@@ -53,19 +61,21 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 	}
 	var tasksWithWs []taskWithWorkspace
 
-	// 如果 workspaceId 为空，查询所有工作空间
-	if workspaceId == "" {
-		workspaces, _ := l.svcCtx.WorkspaceModel.Find(l.ctx, bson.M{}, 1, 100)
-		
-		for _, ws := range workspaces {
-			wsId := ws.Id.Hex()
-			taskModel := l.svcCtx.GetMainTaskModel(wsId)
+	// 获取需要查询的工作空间列表
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, wsId)
+	l.Logger.Infof("MainTaskList: querying workspaces: %v", wsIds)
+
+	// 如果查询多个工作空间
+	if len(wsIds) > 1 || wsId == "" || wsId == "all" {
+		for _, ws := range wsIds {
+			taskModel := l.svcCtx.GetMainTaskModel(ws)
 			wsTotal, _ := taskModel.Count(l.ctx, filter)
 			total += wsTotal
+			l.Logger.Infof("MainTaskList: workspace=%s, taskCount=%d", ws, wsTotal)
 			
 			wsTasks, _ := taskModel.Find(l.ctx, filter, 0, 0)
 			for _, t := range wsTasks {
-				tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: wsId})
+				tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: ws})
 			}
 		}
 		
@@ -85,7 +95,7 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		}
 		tasksWithWs = tasksWithWs[start:end]
 	} else {
-		taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+		taskModel := l.svcCtx.GetMainTaskModel(wsId)
 
 		// 查询总数
 		total, err = taskModel.Count(l.ctx, filter)
@@ -99,7 +109,7 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 		}
 		for _, t := range tasks {
-			tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: workspaceId})
+			tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: wsId})
 		}
 	}
 
@@ -280,6 +290,13 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 	// 注入自定义POC和标签映射
 	taskConfig = common.InjectPocConfig(l.ctx, l.svcCtx, taskConfig, l.Logger)
 	configBytes, _ := json.Marshal(taskConfig)
+	
+	configStr := string(configBytes)
+	logLen := len(configStr)
+	if logLen > 500 {
+		logLen = 500
+	}
+	l.Logger.Infof("MainTaskCreate: config length=%d, config=%s", len(configStr), configStr[:logLen])
 
 	// 创建主任务（状态为CREATED，不立即执行）
 	taskId := uuid.New().String()
@@ -421,7 +438,16 @@ func NewMainTaskDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 }
 
 func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+	// 优先使用请求体中的 workspaceId
+	wsId := req.WorkspaceId
+	if wsId == "" {
+		wsId = workspaceId
+	}
+	if wsId == "" || wsId == "all" {
+		return &types.BaseResp{Code: 400, Msg: "删除任务需要指定工作空间"}, nil
+	}
+	
+	taskModel := l.svcCtx.GetMainTaskModel(wsId)
 	
 	// 先获取任务信息，发送停止信号
 	task, err := taskModel.FindById(l.ctx, req.Id)
@@ -464,7 +490,16 @@ func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchD
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的任务"}, nil
 	}
 
-	taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+	// 优先使用请求体中的 workspaceId
+	wsId := req.WorkspaceId
+	if wsId == "" {
+		wsId = workspaceId
+	}
+	if wsId == "" || wsId == "all" {
+		return &types.BaseResp{Code: 400, Msg: "删除任务需要指定工作空间"}, nil
+	}
+
+	taskModel := l.svcCtx.GetMainTaskModel(wsId)
 	
 	// 先获取所有任务信息，发送停止信号
 	for _, id := range req.Ids {

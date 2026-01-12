@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - master
     paths-ignore:
       - '**.md'
       - 'LICENSE'
@@ -13,106 +14,129 @@ env:
   REGISTRY: registry.cn-hangzhou.aliyuncs.com/txf7
 
 jobs:
-  build:
+  # 先读取版本号，供后续 jobs 使用
+  prepare:
     runs-on: ubuntu-latest
-    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Read version from VERSION file
+      - name: Read version
         id: version
         run: |
           if [ -f VERSION ]; then
             VERSION=$(cat VERSION | tr -d '\n\r ')
             echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Version: $VERSION"
           else
             echo "version=latest" >> $GITHUB_OUTPUT
-            echo "VERSION file not found, using: latest"
           fi
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Aliyun Container Registry
+  # [1/4] API Service
+  build-api:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to Registry
         uses: docker/login-action@v3
         with:
           registry: registry.cn-hangzhou.aliyuncs.com
           username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
           password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
-
-      # [1/4] Build API Service
       - name: Build and push cscan-api
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.api
-          # platforms: linux/amd64,linux/arm64
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/cscan-api:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/cscan-api:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # [2/4] Build RPC Service
+  # [2/4] RPC Service
+  build-rpc:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
       - name: Build and push cscan-rpc
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.rpc
-          # platforms: linux/amd64,linux/arm64
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/cscan-rpc:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/cscan-rpc:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-rpc:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # [3/4] Build Web Service
+  # [3/4] Web Service
+  build-web:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
       - name: Build and push cscan-web
         uses: docker/build-push-action@v5
         with:
           context: web/
           file: web/Dockerfile
-          # platforms: linux/amd64,linux/arm64
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/cscan-web:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/cscan-web:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # [4/4] Build Worker Service
+  # [4/4] Worker Service
+  build-worker:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-hangzhou.aliyuncs.com
+          username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
       - name: Build and push cscan-worker
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.worker
-          # platforms: linux/amd64,linux/arm64
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/cscan-worker:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/cscan-worker:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-worker:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Summary
-        run: |
-          echo "## 🎉 Build Complete!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Images pushed:" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.REGISTRY }}/cscan-api:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.REGISTRY }}/cscan-rpc:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.REGISTRY }}/cscan-web:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ env.REGISTRY }}/cscan-worker:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All images also tagged as \`:latest\`" >> $GITHUB_STEP_SUMMARY

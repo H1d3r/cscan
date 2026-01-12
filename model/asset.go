@@ -258,6 +258,11 @@ func (m *AssetModel) CountByTaskId(ctx context.Context, taskId string) (int64, e
 	return m.coll.CountDocuments(ctx, bson.M{"taskId": taskId})
 }
 
+// FindByTaskId 根据任务ID查找资产列表
+func (m *AssetModel) FindByTaskId(ctx context.Context, taskId string) ([]Asset, error) {
+	return m.Find(ctx, bson.M{"taskId": taskId}, 0, 0)
+}
+
 func (m *AssetModel) Update(ctx context.Context, id string, update bson.M) error {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {

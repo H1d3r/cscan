@@ -2133,9 +2133,10 @@ func (l *HttpServiceConfigGetLogic) HttpServiceConfigGet() (*types.HttpServiceCo
 		Code: 0,
 		Msg:  "success",
 		Data: types.HttpServiceConfig{
-			HttpPorts:   config.HttpPorts,
-			HttpsPorts:  config.HttpsPorts,
-			Description: config.Description,
+			HttpPorts:    config.HttpPorts,
+			HttpsPorts:   config.HttpsPorts,
+			NonHttpPorts: config.NonHttpPorts,
+			Description:  config.Description,
 		},
 	}, nil
 }
@@ -2152,9 +2153,10 @@ func NewHttpServiceConfigSaveLogic(ctx context.Context, svcCtx *svc.ServiceConte
 
 func (l *HttpServiceConfigSaveLogic) HttpServiceConfigSave(req *types.HttpServiceConfigSaveReq) (*types.BaseResp, error) {
 	config := &model.HttpServiceConfig{
-		HttpPorts:   req.HttpPorts,
-		HttpsPorts:  req.HttpsPorts,
-		Description: req.Description,
+		HttpPorts:    req.HttpPorts,
+		HttpsPorts:   req.HttpsPorts,
+		NonHttpPorts: req.NonHttpPorts,
+		Description:  req.Description,
 	}
 
 	err := l.svcCtx.HttpServiceModel.SaveConfig(l.ctx, config)

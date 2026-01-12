@@ -15,6 +15,7 @@ import (
 
 	nuclei "github.com/projectdiscovery/nuclei/v3/lib"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -282,116 +283,128 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	return result, nil
 }
 
+// nucleiScanError 统一的Nuclei扫描错误处理
+type nucleiScanError struct {
+	target  string
+	phase   string
+	err     error
+	timeout bool
+}
+
+func (e *nucleiScanError) Error() string {
+	if e.timeout {
+		return fmt.Sprintf("nuclei %s timeout for %s", e.phase, e.target)
+	}
+	return fmt.Sprintf("nuclei %s failed for %s: %v", e.phase, e.target, e.err)
+}
+
+// logScanError 统一的错误日志处理
+func logScanError(err *nucleiScanError, taskLogger func(level, format string, args ...interface{})) {
+	if err.timeout {
+		logx.Infof("Nuclei: %s timeout for %s", err.phase, err.target)
+		if taskLogger != nil {
+			taskLogger("WARN", "POC %s timeout", err.phase)
+		}
+	} else {
+		logx.Errorf("Nuclei %s error for %s: %v", err.phase, err.target, err.err)
+		if taskLogger != nil {
+			taskLogger("ERROR", "POC %s error: %v", err.phase, err.err)
+		}
+	}
+}
+
 // scanSingleTarget 扫描单个目标
 func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opts *NucleiOptions, customTemplatePaths []string, templateNames []string, taskLogger func(level, format string, args ...interface{})) []*Vulnerability {
 	var vuls []*Vulnerability
 	startTime := time.Now()
 
-	// 构建Nuclei SDK选项（包含EnableMatcherStatus以获取所有模板执行结果）
-	// 注意：为每个目标创建独立的context，避免一个任务超时影响其他任务
-	// Nuclei SDK内部有全局状态，使用父context可能导致任务间相互影响
+	// 创建独立的context避免任务间相互影响
 	engineCtx, engineCancel := context.WithTimeout(context.Background(), time.Duration(opts.TargetTimeout)*time.Second)
 	defer engineCancel()
 
-	nucleiOpts := s.buildNucleiOptions(opts, customTemplatePaths)
-
-	// 创建Nuclei引擎 - 使用独立的context
-	logx.Debugf("Creating nuclei engine for %s with timeout %ds", target, opts.TargetTimeout)
-	ne, err := nuclei.NewNucleiEngineCtx(engineCtx, nucleiOpts...)
+	// 初始化引擎
+	ne, err := s.initNucleiEngine(engineCtx, opts, customTemplatePaths, target, taskLogger)
 	if err != nil {
-		logx.Errorf("Failed to create nuclei engine for %s: %v", target, err)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC不可用: 引擎初始化失败 - %v", err)
-		}
 		return vuls
 	}
 	defer ne.Close()
 
-	// 启用请求/响应存储（用于证据链）
+	// 获取实际加载的模板数量
+	loadedTemplates := ne.GetTemplates()
+	if len(loadedTemplates) == 0 {
+		logx.Errorf("No templates loaded for %s", target)
+		if taskLogger != nil {
+			taskLogger("ERROR", "POC不可用: 模板加载失败")
+		}
+		return vuls
+	}
+	if taskLogger != nil {
+		taskLogger("INFO", "  Loaded %d templates (filtered by severity)", len(loadedTemplates))
+	}
+
+	// 加载目标并执行扫描
+	ne.LoadTargets([]string{target}, false)
+	vuls = s.executeNucleiScan(ctx, engineCtx, ne, target, opts, loadedTemplates, taskLogger, startTime)
+
+	return vuls
+}
+
+// initNucleiEngine 初始化Nuclei引擎 - 提取公共逻辑
+func (s *NucleiScanner) initNucleiEngine(ctx context.Context, opts *NucleiOptions, customTemplatePaths []string, target string, taskLogger func(level, format string, args ...interface{})) (*nuclei.NucleiEngine, error) {
+	nucleiOpts := s.buildNucleiOptions(opts, customTemplatePaths)
+
+	logx.Debugf("Creating nuclei engine for %s with timeout %ds", target, opts.TargetTimeout)
+	ne, err := nuclei.NewNucleiEngineCtx(ctx, nucleiOpts...)
+	if err != nil {
+		logScanError(&nucleiScanError{target: target, phase: "engine init", err: err}, taskLogger)
+		return nil, err
+	}
+
+	// 启用请求/响应存储
 	if engineOpts := ne.Options(); engineOpts != nil {
 		engineOpts.StoreResponse = true
 	}
 
 	// 加载模板
-	logx.Debugf("Loading templates for %s", target)
 	if err := ne.LoadAllTemplates(); err != nil {
-		logx.Errorf("Failed to load templates for %s: %v", target, err)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC不可用: 模板解析失败 - %v", err)
-		}
-		// 如果加载失败，返回空结果
-		return vuls
+		ne.Close()
+		logScanError(&nucleiScanError{target: target, phase: "template load", err: err}, taskLogger)
+		return nil, err
 	}
 
-	// 获取实际加载的模板数量
-	loadedTemplates := ne.GetTemplates()
-	actualTemplateCount := len(loadedTemplates)
-	logx.Debugf("Loaded %d templates for %s (input: %d)", actualTemplateCount, target, len(customTemplatePaths))
-	
-	// 如果没有加载到任何模板，记录警告并返回
-	if actualTemplateCount == 0 {
-		logx.Errorf("No templates loaded for %s, skipping scan", target)
-		if taskLogger != nil {
-			taskLogger("ERROR", "POC不可用: 模板加载失败，请检查POC格式是否正确")
-		}
-		return vuls
-	}
-	
-	// 输出实际加载的模板数量（可能因severity过滤而减少）
-	if taskLogger != nil {
-		taskLogger("INFO", "  Loaded %d templates (filtered by severity)", actualTemplateCount)
-	}
+	return ne, nil
+}
 
-	// 加载单个目标
-	ne.LoadTargets([]string{target}, false)
-
-	// 记录扫描进度 - 使用实际加载的模板数量
-	templateCount := actualTemplateCount
-	if templateCount == 0 {
-		templateCount = len(customTemplatePaths) // 回退到传入的数量
-	}
+// executeNucleiScan 执行Nuclei扫描 - 提取扫描逻辑
+func (s *NucleiScanner) executeNucleiScan(ctx, engineCtx context.Context, ne *nuclei.NucleiEngine, target string, opts *NucleiOptions, loadedTemplates []*templates.Template, taskLogger func(level, format string, args ...interface{}), startTime time.Time) []*Vulnerability {
+	var vuls []*Vulnerability
+	templateCount := len(loadedTemplates)
 	scannedCount := 0
 	foundCount := 0
-	
-	// 用于去重同一模板的多次匹配（如 http-missing-security-headers 会匹配多个 header）
 	seenTemplates := make(map[string]bool)
 
-	logx.Debugf("Starting scan for %s with %d templates", target, templateCount)
-
-	// 监听父context取消（任务被停止）
+	// 监听父context取消
 	done := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
-			// 父context取消，取消引擎context
-			logx.Infof("Nuclei: parent context cancelled for %s, reason: %v", target, ctx.Err())
+			logx.Infof("Nuclei: parent context cancelled for %s", target)
 			if taskLogger != nil {
 				taskLogger("WARN", "POC scan interrupted: %v", ctx.Err())
 			}
-			engineCancel()
 		case <-done:
-			return
 		}
 	}()
 	defer close(done)
 
-	// 执行扫描并通过回调收集结果
-	// 使用EnableMatcherStatus后，回调会在每个模板执行完成后触发（无论是否匹配）
-	err = ne.ExecuteCallbackWithCtx(engineCtx, func(event *output.ResultEvent) {
+	// 执行扫描
+	err := ne.ExecuteCallbackWithCtx(engineCtx, func(event *output.ResultEvent) {
 		scannedCount++
-		
-		// 判断是否匹配成功（发现漏洞）
 		if event.Matched != "" {
-			// 使用 TemplateID + MatcherName 作为去重key
-			// 同一模板可能有多个matcher（如检测多个header），每个matcher匹配都会触发回调
 			vulKey := event.TemplateID + ":" + event.MatcherName
 			if !seenTemplates[vulKey] {
 				seenTemplates[vulKey] = true
 				foundCount++
-				logx.Debugf("Nuclei result: TemplateID=%s, Host=%s, Matched=%s, Matcher=%s",
-					event.TemplateID, event.Host, event.Matched, event.MatcherName)
-
-				// 发现漏洞时输出日志
 				if taskLogger != nil {
 					if event.MatcherName != "" {
 						taskLogger("INFO", "  [%d/%d] ✓ %s:%s [%s]", scannedCount, templateCount, event.TemplateID, event.MatcherName, event.Info.SeverityHolder.Severity.String())
@@ -399,48 +412,39 @@ func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opt
 						taskLogger("INFO", "  [%d/%d] ✓ %s [%s]", scannedCount, templateCount, event.TemplateID, event.Info.SeverityHolder.Severity.String())
 					}
 				}
-
-				vul := s.convertResult(event)
-				if vul != nil {
+				if vul := s.convertResult(event); vul != nil {
 					vuls = append(vuls, vul)
 				}
 			}
-		} else {
-			// 未匹配，显示扫描进度（每50个模板或最后一个显示一次）
-			if taskLogger != nil && (scannedCount%50 == 0 || scannedCount == templateCount) {
-				taskLogger("INFO", "  [%d/%d] Scanning... %d vuls found", scannedCount, templateCount, foundCount)
-			}
+		} else if taskLogger != nil && (scannedCount%50 == 0 || scannedCount == templateCount) {
+			taskLogger("INFO", "  [%d/%d] Scanning... %d vuls found", scannedCount, templateCount, foundCount)
 		}
 	})
 
-	// 详细的错误日志
-	if err != nil {
-		if engineCtx.Err() == context.DeadlineExceeded {
-			logx.Infof("Nuclei: %s timeout after %ds", target, opts.TargetTimeout)
-			if taskLogger != nil {
-				taskLogger("WARN", "POC scan timeout after %ds", opts.TargetTimeout)
-			}
-		} else if engineCtx.Err() == context.Canceled {
-			logx.Infof("Nuclei: %s cancelled", target)
-			if taskLogger != nil {
-				taskLogger("WARN", "POC scan cancelled")
-			}
-		} else {
-			logx.Errorf("Nuclei scan error for %s: %v", target, err)
-			if taskLogger != nil {
-				taskLogger("ERROR", "POC scan error: %v", err)
-			}
-		}
-	} else if engineCtx.Err() == context.DeadlineExceeded {
-		// ExecuteCallbackWithCtx 可能在超时时返回 nil error
-		logx.Infof("Nuclei: %s timeout after %ds (no error returned)", target, opts.TargetTimeout)
+	// 处理扫描结果
+	s.handleScanResult(err, engineCtx, target, opts, taskLogger, scannedCount, templateCount, foundCount, startTime)
+
+	return vuls
+}
+
+// handleScanResult 处理扫描结果 - 统一错误处理
+func (s *NucleiScanner) handleScanResult(err error, engineCtx context.Context, target string, opts *NucleiOptions, taskLogger func(level, format string, args ...interface{}), scannedCount, templateCount, foundCount int, startTime time.Time) {
+	elapsed := int(time.Since(startTime).Seconds())
+
+	if err != nil || engineCtx.Err() == context.DeadlineExceeded {
+		logScanError(&nucleiScanError{
+			target:  target,
+			phase:   "scan",
+			err:     err,
+			timeout: engineCtx.Err() == context.DeadlineExceeded,
+		}, taskLogger)
+	} else if engineCtx.Err() == context.Canceled {
 		if taskLogger != nil {
-			taskLogger("WARN", "POC scan timeout after %ds", opts.TargetTimeout)
+			taskLogger("WARN", "POC scan cancelled")
 		}
 	}
 
-	// 扫描完成后输出统计
-	elapsed := int(time.Since(startTime).Seconds())
+	// 输出统计
 	if taskLogger != nil {
 		if scannedCount < templateCount {
 			taskLogger("INFO", "  Completed: %d/%d templates (incomplete), %d vuls, %ds", scannedCount, templateCount, foundCount, elapsed)
@@ -448,8 +452,6 @@ func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opt
 			taskLogger("INFO", "  Completed: %d templates, %d vuls, %ds", scannedCount, foundCount, elapsed)
 		}
 	}
-
-	return vuls
 }
 
 // ScanBatch 批量扫描多个目标（使用单个Nuclei引擎实例）

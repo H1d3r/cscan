@@ -17,10 +17,13 @@ request.interceptors.request.use(
     if (userStore.token) {
       config.headers['Authorization'] = `Bearer ${userStore.token}`
     }
-    // 使用有效的工作空间ID（如果当前为空，会自动使用第一个工作空间）
-    const workspaceId = workspaceStore.effectiveWorkspaceId || userStore.workspaceId
-    if (workspaceId) {
-      config.headers['X-Workspace-Id'] = workspaceId
+    // 设置工作空间ID header
+    // 'all' 或空字符串表示查询所有工作空间
+    const currentWsId = workspaceStore.currentWorkspaceId
+    if (currentWsId === 'all' || !currentWsId) {
+      config.headers['X-Workspace-Id'] = 'all'
+    } else {
+      config.headers['X-Workspace-Id'] = currentWsId
     }
     return config
   },
