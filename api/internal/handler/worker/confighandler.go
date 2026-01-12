@@ -24,6 +24,8 @@ type WorkerTemplatesReq struct {
 	// 按ID获取
 	NucleiTemplateIds []string `json:"nucleiTemplateIds,omitempty"`
 	CustomPocIds      []string `json:"customPocIds,omitempty"`
+	// 获取所有自定义POC
+	CustomPocOnly bool `json:"customPocOnly,omitempty"`
 }
 
 // WorkerTemplatesResp 模板获取响应
@@ -195,6 +197,20 @@ func WorkerConfigTemplatesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			rpcResp, err := svcCtx.TaskRpcClient.GetTemplatesByIds(r.Context(), rpcReq)
 			if err != nil {
 				logx.Errorf("[WorkerConfigTemplates] RPC GetTemplatesByIds error: %v", err)
+				response.Error(w, err)
+				return
+			}
+			templates = rpcResp.Templates
+			count = rpcResp.Count
+		} else if req.CustomPocOnly {
+			// 获取所有自定义POC
+			rpcReq := &pb.GetTemplatesByTagsReq{
+				Severities:    req.Severities,
+				CustomPocOnly: true,
+			}
+			rpcResp, err := svcCtx.TaskRpcClient.GetTemplatesByTags(r.Context(), rpcReq)
+			if err != nil {
+				logx.Errorf("[WorkerConfigTemplates] RPC GetTemplatesByTags (customPocOnly) error: %v", err)
 				response.Error(w, err)
 				return
 			}

@@ -27,12 +27,42 @@
 ```bash
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
+
+# 使用管理脚本（推荐）
+chmod +x cscan.sh
+./cscan.sh
+
+# 或直接启动
 docker-compose up -d
 ```
 
 访问 `https://ip:3443`，默认账号 `admin / 123456`
 
 > **注意：执行扫描之前需要手动先部署 Worker 节点**
+
+## 管理脚本
+
+提供交互式菜单和命令行两种方式：
+
+```bash
+# 交互式菜单
+./cscan.sh
+
+# 命令行方式
+./cscan.sh install    # 一键安装
+./cscan.sh upgrade    # 一键升级
+./cscan.sh uninstall  # 一键卸载
+./cscan.sh status     # 查看状态
+./cscan.sh start      # 启动服务
+./cscan.sh stop       # 停止服务
+./cscan.sh restart    # 重启服务
+./cscan.sh logs       # 查看日志
+
+# Windows
+cscan.bat
+```
+
+升级过程会自动保留数据（MongoDB、Redis、JWT密钥等）。
 
 ## 架构说明
 

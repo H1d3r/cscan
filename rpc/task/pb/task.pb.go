@@ -1604,6 +1604,7 @@ type GetTemplatesByTagsReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tags          []string               `protobuf:"bytes,1,rep,name=tags,proto3" json:"tags,omitempty"`
 	Severities    []string               `protobuf:"bytes,2,rep,name=severities,proto3" json:"severities,omitempty"`
+	CustomPocOnly bool                   `protobuf:"varint,3,opt,name=customPocOnly,proto3" json:"customPocOnly,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1650,6 +1651,13 @@ func (x *GetTemplatesByTagsReq) GetSeverities() []string {
 		return x.Severities
 	}
 	return nil
+}
+
+func (x *GetTemplatesByTagsReq) GetCustomPocOnly() bool {
+	if x != nil {
+		return x.CustomPocOnly
+	}
+	return false
 }
 
 // 根据标签获取模板响应

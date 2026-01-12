@@ -28,6 +28,38 @@ func NewGetTemplatesByTagsLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 func (l *GetTemplatesByTagsLogic) GetTemplatesByTags(in *pb.GetTemplatesByTagsReq) (*pb.GetTemplatesByTagsResp, error) {
 	var templates []string
 
+	// 如果是只获取自定义POC模式
+	if in.CustomPocOnly {
+		// 构建自定义POC查询条件
+		filter := bson.M{"enabled": true}
+		if len(in.Severities) > 0 {
+			filter["severity"] = bson.M{"$in": in.Severities}
+		}
+
+		// 使用FindWithFilter，传入0表示不分页
+		customPocs, err := l.svcCtx.CustomPocModel.FindWithFilter(l.ctx, filter, 0, 0)
+		if err != nil {
+			l.Logger.Errorf("FindWithFilter for custom pocs failed: %v", err)
+			return &pb.GetTemplatesByTagsResp{
+				Success: false,
+				Message: "获取自定义POC失败: " + err.Error(),
+			}, nil
+		}
+		for _, p := range customPocs {
+			if p.Content != "" {
+				templates = append(templates, p.Content)
+			}
+		}
+
+		l.Logger.Infof("CustomPocOnly mode: found %d custom POCs", len(templates))
+		return &pb.GetTemplatesByTagsResp{
+			Success:   true,
+			Message:   "success",
+			Templates: templates,
+			Count:     int32(len(templates)),
+		}, nil
+	}
+
 	// 构建查询条件
 	filter := bson.M{"enabled": true}
 

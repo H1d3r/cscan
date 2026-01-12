@@ -506,6 +506,18 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 			return nil
 		}
 
+		// 使用文件名（不含扩展名）作为字典名称
+		fileName := filepath.Base(path)
+		dictName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+
+		// 检查是否已存在同名字典，如果存在则跳过
+		existing, _ := s.subdomainDictModel.FindByName(ctx, dictName)
+		if existing != nil && existing.Name != "" {
+			logx.Debugf("[SyncMethods] Subdomain dict '%s' already exists, skipping", dictName)
+			totalSkipped++
+			return nil
+		}
+
 		// 读取文件内容
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -520,10 +532,6 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 			return nil
 		}
 
-		// 使用文件名（不含扩展名）作为字典名称
-		fileName := filepath.Base(path)
-		dictName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-
 		dict := &model.SubdomainDict{
 			Name:        dictName,
 			Description: "系统内置子域名字典",
@@ -533,8 +541,8 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 			IsBuiltin:   true,
 		}
 
-		if err := s.subdomainDictModel.UpsertByName(ctx, dict); err != nil {
-			logx.Errorf("[SyncMethods] Failed to upsert builtin subdomain dict %s: %v", dictName, err)
+		if err := s.subdomainDictModel.Insert(ctx, dict); err != nil {
+			logx.Errorf("[SyncMethods] Failed to insert builtin subdomain dict %s: %v", dictName, err)
 			totalSkipped++
 		} else {
 			totalImported++

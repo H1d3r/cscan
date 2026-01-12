@@ -220,6 +220,7 @@ message RequestResourceResp {
 message GetTemplatesByTagsReq {
   repeated string tags = 1;
   repeated string severities = 2;
+  bool customPocOnly = 3;  // 只获取自定义POC
 }
 
 // 根据标签获取模板响应

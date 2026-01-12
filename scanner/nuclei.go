@@ -721,7 +721,15 @@ func (s *NucleiScanner) convertResult(event *output.ResultEvent) *Vulnerability 
 		return nil
 	}
 
-	host, port := s.parseHostPort(event.Host)
+	// 优先从 Matched URL 解析 host 和 port（实际漏洞URL）
+	// 如果 Matched 为空，则回退到 Host
+	var host string
+	var port int
+	if event.Matched != "" {
+		host, port = s.parseHostPort(event.Matched)
+	} else {
+		host, port = s.parseHostPort(event.Host)
+	}
 
 	resultDesc := event.Info.Name
 	if event.Info.Description != "" {

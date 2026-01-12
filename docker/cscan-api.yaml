@@ -12,7 +12,7 @@ Log:
   TimeFormat: 2006-01-02 15:04:05
   
 Auth:
-  AccessSecret: "cscan-jwt-secret-key-2024"
+  AccessSecret: ${JWT_SECRET}
   AccessExpire: 86400
 
 Mongo:

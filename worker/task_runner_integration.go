@@ -440,6 +440,14 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	if len(config.NucleiTemplateIds) > 0 || len(config.CustomPocIds) > 0 {
 		templates = w.getTemplatesByIds(ctx.Ctx, config.NucleiTemplateIds, config.CustomPocIds)
 		w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+	} else if config.CustomPocOnly {
+		// 只使用自定义POC模式，获取所有自定义POC
+		severities := []string{}
+		if config.Severity != "" {
+			severities = strings.Split(config.Severity, ",")
+		}
+		templates = w.getAllCustomPocs(ctx.Ctx, severities)
+		w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
 	} else {
 		if config.AutoScan || config.AutomaticScan {
 			autoTags = w.generateAutoTags(ctx.Assets, config)

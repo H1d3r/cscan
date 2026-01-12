@@ -41,6 +41,8 @@ services:
     container_name: cscan_api
     environment:
       - TZ=Asia/Shanghai
+    volumes:
+      - cscan_api_data:/app/data
     ports:
       - "8888:8888"
     depends_on:
@@ -90,6 +92,8 @@ volumes:
   cscan_mongodb_data:
     driver: local
   cscan_ssl_certs:
+    driver: local
+  cscan_api_data:
     driver: local
 
 networks:

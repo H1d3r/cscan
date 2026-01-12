@@ -21,8 +21,8 @@ FROM alpine:3.19
 
 WORKDIR /app
 
-# 安装证书和依赖
-RUN apk add --no-cache ca-certificates tzdata libpcap
+# 安装证书和依赖 (添加envsubst支持)
+RUN apk add --no-cache ca-certificates tzdata libpcap gettext
 
 # 复制 poc 目录
 COPY poc/ ./poc/
@@ -32,8 +32,12 @@ ENV TZ=Asia/Shanghai
 
 # 复制编译产物
 COPY --from=builder /cscan-api .
-COPY docker/cscan-api.yaml ./etc/
+COPY docker/cscan-api.yaml ./etc/cscan-api.yaml.template
+COPY docker/entrypoint.sh ./
+
+RUN chmod +x ./entrypoint.sh
 
 EXPOSE 8888
 
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["./cscan-api", "-f", "etc/cscan-api.yaml"]

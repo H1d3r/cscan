@@ -1627,6 +1627,14 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 				// 通过RPC根据ID获取模板内容（包括默认模板和自定义POC)
 				templates = w.getTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
 				w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+			} else if config.PocScan.CustomPocOnly {
+				// 只使用自定义POC模式，但没有指定具体ID，获取所有自定义POC
+				severities := []string{}
+				if config.PocScan.Severity != "" {
+					severities = strings.Split(config.PocScan.Severity, ",")
+				}
+				templates = w.getAllCustomPocs(ctx, severities)
+				w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
 			} else {
 				// 没有预设的模板ID，根据自动扫描配置生成标签并获取模板
 				if config.PocScan.AutoScan || config.PocScan.AutomaticScan {
@@ -2432,6 +2440,27 @@ func (w *Worker) getTemplatesByIds(ctx context.Context, nucleiTemplateIds, custo
 	}
 
 	w.logger.Info("GetTemplatesByIds: fetched %d templates", resp.Count)
+	return resp.Templates
+}
+
+// getAllCustomPocs 获取所有自定义POC
+func (w *Worker) getAllCustomPocs(ctx context.Context, severities []string) []string {
+	// 通过 HTTP 接口获取所有自定义POC
+	resp, err := w.httpClient.GetTemplates(ctx, &TemplatesReq{
+		Severities:    severities,
+		CustomPocOnly: true,
+	})
+	if err != nil {
+		w.logger.Error("GetAllCustomPocs HTTP failed: %v", err)
+		return nil
+	}
+
+	if !resp.Success {
+		w.logger.Error("GetAllCustomPocs failed: %s", resp.Msg)
+		return nil
+	}
+
+	w.logger.Info("GetAllCustomPocs: fetched %d custom POC templates", resp.Count)
 	return resp.Templates
 }
 

@@ -214,6 +214,7 @@ type TemplatesReq struct {
 	Severities        []string `json:"severities,omitempty"`
 	NucleiTemplateIds []string `json:"nucleiTemplateIds,omitempty"`
 	CustomPocIds      []string `json:"customPocIds,omitempty"`
+	CustomPocOnly     bool     `json:"customPocOnly,omitempty"`
 }
 
 // TemplatesResp 模板获取响应
