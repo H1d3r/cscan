@@ -117,3 +117,8 @@ func (m *WorkspaceModel) Delete(ctx context.Context, id string) error {
 	_, err = m.coll.DeleteOne(ctx, bson.M{"_id": oid})
 	return err
 }
+
+// FindAll 获取所有工作空间
+func (m *WorkspaceModel) FindAll(ctx context.Context) ([]Workspace, error) {
+	return m.Find(ctx, bson.M{}, 0, 0)
+}

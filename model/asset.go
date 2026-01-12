@@ -39,6 +39,7 @@ type Asset struct {
 	Banner        string             `bson:"banner,omitempty" json:"banner"`
 	Title         string             `bson:"title,omitempty" json:"title"`
 	App           []string           `bson:"app,omitempty" json:"app"`
+	Fingerprints  []string           `bson:"fingerprints,omitempty" json:"fingerprints,omitempty"`
 	HttpStatus    string             `bson:"status,omitempty" json:"httpStatus"`
 	HttpHeader    string             `bson:"header,omitempty" json:"httpHeader"`
 	HttpBody      string             `bson:"body,omitempty" json:"httpBody"`
