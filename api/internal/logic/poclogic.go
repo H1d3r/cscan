@@ -1386,7 +1386,7 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesAsync(region string, forc
 			break
 		}
 		lastErr = fmt.Errorf("%v, output: %s", err, string(output))
-		logx.Warnf("[Nuclei Templates] Failed to download from %s: %v", repoURL, lastErr)
+		logx.Errorf("[Nuclei Templates] Failed to download from %s: %v", repoURL, lastErr)
 	}
 
 	if successURL == "" {
