@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -25,10 +26,11 @@ func NewNmapScanner() *NmapScanner {
 
 // NmapOptions Nmap扫描选项
 type NmapOptions struct {
-	Ports   string `json:"ports"`
-	Rate    int    `json:"rate"`
-	Timeout int    `json:"timeout"`
-	Args    string `json:"args"` // 额外参数
+	Ports      string `json:"ports"`
+	Rate       int    `json:"rate"`
+	Timeout    int    `json:"timeout"`
+	Args       string `json:"args"`       // 额外参数
+	Concurrent int    `json:"concurrent"` // 并发扫描的端口数，默认为1（每次扫描一个端口）
 }
 
 // Validate 验证 NmapOptions 配置是否有效
@@ -39,6 +41,9 @@ func (o *NmapOptions) Validate() error {
 	}
 	if o.Timeout < 0 {
 		return fmt.Errorf("timeout must be non-negative, got %d", o.Timeout)
+	}
+	if o.Concurrent < 0 {
+		return fmt.Errorf("concurrent must be non-negative, got %d", o.Concurrent)
 	}
 	return nil
 }
@@ -106,8 +111,9 @@ type NmapService struct {
 func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	// 默认配置
 	opts := &NmapOptions{
-		Ports:   "21,22,23,25,80,443,3306,3389,6379,8080",
-		Timeout: 3,
+		Ports:      "21,22,23,25,80,443,3306,3389,6379,8080",
+		Timeout:    3,
+		Concurrent: 1, // 默认每次扫描一个端口，降低扫描影响
 	}
 
 	// 尝试从不同类型的Options中提取配置
@@ -122,12 +128,20 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 			if v.Timeout > 0 {
 				opts.Timeout = v.Timeout
 			}
+			if v.Concurrent > 0 {
+				opts.Concurrent = v.Concurrent
+			}
 		default:
 			// 尝试通过JSON转换
 			if data, err := json.Marshal(config.Options); err == nil {
 				json.Unmarshal(data, opts)
 			}
 		}
+	}
+
+	// 确保并发数至少为1
+	if opts.Concurrent <= 0 {
+		opts.Concurrent = 1
 	}
 
 	// 检查nmap是否安装
@@ -145,7 +159,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 
 	// 执行nmap扫描
-	assets := s.runNmap(ctx, targets, opts)
+	assets := s.runNmap(ctx, targets, opts, config.OnProgress)
 
 	return &ScanResult{
 		WorkspaceId: config.WorkspaceId,
@@ -155,30 +169,87 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 }
 
 // runNmap 运行nmap
-func (s *NmapScanner) runNmap(ctx context.Context, targets []string, opts *NmapOptions) []*Asset {
+// 优化为每个端口一个进程，通过并发控制降低扫描影响
+func (s *NmapScanner) runNmap(ctx context.Context, targets []string, opts *NmapOptions, onProgress func(int, string)) []*Asset {
 	var assets []*Asset
+	var mu sync.Mutex
 
-	// 构建IP到原始目标的映射（用于域名解析后还原）
-	ipToTarget := make(map[string]string)
-	for _, target := range targets {
-		// 如果是域名，记录映射关系
-		if getCategory(target) == "domain" {
-			ipToTarget[target] = target
+	// 使用 parsePorts 解析端口
+	ports := parsePorts(opts.Ports)
+	totalPorts := len(ports)
+
+	if totalPorts == 0 {
+		logx.Info("No ports to scan")
+		return assets
+	}
+
+	logx.Infof("Starting nmap scan: %d ports, %d targets, concurrent=%d", totalPorts, len(targets), opts.Concurrent)
+
+	// 创建任务通道
+	type scanTask struct {
+		port  int
+		index int
+	}
+	taskChan := make(chan scanTask, opts.Concurrent)
+
+	// 使用 WaitGroup 等待所有扫描完成
+	var wg sync.WaitGroup
+
+	// 启动工作协程
+	for i := 0; i < opts.Concurrent; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range taskChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// 执行单端口扫描
+					result := s.scanSinglePort(ctx, targets, task.port, opts)
+					if len(result) > 0 {
+						mu.Lock()
+						assets = append(assets, result...)
+						mu.Unlock()
+					}
+
+					// 更新进度
+					if onProgress != nil {
+						progress := (task.index + 1) * 100 / totalPorts
+						onProgress(progress, fmt.Sprintf("Scanning port %d (%d/%d)", task.port, task.index+1, totalPorts))
+					}
+				}
+			}
+		}()
+	}
+
+	// 分发任务
+	for i, port := range ports {
+		select {
+		case <-ctx.Done():
+			close(taskChan)
+			wg.Wait()
+			return assets
+		case taskChan <- scanTask{port: port, index: i}:
 		}
 	}
 
-	// 使用 parsePorts 解析端口，统一处理 top100/top1000 和其他格式
-	ports := parsePorts(opts.Ports)
-	portsStr := portsToString(ports)
+	close(taskChan)
+	wg.Wait()
+
+	logx.Infof("Nmap scan completed: found %d open ports", len(assets))
+	return assets
+}
+
+// scanSinglePort 扫描单个端口
+func (s *NmapScanner) scanSinglePort(ctx context.Context, targets []string, port int, opts *NmapOptions) []*Asset {
+	var assets []*Asset
 
 	// 构建nmap命令
-	// -sV: 服务版本探测
-	// -sS: SYN扫描（需要root权限）
-	// -Pn: 跳过主机发现（端口已由Masscan确认存活）
 	args := []string{
-		"-Pn",                                       // 跳过主机发现
-		"-p", portsStr,                              // 端口
-		"-oX", "-", // XML输出到stdout
+		"-Pn",                          // 跳过主机发现
+		"-p", fmt.Sprintf("%d", port),  // 单个端口
+		"-oX", "-",                     // XML输出到stdout
 	}
 
 	// 添加额外参数
@@ -195,14 +266,18 @@ func (s *NmapScanner) runNmap(ctx context.Context, targets []string, opts *NmapO
 	cmd := exec.CommandContext(ctx, "nmap", args...)
 	output, err := cmd.Output()
 	if err != nil {
-		logx.Errorf("nmap error: %v", err)
+		// 检查是否是上下文取消
+		if ctx.Err() != nil {
+			return assets
+		}
+		logx.Errorf("nmap error for port %d: %v", port, err)
 		return assets
 	}
 
 	// 解析XML输出
 	var nmapRun NmapRun
 	if err := xml.Unmarshal(output, &nmapRun); err != nil {
-		logx.Errorf("nmap xml parse error: %v", err)
+		logx.Errorf("nmap xml parse error for port %d: %v", port, err)
 		return assets
 	}
 
@@ -210,40 +285,36 @@ func (s *NmapScanner) runNmap(ctx context.Context, targets []string, opts *NmapO
 		// 获取IPv4地址（忽略MAC地址）
 		ip := host.GetIPv4Address()
 		if ip == "" {
-			logx.Infof("No valid IP address found for host, skipping")
 			continue
 		}
-		
+
 		// 查找原始目标（可能是域名）
 		originalTarget := ip
 		for _, target := range targets {
-			// 如果目标是域名，使用域名作为Authority
 			if getCategory(target) == "domain" {
-				// nmap会将域名解析为IP，这里尝试匹配
 				originalTarget = target
 				break
 			}
 		}
-		
-		for _, port := range host.Ports.Ports {
-			if port.State.State == "open" {
-				// 如果原始目标是域名，Authority使用域名；否则使用IP
-				authority := fmt.Sprintf("%s:%d", originalTarget, port.PortID)
+
+		for _, nmapPort := range host.Ports.Ports {
+			if nmapPort.State.State == "open" {
+				authority := fmt.Sprintf("%s:%d", originalTarget, nmapPort.PortID)
 				hostStr := originalTarget
 				category := getCategory(originalTarget)
-				
+
 				asset := &Asset{
 					Authority: authority,
 					Host:      hostStr,
-					Port:      port.PortID,
+					Port:      nmapPort.PortID,
 					Category:  category,
-					Service:   port.Service.Name,
+					Service:   nmapPort.Service.Name,
 				}
 				// 如果有产品信息，添加到App
-				if port.Service.Product != "" {
-					productInfo := port.Service.Product
-					if port.Service.Version != "" {
-						productInfo += ":" + port.Service.Version
+				if nmapPort.Service.Product != "" {
+					productInfo := nmapPort.Service.Product
+					if nmapPort.Service.Version != "" {
+						productInfo += ":" + nmapPort.Service.Version
 					}
 					asset.App = []string{productInfo}
 				}

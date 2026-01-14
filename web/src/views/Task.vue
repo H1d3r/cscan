@@ -78,165 +78,368 @@
       />
     </el-card>
 
-    <!-- 任务详情对话框 -->
-    <el-dialog v-model="detailVisible" :title="$t('task.taskDetail')" width="850px">
-      <el-descriptions :column="2" border>
-        <el-descriptions-item :label="$t('task.taskName')">{{ currentTask.name }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('task.status')">
-          <el-tag :type="getStatusType(currentTask.status, currentTask)">{{ getStatusText(currentTask) }}</el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item :label="$t('task.progress')">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <el-progress :percentage="Math.min(currentTask.progress || 0, 100)" :stroke-width="10" style="width: 120px" />
-            <span class="progress-hint">{{ currentTask.subTaskDone || 0 }}/{{ currentTask.subTaskCount || 0 }}</span>
+    <!-- 任务详情对话框 - 现代化设计 -->
+    <el-dialog v-model="detailVisible" :title="$t('task.taskDetail')" width="900px" class="task-detail-dialog" destroy-on-close>
+      <!-- 顶部任务概览卡片 -->
+      <div class="detail-header">
+        <div class="detail-header-main">
+          <div class="task-title-row">
+            <h3 class="task-title">{{ currentTask.name }}</h3>
+            <el-tag :type="getStatusType(currentTask.status, currentTask)" size="large" effect="dark" class="status-tag">
+              {{ getStatusText(currentTask) }}
+            </el-tag>
           </div>
-        </el-descriptions-item>
-        <el-descriptions-item :label="$t('common.createTime')">{{ currentTask.createTime }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('task.startTime')">{{ currentTask.startTime || '-' }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('task.endTime')">
-          {{ (currentTask.status === 'SUCCESS' || currentTask.status === 'FAILURE' || currentTask.status === 'STOPPED') ? (currentTask.endTime || '-') : '-' }}
-        </el-descriptions-item>
-        <el-descriptions-item :label="$t('task.scanTarget')" :span="2">
-          <div style="max-height: 100px; overflow-y: auto; white-space: pre-wrap">{{ currentTask.target }}</div>
-        </el-descriptions-item>
-        <el-descriptions-item :label="$t('task.executionResult')" :span="2">
-          <div style="max-height: 100px; overflow-y: auto">{{ currentTask.result || '-' }}</div>
-        </el-descriptions-item>
-      </el-descriptions>
+          <div class="task-target">
+            <el-icon><Aim /></el-icon>
+            <span class="target-text">{{ currentTask.target }}</span>
+          </div>
+        </div>
+        
+        <!-- 进度环形图 -->
+        <div class="progress-circle-wrapper">
+          <el-progress 
+            type="circle" 
+            :percentage="Math.min(currentTask.progress || 0, 100)" 
+            :width="90"
+            :stroke-width="8"
+            :color="getProgressColor(currentTask.status)"
+          >
+            <template #default="{ percentage }">
+              <span class="progress-value">{{ percentage }}%</span>
+            </template>
+          </el-progress>
+          <div class="subtask-info">{{ currentTask.subTaskDone || 0 }}/{{ currentTask.subTaskCount || 0 }}</div>
+        </div>
+      </div>
+
+      <!-- 时间信息卡片 -->
+      <div class="time-cards">
+        <div class="time-card">
+          <el-icon class="time-icon"><Clock /></el-icon>
+          <div class="time-content">
+            <span class="time-label">{{ $t('common.createTime') }}</span>
+            <span class="time-value">{{ currentTask.createTime || '-' }}</span>
+          </div>
+        </div>
+        <div class="time-card">
+          <el-icon class="time-icon"><VideoPlay /></el-icon>
+          <div class="time-content">
+            <span class="time-label">{{ $t('task.startTime') }}</span>
+            <span class="time-value">{{ currentTask.startTime || '-' }}</span>
+          </div>
+        </div>
+        <div class="time-card">
+          <el-icon class="time-icon"><CircleCheck /></el-icon>
+          <div class="time-content">
+            <span class="time-label">{{ $t('task.endTime') }}</span>
+            <span class="time-value">{{ ['SUCCESS', 'FAILURE', 'STOPPED'].includes(currentTask.status) ? (currentTask.endTime || '-') : '-' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 执行结果 -->
+      <div v-if="currentTask.result" class="result-section">
+        <div class="section-title">
+          <el-icon><Document /></el-icon>
+          <span>{{ $t('task.executionResult') }}</span>
+        </div>
+        <div class="result-content">{{ currentTask.result }}</div>
+      </div>
       
-      <!-- 任务配置详情 -->
-      <div v-if="parsedConfig" class="config-section">
-        <h4 style="margin: 15px 0 10px">{{ $t('task.scanConfig') }}</h4>
-        <el-descriptions :column="3" border size="small">
-          <el-descriptions-item :label="$t('task.subdomainScan')">
-            <el-tag :type="parsedConfig.domainscan?.enable ? 'success' : 'info'" size="small">
+      <!-- 扫描配置概览 -->
+      <div v-if="parsedConfig" class="config-section-modern">
+        <div class="section-title">
+          <el-icon><Setting /></el-icon>
+          <span>{{ $t('task.scanConfig') }}</span>
+        </div>
+        
+        <!-- 模块开关状态 -->
+        <div class="module-grid">
+          <div class="module-card" :class="{ active: parsedConfig.domainscan?.enable }">
+            <el-icon class="module-icon"><Connection /></el-icon>
+            <span class="module-name">{{ $t('task.subdomainScan') }}</span>
+            <el-tag :type="parsedConfig.domainscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.domainscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.portScan')">
-            <el-tag :type="parsedConfig.portscan?.enable !== false ? 'success' : 'info'" size="small">
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.portscan?.enable !== false }">
+            <el-icon class="module-icon"><Monitor /></el-icon>
+            <span class="module-name">{{ $t('task.portScan') }}</span>
+            <el-tag :type="parsedConfig.portscan?.enable !== false ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.portscan?.enable !== false ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.portIdentify')">
-            <el-tag :type="parsedConfig.portidentify?.enable ? 'success' : 'info'" size="small">
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.portidentify?.enable }">
+            <el-icon class="module-icon"><Search /></el-icon>
+            <span class="module-name">{{ $t('task.portIdentify') }}</span>
+            <el-tag :type="parsedConfig.portidentify?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.portidentify?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.fingerprintScan')">
-            <el-tag :type="parsedConfig.fingerprint?.enable ? 'success' : 'info'" size="small">
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.fingerprint?.enable }">
+            <el-icon class="module-icon"><Stamp /></el-icon>
+            <span class="module-name">{{ $t('task.fingerprintScan') }}</span>
+            <el-tag :type="parsedConfig.fingerprint?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.fingerprint?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.vulScan')">
-            <el-tag :type="parsedConfig.pocscan?.enable ? 'success' : 'info'" size="small">
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.pocscan?.enable }">
+            <el-icon class="module-icon"><WarnTriangleFilled /></el-icon>
+            <span class="module-name">{{ $t('task.vulScan') }}</span>
+            <el-tag :type="parsedConfig.pocscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.pocscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.dirScan')">
-            <el-tag :type="parsedConfig.dirscan?.enable ? 'success' : 'info'" size="small">
+          </div>
+          <div class="module-card" :class="{ active: parsedConfig.dirscan?.enable }">
+            <el-icon class="module-icon"><FolderOpened /></el-icon>
+            <span class="module-name">{{ $t('task.dirScan') }}</span>
+            <el-tag :type="parsedConfig.dirscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.dirscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item :label="$t('task.taskSplit')">
+          </div>
+        </div>
+        
+        <!-- 任务分割信息 -->
+        <div class="batch-info">
+          <el-icon><Grid /></el-icon>
+          <span>{{ $t('task.taskSplit') }}: </span>
+          <el-tag type="primary" effect="plain" size="small">
             {{ parsedConfig.batchSize === 0 ? $t('task.noSplit') : ((parsedConfig.batchSize || 50) + $t('task.targetsPerBatch')) }}
-          </el-descriptions-item>
-        </el-descriptions>
-        
-        <!-- 子域名扫描配置 -->
-        <div v-if="parsedConfig.domainscan?.enable" class="config-detail">
-          <el-descriptions :column="4" border size="small" :title="$t('task.subdomainScan')">
-            <el-descriptions-item :label="$t('task.useSubfinder')">{{ parsedConfig.domainscan?.subfinder !== false ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.timeout')">{{ parsedConfig.domainscan?.timeout || 300 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.concurrentThreads')">{{ parsedConfig.domainscan?.threads || 10 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.dnsResolve')">{{ parsedConfig.domainscan?.resolveDNS ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.removeWildcard')">{{ parsedConfig.domainscan?.removeWildcard ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.concurrent')">{{ parsedConfig.domainscan?.concurrent || 50 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.rateLimit')">{{ parsedConfig.domainscan?.rateLimit || 0 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.dictBrute')">{{ parsedConfig.domainscan?.subdomainDictIds?.length ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.domainscan?.subdomainDictIds?.length" :label="$t('task.dictCount')" :span="2">
-              {{ parsedConfig.domainscan.subdomainDictIds.length }}
-            </el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.domainscan?.recursiveBrute" :label="$t('task.recursiveBrute')">{{ $t('common.yes') }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.domainscan?.wildcardDetect" :label="$t('task.wildcardDetect')">{{ $t('common.yes') }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.domainscan?.subdomainCrawl" :label="$t('task.subdomainCrawl')">{{ $t('common.yes') }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.domainscan?.takeoverCheck" :label="$t('task.takeoverCheck')">{{ $t('common.yes') }}</el-descriptions-item>
-          </el-descriptions>
+          </el-tag>
         </div>
         
-        <!-- 端口扫描配置 -->
-        <div v-if="parsedConfig.portscan?.enable !== false" class="config-detail">
-          <el-descriptions :column="4" border size="small" :title="$t('task.portScan')">
-            <el-descriptions-item :label="$t('task.scanTool')">{{ parsedConfig.portscan?.tool || 'naabu' }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.portRange')">{{ parsedConfig.portscan?.ports || 'top100' }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.scanRate')">{{ parsedConfig.portscan?.rate || 1000 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.portThreshold')">{{ parsedConfig.portscan?.portThreshold || 100 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.scanType')">{{ parsedConfig.portscan?.scanType === 's' ? 'SYN' : 'CONNECT' }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.timeout')">{{ parsedConfig.portscan?.timeout || 60 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.skipHostDiscovery')">{{ parsedConfig.portscan?.skipHostDiscovery ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.excludeCdnWaf')">{{ parsedConfig.portscan?.excludeCDN ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.excludeTargets')">{{ parsedConfig.portscan?.excludeHosts || '-' }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-        
-        <!-- 端口识别配置 -->
-        <div v-if="parsedConfig.portidentify?.enable" class="config-detail">
-          <el-descriptions :column="3" border size="small" :title="$t('task.portIdentify')">
-            <el-descriptions-item :label="$t('task.timeout')">{{ parsedConfig.portidentify?.timeout || 30 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.extraParams')">{{ parsedConfig.portidentify?.args || '-' }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-        
-        <!-- 指纹识别配置 -->
-        <div v-if="parsedConfig.fingerprint?.enable" class="config-detail">
-          <el-descriptions :column="4" border size="small" :title="$t('task.fingerprintScan')">
-            <el-descriptions-item :label="$t('task.probeTool')">
-              <el-tag :type="parsedConfig.fingerprint?.tool === 'httpx' ? 'primary' : 'success'" size="small">
-                {{ parsedConfig.fingerprint?.tool === 'httpx' ? 'Httpx' : 'Wappalyzer (' + $t('task.builtinEngine') + ')' }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item :label="$t('task.iconHash')">{{ parsedConfig.fingerprint?.iconHash ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.customFingerprint')">{{ parsedConfig.fingerprint?.customEngine ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.screenshot')">{{ parsedConfig.fingerprint?.screenshot ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.activeScan')">{{ parsedConfig.fingerprint?.activeScan ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.timeout')">{{ parsedConfig.fingerprint?.targetTimeout || parsedConfig.fingerprint?.timeout || 30 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.concurrent')">{{ parsedConfig.fingerprint?.concurrency || 10 }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.fingerprint?.activeScan" :label="$t('task.activeTimeout')">{{ parsedConfig.fingerprint?.activeTimeout || 5 }}{{ $t('task.seconds') }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-        
-        <!-- 漏洞扫描配置 -->
-        <div v-if="parsedConfig.pocscan?.enable" class="config-detail">
-          <el-descriptions :column="3" border size="small" :title="$t('task.vulScan')">
-            <el-descriptions-item :label="$t('task.pocSource')">
-              {{ parsedConfig.pocscan?.customPocOnly ? $t('task.customPocOnly') : $t('task.defaultAndCustom') }}
-            </el-descriptions-item>
-            <el-descriptions-item :label="$t('task.autoScanCustomTag')">{{ parsedConfig.pocscan?.autoScan ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.autoScanBuiltinMapping')">{{ parsedConfig.pocscan?.automaticScan ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.severityLevel')">{{ parsedConfig.pocscan?.severity || 'critical,high,medium' }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.targetTimeout')">{{ parsedConfig.pocscan?.targetTimeout || 600 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.concurrent')">{{ parsedConfig.pocscan?.concurrency || 25 }}</el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.pocscan?.nucleiTemplateIds?.length" :label="$t('task.specifyNucleiTemplate')" :span="3">
-              {{ parsedConfig.pocscan.nucleiTemplateIds.length }} {{ $t('task.dictCount') }}
-            </el-descriptions-item>
-            <el-descriptions-item v-if="parsedConfig.pocscan?.customPocIds?.length" :label="$t('task.specifyCustomPoc')" :span="3">
-              {{ parsedConfig.pocscan.customPocIds.length }} {{ $t('task.dictCount') }}
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-        
-        <!-- 目录扫描配置 -->
-        <div v-if="parsedConfig.dirscan?.enable" class="config-detail">
-          <el-descriptions :column="4" border size="small" :title="$t('task.dirScan')">
-            <el-descriptions-item :label="$t('task.concurrent')">{{ parsedConfig.dirscan?.threads || parsedConfig.dirscan?.concurrency || 10 }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.timeout')">{{ parsedConfig.dirscan?.timeout || 10 }}{{ $t('task.seconds') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.followRedirect')">{{ parsedConfig.dirscan?.followRedirect ? $t('common.yes') : $t('common.no') }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.statusCodeFilter')">{{ parsedConfig.dirscan?.statusCodes || '200,301,302,403' }}</el-descriptions-item>
-            <el-descriptions-item :label="$t('task.useDict')">
-              {{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dictCount')) : $t('task.defaultDict') }}
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
+        <!-- 详细配置 - 折叠面板 -->
+        <el-collapse v-model="activeConfigPanels" class="config-collapse">
+          <!-- 子域名扫描配置 -->
+          <el-collapse-item v-if="parsedConfig.domainscan?.enable" name="domainscan">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><Connection /></el-icon>
+                <span>{{ $t('task.subdomainScan') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.useSubfinder') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.subfinder !== false ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.timeout') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.timeout || 300 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.concurrentThreads') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.threads || 10 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.dnsResolve') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.resolveDNS ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.removeWildcard') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.removeWildcard ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.concurrent') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.concurrent || 50 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.rateLimit') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.rateLimit || 0 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.dictBrute') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.subdomainDictIds?.length ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div v-if="parsedConfig.domainscan?.subdomainDictIds?.length" class="config-item">
+                <span class="config-label">{{ $t('task.dictCount') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan.subdomainDictIds.length }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+          
+          <!-- 端口扫描配置 -->
+          <el-collapse-item v-if="parsedConfig.portscan?.enable !== false" name="portscan">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><Monitor /></el-icon>
+                <span>{{ $t('task.portScan') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.scanTool') }}</span>
+                <span class="config-value highlight">{{ parsedConfig.portscan?.tool || 'naabu' }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.portRange') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.ports || 'top100' }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.scanRate') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.rate || 1000 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.portThreshold') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.portThreshold || 100 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.scanType') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.scanType === 's' ? 'SYN' : 'CONNECT' }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.timeout') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.timeout || 60 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.skipHostDiscovery') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.skipHostDiscovery ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.excludeCdnWaf') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.excludeCDN ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div v-if="parsedConfig.portscan?.excludeHosts" class="config-item full-width">
+                <span class="config-label">{{ $t('task.excludeTargets') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan.excludeHosts }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+          
+          <!-- 端口识别配置 -->
+          <el-collapse-item v-if="parsedConfig.portidentify?.enable" name="portidentify">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><Search /></el-icon>
+                <span>{{ $t('task.portIdentify') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.timeout') }}</span>
+                <span class="config-value">{{ parsedConfig.portidentify?.timeout || 30 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div v-if="parsedConfig.portidentify?.args" class="config-item full-width">
+                <span class="config-label">{{ $t('task.extraParams') }}</span>
+                <span class="config-value code">{{ parsedConfig.portidentify.args }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+          
+          <!-- 指纹识别配置 -->
+          <el-collapse-item v-if="parsedConfig.fingerprint?.enable" name="fingerprint">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><Stamp /></el-icon>
+                <span>{{ $t('task.fingerprintScan') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.probeTool') }}</span>
+                <el-tag :type="parsedConfig.fingerprint?.tool === 'httpx' ? 'primary' : 'success'" size="small">
+                  {{ parsedConfig.fingerprint?.tool === 'httpx' ? 'Httpx' : 'Wappalyzer' }}
+                </el-tag>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.iconHash') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.iconHash ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.customFingerprint') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.customEngine ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.screenshot') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.screenshot ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.activeScan') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.activeScan ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.timeout') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.targetTimeout || parsedConfig.fingerprint?.timeout || 30 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.concurrent') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.concurrency || 10 }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+          
+          <!-- 漏洞扫描配置 -->
+          <el-collapse-item v-if="parsedConfig.pocscan?.enable" name="pocscan">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><WarnTriangleFilled /></el-icon>
+                <span>{{ $t('task.vulScan') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.pocSource') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.customPocOnly ? $t('task.customPocOnly') : $t('task.defaultAndCustom') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.autoScanCustomTag') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.autoScan ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.autoScanBuiltinMapping') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.automaticScan ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.severityLevel') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.severity || 'critical,high,medium' }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.targetTimeout') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.targetTimeout || 600 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.concurrent') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.concurrency || 25 }}</span>
+              </div>
+              <div v-if="parsedConfig.pocscan?.nucleiTemplateIds?.length" class="config-item full-width">
+                <span class="config-label">{{ $t('task.specifyNucleiTemplate') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan.nucleiTemplateIds.length }} {{ $t('task.dictCount') }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+          
+          <!-- 目录扫描配置 -->
+          <el-collapse-item v-if="parsedConfig.dirscan?.enable" name="dirscan">
+            <template #title>
+              <div class="collapse-title">
+                <el-icon><FolderOpened /></el-icon>
+                <span>{{ $t('task.dirScan') }}</span>
+              </div>
+            </template>
+            <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.concurrent') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.threads || parsedConfig.dirscan?.concurrency || 10 }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.timeout') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.timeout || 10 }}{{ $t('task.seconds') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.followRedirect') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.followRedirect ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.statusCodeFilter') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.statusCodes || '200,301,302,403' }}</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.useDict') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dictCount')) : $t('task.defaultDict') }}</span>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </div>
     </el-dialog>
 
@@ -556,7 +759,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Search } from '@element-plus/icons-vue'
+import { Plus, Delete, Search, Clock, VideoPlay, CircleCheck, Document, Setting, Connection, Monitor, Stamp, WarnTriangleFilled, FolderOpened, Grid, Aim } from '@element-plus/icons-vue'
 import { getTaskList, createTask, deleteTask, batchDeleteTask, retryTask, startTask, pauseTask, resumeTask, stopTask, updateTask, getTaskLogs, getWorkerList, saveScanConfig, getScanConfig } from '@/api/task'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { validateTargets, formatValidationErrors } from '@/utils/target'
@@ -569,6 +772,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
 const detailVisible = ref(false)
+const activeConfigPanels = ref([]) // 折叠面板展开状态
 const logDialogVisible = ref(false)
 const tableData = ref([])
 const organizations = ref([])
@@ -765,6 +969,21 @@ function getStatusType(status, row) {
   }
   
   return 'info'
+}
+
+// 获取进度环颜色
+function getProgressColor(status) {
+  const colorMap = {
+    CREATED: '#909399',
+    PENDING: '#E6A23C',
+    STARTED: '#409EFF',
+    PAUSED: '#E6A23C',
+    SUCCESS: '#67C23A',
+    FAILURE: '#F56C6C',
+    STOPPED: '#909399',
+    REVOKED: '#909399'
+  }
+  return colorMap[status] || '#409EFF'
 }
 
 // 获取状态显示文本（简化状态显示，不按扫描模块显示）
@@ -1202,5 +1421,277 @@ function closeLogDialog() {
 
 .config-detail {
   margin-top: 10px;
+}
+
+/* 任务详情对话框现代化样式 */
+.task-detail-dialog {
+  :deep(.el-dialog__body) {
+    padding: 0 20px 20px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9) 0%, var(--el-fill-color-light) 100%);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.detail-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.task-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.status-tag {
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.task-target {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  .el-icon { margin-top: 2px; flex-shrink: 0; }
+  .target-text {
+    word-break: break-all;
+    line-height: 1.5;
+    max-height: 60px;
+    overflow-y: auto;
+  }
+}
+
+.progress-circle-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  .progress-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+  .subtask-info {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
+.time-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.time-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  &:hover {
+    background: var(--el-fill-color-light);
+    transform: translateY(-1px);
+  }
+}
+
+.time-icon {
+  font-size: 20px;
+  color: var(--el-color-primary);
+  flex-shrink: 0;
+}
+
+.time-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.time-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.time-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-section {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 10px;
+  border-left: 3px solid var(--el-color-info);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  margin-bottom: 10px;
+  .el-icon { color: var(--el-color-primary); }
+}
+
+.result-content {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+  max-height: 80px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.config-section-modern {
+  background: var(--el-fill-color-lighter);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.module-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  background: var(--el-bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  transition: all 0.2s ease;
+  &.active {
+    border-color: var(--el-color-success-light-5);
+    background: var(--el-color-success-light-9);
+  }
+}
+
+.module-icon {
+  font-size: 20px;
+  color: var(--el-text-color-secondary);
+  .active & { color: var(--el-color-success); }
+}
+
+.module-name {
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  text-align: center;
+}
+
+.batch-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--el-bg-color);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  margin-bottom: 14px;
+  .el-icon { color: var(--el-color-primary); }
+}
+
+.config-collapse {
+  border: none;
+  :deep(.el-collapse-item__header) {
+    background: var(--el-bg-color);
+    border-radius: 8px;
+    padding: 0 12px;
+    height: 44px;
+    border: 1px solid var(--el-border-color-lighter);
+    margin-bottom: 8px;
+    &:hover { background: var(--el-fill-color-light); }
+  }
+  :deep(.el-collapse-item__wrap) {
+    border: none;
+    background: transparent;
+  }
+  :deep(.el-collapse-item__content) {
+    padding: 0 0 12px;
+  }
+}
+
+.collapse-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  .el-icon { color: var(--el-color-primary); }
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 12px;
+  background: var(--el-bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  &.full-width { grid-column: span 4; }
+}
+
+.config-label {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+
+.config-value {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+  &.highlight { color: var(--el-color-primary); }
+  &.code {
+    font-family: 'Consolas', 'Monaco', monospace;
+    background: var(--el-fill-color-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
 }
 </style>
