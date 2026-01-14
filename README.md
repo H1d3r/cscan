@@ -5,6 +5,7 @@
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Demo](https://img.shields.io/badge/Demo-在线体验-orange)](http://cscan.txf7.cn)
 
 <img src="images/cscan.png" alt="CSCAN" width="250"/>
 
@@ -21,6 +22,12 @@
 | 在线数据源 | API 聚合搜索 | FOFA / Hunter / Quake |
 
 **平台能力**：分布式架构 · 多工作空间 · 报告导出 · 审计日志
+
+## 🌐 在线演示
+
+**Demo 地址**：[http://cscan.txf7.cn](http://cscan.txf7.cn)
+
+> 演示环境仅供体验，请勿用于实际扫描任务
 
 ## 快速开始
 
