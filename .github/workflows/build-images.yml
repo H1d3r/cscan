@@ -112,6 +112,8 @@ jobs:
             ${{ env.REGISTRY }}/cscan-web:${{ needs.prepare.outputs.version }}
             ${{ env.REGISTRY }}/cscan-web:latest
           no-cache: true
+          build-args: |
+            BUILD_TIME=${{ github.run_id }}
 
   # [4/4] Worker Service
   build-worker:

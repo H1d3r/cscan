@@ -9,6 +9,11 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
+
+# 添加构建时间戳，强制每次都重新构建
+ARG BUILD_TIME
+ENV BUILD_TIME=$BUILD_TIME
+
 RUN npm run build
 
 FROM nginx:alpine
