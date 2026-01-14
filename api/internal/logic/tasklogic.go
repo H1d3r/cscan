@@ -16,6 +16,7 @@ import (
 	"cscan/scheduler"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -43,6 +44,10 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 	l.Logger.Infof("MainTaskList: reqWorkspaceId=%s, headerWorkspaceId=%s, using=%s, page=%d, pageSize=%d", 
 		req.WorkspaceId, workspaceId, wsId, req.Page, req.PageSize)
 	
+	// 设置查询超时
+	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
+	defer cancel()
+	
 	// 构建查询条件
 	filter := bson.M{}
 	if req.Name != "" {
@@ -62,22 +67,38 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 	var tasksWithWs []taskWithWorkspace
 
 	// 获取需要查询的工作空间列表
-	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, wsId)
+	wsIds := common.GetWorkspaceIds(ctx, l.svcCtx, wsId)
 	l.Logger.Infof("MainTaskList: querying workspaces: %v", wsIds)
 
 	// 如果查询多个工作空间
 	if len(wsIds) > 1 || wsId == "" || wsId == "all" {
+		// 使用并发查询提高性能
+		type wsResult struct {
+			tasks []model.MainTask
+			count int64
+			wsId  string
+		}
+		resultChan := make(chan wsResult, len(wsIds))
+		
 		for _, ws := range wsIds {
-			taskModel := l.svcCtx.GetMainTaskModel(ws)
-			wsTotal, _ := taskModel.Count(l.ctx, filter)
-			total += wsTotal
-			l.Logger.Infof("MainTaskList: workspace=%s, taskCount=%d", ws, wsTotal)
-			
-			wsTasks, _ := taskModel.Find(l.ctx, filter, 0, 0)
-			for _, t := range wsTasks {
-				tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: ws})
+			go func(workspaceId string) {
+				taskModel := l.svcCtx.GetMainTaskModel(workspaceId)
+				wsTotal, _ := taskModel.Count(ctx, filter)
+				wsTasks, _ := taskModel.Find(ctx, filter, 0, 0)
+				resultChan <- wsResult{tasks: wsTasks, count: wsTotal, wsId: workspaceId}
+			}(ws)
+		}
+		
+		// 收集结果
+		for i := 0; i < len(wsIds); i++ {
+			result := <-resultChan
+			total += result.count
+			l.Logger.Infof("MainTaskList: workspace=%s, taskCount=%d", result.wsId, result.count)
+			for _, t := range result.tasks {
+				tasksWithWs = append(tasksWithWs, taskWithWorkspace{task: t, workspaceId: result.wsId})
 			}
 		}
+		close(resultChan)
 		
 		// 按创建时间排序
 		sort.Slice(tasksWithWs, func(i, j int) bool {
@@ -98,13 +119,13 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		taskModel := l.svcCtx.GetMainTaskModel(wsId)
 
 		// 查询总数
-		total, err = taskModel.Count(l.ctx, filter)
+		total, err = taskModel.Count(ctx, filter)
 		if err != nil {
 			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 		}
 
 		// 查询列表
-		tasks, err := taskModel.Find(l.ctx, filter, req.Page, req.PageSize)
+		tasks, err := taskModel.Find(ctx, filter, req.Page, req.PageSize)
 		if err != nil {
 			return &types.MainTaskListResp{Code: 500, Msg: "查询失败"}, nil
 		}
@@ -115,6 +136,38 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 
 	// 转换响应
 	list := make([]types.MainTask, 0, len(tasksWithWs))
+	
+	// 批量获取Redis进度数据，减少Redis调用次数
+	progressMap := make(map[string]map[string]interface{})
+	if l.svcCtx.RedisClient != nil {
+		taskIds := make([]string, 0, len(tasksWithWs))
+		for _, tw := range tasksWithWs {
+			if tw.task.Status == "STARTED" || tw.task.Status == "PENDING" {
+				taskIds = append(taskIds, tw.task.TaskId)
+			}
+		}
+		
+		// 使用Pipeline批量获取
+		if len(taskIds) > 0 {
+			pipe := l.svcCtx.RedisClient.Pipeline()
+			cmds := make(map[string]*redis.StringCmd)
+			for _, taskId := range taskIds {
+				mainKey := fmt.Sprintf("cscan:task:progress:%s", taskId)
+				cmds[taskId] = pipe.Get(ctx, mainKey)
+			}
+			pipe.Exec(ctx)
+			
+			for taskId, cmd := range cmds {
+				if data, err := cmd.Result(); err == nil && data != "" {
+					var progressData map[string]interface{}
+					if json.Unmarshal([]byte(data), &progressData) == nil {
+						progressMap[taskId] = progressData
+					}
+				}
+			}
+		}
+	}
+	
 	for _, tw := range tasksWithWs {
 		t := tw.task
 		progress := t.Progress
@@ -138,16 +191,10 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq, workspaceId
 		
 		// 如果任务正在执行中或等待执行，尝试从Redis获取实时进度和当前阶段
 		if (status == "STARTED" || status == "PENDING") && l.svcCtx.RedisClient != nil {
-			// 获取主任务的当前阶段
-			mainKey := fmt.Sprintf("cscan:task:progress:%s", t.TaskId)
-			if data, err := l.svcCtx.RedisClient.Get(l.ctx, mainKey).Result(); err == nil && data != "" {
-				var progressData struct {
-					CurrentPhase string `json:"currentPhase"`
-				}
-				if json.Unmarshal([]byte(data), &progressData) == nil {
-					if progressData.CurrentPhase != "" {
-						currentPhase = progressData.CurrentPhase
-					}
+			// 使用批量获取的数据
+			if progressData, ok := progressMap[t.TaskId]; ok {
+				if phase, ok := progressData["currentPhase"].(string); ok && phase != "" {
+					currentPhase = phase
 				}
 			}
 

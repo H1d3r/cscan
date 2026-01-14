@@ -34,13 +34,17 @@ func NewNaabuScanner() *NaabuScanner {
 // NaabuOptions Naabu扫描选项
 type NaabuOptions struct {
 	Ports             string `json:"ports"`
-	Rate              int    `json:"rate"`
-	Timeout           int    `json:"timeout"`
+	Rate              int    `json:"rate"`              // 每秒发送包数，默认1000，建议3000-7000
+	Timeout           int    `json:"timeout"`           // 单个端口超时(ms)，默认1000
 	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT，默认 c
 	PortThreshold     int    `json:"portThreshold"`     // 端口阈值，使用 naabu 原生 -port-threshold 参数
 	SkipHostDiscovery bool   `json:"skipHostDiscovery"` // 跳过主机发现 (-Pn)
 	ExcludeCDN        bool   `json:"excludeCDN"`        // 排除 CDN/WAF，仅扫描 80,443 端口 (-ec)
 	ExcludeHosts      string `json:"excludeHosts"`      // 排除的目标，逗号分隔 (-eh)
+	Retries           int    `json:"retries"`           // 重试次数，默认3，建议1-2
+	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)，默认2，建议0-1
+	Workers           int    `json:"workers"`           // Naabu内部工作线程，默认25，建议50-100
+	Verify            bool   `json:"verify"`            // TCP验证，默认false（禁用以提速）
 }
 
 // Validate 验证 NaabuOptions 配置是否有效
@@ -66,10 +70,14 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	// 默认配置
 	opts := &NaabuOptions{
 		Ports:         "80,443,8080",
-		Rate:          1000,
-		Timeout:       60,  // 单个目标扫描超时，默认60秒
-		ScanType:      "c", // 默认 CONNECT 扫描（无需 root 权限）
-		PortThreshold: 0,   // 默认不限制
+		Rate:          3000,  // 提高默认速率从1000到3000
+		Timeout:       60,    // 单个目标扫描超时，默认60秒
+		ScanType:      "c",   // 默认 CONNECT 扫描（无需 root 权限）
+		PortThreshold: 0,     // 默认不限制
+		Retries:       2,     // 降低重试次数从3到2
+		WarmUpTime:    1,     // 降低预热时间从2到1秒
+		Workers:       50,    // 提高工作线程从25到50
+		Verify:        false, // 禁用TCP验证以提速
 	}
 
 	// 日志函数，优先使用任务日志回调
@@ -119,6 +127,10 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					SkipHostDiscovery bool   `json:"skipHostDiscovery"`
 					ExcludeCDN        bool   `json:"excludeCDN"`
 					ExcludeHosts      string `json:"excludeHosts"`
+					Retries           int    `json:"retries"`
+					WarmUpTime        int    `json:"warmUpTime"`
+					Workers           int    `json:"workers"`
+					Verify            bool   `json:"verify"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
 					if portConfig.Ports != "" {
@@ -136,9 +148,19 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					if portConfig.ScanType != "" {
 						opts.ScanType = portConfig.ScanType
 					}
+					if portConfig.Retries > 0 {
+						opts.Retries = portConfig.Retries
+					}
+					if portConfig.WarmUpTime >= 0 {
+						opts.WarmUpTime = portConfig.WarmUpTime
+					}
+					if portConfig.Workers > 0 {
+						opts.Workers = portConfig.Workers
+					}
 					opts.SkipHostDiscovery = portConfig.SkipHostDiscovery
 					opts.ExcludeCDN = portConfig.ExcludeCDN
 					opts.ExcludeHosts = portConfig.ExcludeHosts
+					opts.Verify = portConfig.Verify
 				}
 				
 			}
@@ -266,8 +288,8 @@ func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, p
 	defer cancel()
 
 	// 调试日志：打印扫描配置
-	logInfo("Naabu: scanning %s, ports=%s, topPorts=%s, rate=%d, scanType=%s, skipHostDiscovery=%v, excludeCDN=%v, excludeHosts=%s, timeout=%ds",
-		target, portsStr, topPorts, opts.Rate, opts.ScanType, opts.SkipHostDiscovery, opts.ExcludeCDN, opts.ExcludeHosts, timeout)
+	logInfo("Naabu: scanning %s, ports=%s, topPorts=%s, rate=%d, workers=%d, retries=%d, warmUpTime=%d, scanType=%s, skipHostDiscovery=%v, excludeCDN=%v, excludeHosts=%s, timeout=%ds, verify=%v",
+		target, portsStr, topPorts, opts.Rate, opts.Workers, opts.Retries, opts.WarmUpTime, opts.ScanType, opts.SkipHostDiscovery, opts.ExcludeCDN, opts.ExcludeHosts, timeout, opts.Verify)
 
 	options := runner.Options{
 		Host:          goflags.StringSlice([]string{target}),
@@ -279,6 +301,10 @@ func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, p
 		Silent:        true,
 		PortThreshold: opts.PortThreshold, // 使用 Naabu 原生端口阈值参数
 		ExcludeCDN:    opts.ExcludeCDN,    // 排除 CDN/WAF，仅扫描 80,443 端口
+		Retries:       opts.Retries,       // 重试次数
+		WarmUpTime:    opts.WarmUpTime,    // 预热时间
+		Threads:       opts.Workers,       // 工作线程数
+		Verify:        opts.Verify,        // TCP验证
 		OnResult: func(hr *result.HostResult) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -309,8 +335,8 @@ func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, p
 	}
 
 	// 打印完整的naabu配置
-	logInfo("Naabu config: Host=%v, Ports=%s, TopPorts=%s, Rate=%d, Timeout=%d, ScanType=%s, Silent=%v, PortThreshold=%d, SkipHostDiscovery=%v, ExcludeCDN=%v, ExcludeIps=%s",
-		options.Host, options.Ports, options.TopPorts, options.Rate, options.Timeout, options.ScanType, options.Silent, options.PortThreshold, options.SkipHostDiscovery, options.ExcludeCDN, options.ExcludeIps)
+	logInfo("Naabu config: Host=%v, Ports=%s, TopPorts=%s, Rate=%d, Timeout=%d, ScanType=%s, Silent=%v, PortThreshold=%d, SkipHostDiscovery=%v, ExcludeCDN=%v, ExcludeIps=%s, Retries=%d, WarmUpTime=%d, Threads=%d, Verify=%v",
+		options.Host, options.Ports, options.TopPorts, options.Rate, options.Timeout, options.ScanType, options.Silent, options.PortThreshold, options.SkipHostDiscovery, options.ExcludeCDN, options.ExcludeIps, options.Retries, options.WarmUpTime, options.Threads, options.Verify)
 
 	logInfo("Naabu: creating runner for %s", target)
 	naabuRunner, err := runner.NewRunner(&options)

@@ -461,20 +461,28 @@ type PortScanConfig struct {
 	Enable            bool   `json:"enable"`
 	Tool              string `json:"tool"`              // tcp, masscan, naabu
 	Ports             string `json:"ports"`
-	Rate              int    `json:"rate"`
+	Rate              int    `json:"rate"`              // 每秒发送包数，默认3000，建议3000-7000
 	Timeout           int    `json:"timeout"`           // 端口扫描超时时间(秒)，默认5秒
 	PortThreshold     int    `json:"portThreshold"`     // 开放端口数量阈值，超过则过滤该主机
 	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT，默认 c
 	SkipHostDiscovery bool   `json:"skipHostDiscovery"` // 跳过主机发现 (-Pn)
 	ExcludeCDN        bool   `json:"excludeCDN"`        // 排除 CDN/WAF，仅扫描 80,443 端口 (-ec)
 	ExcludeHosts      string `json:"excludeHosts"`      // 排除的目标，逗号分隔的 IP/CIDR
+	Retries           int    `json:"retries"`           // 重试次数，默认2，建议1-2
+	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)，默认1，建议0-1
+	Workers           int    `json:"workers"`           // Naabu内部工作线程，默认50，建议50-100
+	Verify            bool   `json:"verify"`            // TCP验证，默认false（禁用以提速）
 }
 
-// PortIdentifyConfig 端口识别配置（Nmap服务识别）
+// PortIdentifyConfig 端口识别配置（Nmap/Fingerprintx 服务识别）
 type PortIdentifyConfig struct {
-	Enable  bool   `json:"enable"`
-	Timeout int    `json:"timeout"` // 单个主机超时时间(秒)，默认30秒
-	Args    string `json:"args"`    // Nmap额外参数，如 "-sV --version-intensity 5"
+	Enable      bool   `json:"enable"`
+	Tool        string `json:"tool"`        // 识别工具: nmap, fingerprintx (默认 nmap)
+	Timeout     int    `json:"timeout"`     // 单个主机超时时间(秒)，默认30秒
+	Concurrency int    `json:"concurrency"` // 并发数，默认10 (仅 fingerprintx)
+	Args        string `json:"args"`        // Nmap额外参数，如 "-sV --version-intensity 5"
+	UDP         bool   `json:"udp"`         // 是否扫描UDP端口 (仅 fingerprintx)
+	FastMode    bool   `json:"fastMode"`    // 快速模式 (仅 fingerprintx)
 }
 
 type DomainScanConfig struct {
@@ -518,6 +526,7 @@ type FingerprintConfig struct {
 	Timeout       int    `json:"timeout"`       // 总超时时间(秒)，默认300秒
 	TargetTimeout int    `json:"targetTimeout"` // 单个目标超时时间(秒)，默认30秒
 	Concurrency   int    `json:"concurrency"`   // 指纹识别并发数，默认10
+	FilterMode    string `json:"filterMode"`    // 过滤模式: "http_mapping"(使用HTTP映射), "service_mapping"(使用服务映射过滤非HTTP)
 }
 
 type PocScanConfig struct {

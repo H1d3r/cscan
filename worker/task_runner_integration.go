@@ -588,8 +588,17 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 		templates = w.getAllCustomPocs(ctx.Ctx, severities)
 		w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
 	} else {
+		var matchInfos []TagMatchInfo
 		if config.AutoScan || config.AutomaticScan {
-			autoTags = w.generateAutoTags(ctx.Assets, config)
+			autoTags, matchInfos = w.generateAutoTags(ctx.Assets, config)
+			// 输出匹配信息日志
+			for _, info := range matchInfos {
+				sourceDesc := "自定义标签映射"
+				if info.Source == "builtin" {
+					sourceDesc = "内置映射"
+				}
+				w.taskLog(task.TaskId, LevelInfo, "Auto-scan matched: fingerprint [%s] -> tags %v (source: %s)", info.Fingerprint, info.Tags, sourceDesc)
+			}
 		}
 
 		if len(autoTags) > 0 {

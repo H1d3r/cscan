@@ -996,3 +996,48 @@ func (c *WorkerHTTPClient) GetBlacklistRules(ctx context.Context) (*BlacklistRul
 
 	return &resp, nil
 }
+
+
+// ==================== Task Recovery ====================
+
+// TaskRecoveryReq 任务恢复请求
+type TaskRecoveryReq struct {
+	WorkerName string `json:"workerName"`
+}
+
+// RecoveredTaskInfo 恢复的任务信息
+type RecoveredTaskInfo struct {
+	TaskId      string `json:"taskId"`
+	MainTaskId  string `json:"mainTaskId"`
+	WorkspaceId string `json:"workspaceId"`
+	Status      string `json:"status"`
+	StartTime   string `json:"startTime"`
+}
+
+// TaskRecoveryResp 任务恢复响应
+type TaskRecoveryResp struct {
+	Code           int                 `json:"code"`
+	Msg            string              `json:"msg"`
+	Success        bool                `json:"success"`
+	RecoveredTasks []RecoveredTaskInfo `json:"recoveredTasks"`
+	RecoveredCount int                 `json:"recoveredCount"`
+}
+
+// RecoverTasks Worker 启动时恢复未完成的任务
+func (c *WorkerHTTPClient) RecoverTasks(ctx context.Context) (*TaskRecoveryResp, error) {
+	req := &TaskRecoveryReq{
+		WorkerName: c.workerName,
+	}
+
+	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/recovery", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp TaskRecoveryResp
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+
+	return &resp, nil
+}

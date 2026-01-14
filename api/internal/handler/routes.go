@@ -36,6 +36,26 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	// 初始化审计服务
 	worker.InitAuditService(svcCtx)
 
+	// 健康检查端点（无需认证）
+	server.AddRoutes(
+		[]rest.Route{
+			{Method: http.MethodGet, Path: "/health", Handler: func(w http.ResponseWriter, r *http.Request) {
+				// 检查MongoDB连接
+				if err := svcCtx.MongoClient.Ping(r.Context(), nil); err != nil {
+					http.Error(w, "MongoDB unhealthy", http.StatusServiceUnavailable)
+					return
+				}
+				// 检查Redis连接
+				if err := svcCtx.RedisClient.Ping(r.Context()).Err(); err != nil {
+					http.Error(w, "Redis unhealthy", http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("OK"))
+			}},
+		},
+	)
+
 	// 公开路由（无需认证）- 登录接口和Worker安装相关
 	server.AddRoutes(
 		[]rest.Route{
@@ -61,6 +81,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/dirscan", Handler: worker.WorkerDirScanResultHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/subtask/done", Handler: worker.WorkerSubTaskDoneHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/control", Handler: worker.WorkerTaskControlHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/task/recovery", Handler: worker.WorkerTaskRecoveryHandler(svcCtx)},
 		// 心跳
 		{Method: http.MethodPost, Path: "/api/v1/worker/heartbeat", Handler: worker.WorkerHeartbeatHandler(svcCtx)},
 		// Worker离线通知
@@ -104,6 +125,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// Worker日志（需要认证）
 		{Method: http.MethodGet, Path: "/api/v1/worker/logs/stream", Handler: worker.WorkerLogsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/history", Handler: worker.WorkerLogsHistoryHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/logs/export", Handler: worker.WorkerLogsExportHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/logs/clear", Handler: worker.WorkerLogsClearHandler(svcCtx)},
 
 		// 工作空间
@@ -213,6 +235,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/templates", Handler: poc.NucleiTemplateListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/categories", Handler: poc.NucleiTemplateCategoriesHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/sync", Handler: poc.NucleiTemplateSyncHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/download", Handler: poc.NucleiTemplateDownloadHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/clear", Handler: poc.NucleiTemplateClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/updateEnabled", Handler: poc.NucleiTemplateUpdateEnabledHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/nuclei/detail", Handler: poc.NucleiTemplateDetailHandler(svcCtx)},

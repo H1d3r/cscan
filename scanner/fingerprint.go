@@ -382,6 +382,11 @@ func SetHttpServiceChecker(checker HttpServiceChecker) {
 	globalHttpServiceChecker = checker
 }
 
+// GetHttpServiceChecker 获取全局HTTP服务检查器
+func GetHttpServiceChecker() HttpServiceChecker {
+	return globalHttpServiceChecker
+}
+
 // runAdditionalFingerprint 执行额外的指纹识别功能（httpx已执行后）
 func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions) {
 	targetUrl := fmt.Sprintf("%s://%s:%d", asset.Service, asset.Host, asset.Port)
@@ -1020,7 +1025,16 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 	allocCtx, allocCancel := chromedp.NewExecAllocator(screenshotCtx, opts...)
 	defer allocCancel()
 
-	taskCtx, taskCancel := chromedp.NewContext(allocCtx)
+	// 使用自定义日志处理器过滤 CookiePartitionKey 相关的错误
+	taskCtx, taskCancel := chromedp.NewContext(allocCtx,
+		chromedp.WithErrorf(func(format string, args ...interface{}) {
+			msg := fmt.Sprintf(format, args...)
+			// 忽略 CookiePartitionKey 反序列化错误（Chrome 版本兼容性问题）
+			if !strings.Contains(msg, "CookiePartitionKey") {
+				logx.Errorf(format, args...)
+			}
+		}),
+	)
 	defer taskCancel()
 
 	var buf []byte

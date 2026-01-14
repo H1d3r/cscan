@@ -44,7 +44,7 @@ service TaskService {
   rpc GetSubfinderProviders(GetSubfinderProvidersReq) returns (GetSubfinderProvidersResp);
   // 递增子任务完成数（模块级别）
   rpc IncrSubTaskDone(IncrSubTaskDoneReq) returns (IncrSubTaskDoneResp);
-}
+}}
 
 message CheckTaskReq {
   string taskId = 1;

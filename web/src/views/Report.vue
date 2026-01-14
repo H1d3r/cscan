@@ -543,14 +543,23 @@ function getScreenshotUrl(screenshot) {
           padding: 8px 12px;
           margin-bottom: 5px;
           border-radius: 4px;
-          &.critical { background: var(--el-color-danger-light-9); .count { color: var(--el-color-danger); } }
-          &.high { background: var(--el-color-warning-light-9); .count { color: var(--el-color-warning); } }
-          &.medium { background: var(--el-color-primary-light-9); .count { color: var(--el-color-primary); } }
-          &.low { background: var(--el-color-success-light-9); .count { color: var(--el-color-success); } }
+          &.critical { background: var(--el-fill-color-light); border-left: 3px solid var(--el-color-danger); .count { color: var(--el-color-danger); } }
+          &.high { background: var(--el-fill-color-light); border-left: 3px solid var(--el-color-warning); .count { color: var(--el-color-warning); } }
+          &.medium { background: var(--el-fill-color-light); border-left: 3px solid var(--el-color-primary); .count { color: var(--el-color-primary); } }
+          &.low { background: var(--el-fill-color-light); border-left: 3px solid var(--el-color-success); .count { color: var(--el-color-success); } }
           &.info { background: var(--el-fill-color-light); .count { color: var(--el-text-color-secondary); } }
           .count { font-weight: bold; }
         }
       }
+      
+html.dark .vul-stats {
+  .vul-item {
+    &.critical { background: rgba(245, 108, 108, 0.15); }
+    &.high { background: rgba(230, 162, 60, 0.15); }
+    &.medium { background: rgba(64, 158, 255, 0.15); }
+    &.low { background: rgba(103, 194, 58, 0.15); }
+  }
+}
       .top-list {
         .top-item {
           display: flex;

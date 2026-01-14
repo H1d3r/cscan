@@ -145,6 +145,7 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 		item := notify.ConfigItem{
 			Provider:        c.Provider,
 			Config:          c.Config,
+			Status:          c.Status,
 			MessageTemplate: c.MessageTemplate,
 		}
 		// 转换高危过滤配置

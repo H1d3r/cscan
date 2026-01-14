@@ -162,8 +162,8 @@ func (p *FeishuProvider) Send(ctx context.Context, result *NotifyResult) error {
 
 func (p *FeishuProvider) genFeishuSign(timestamp int64) string {
 	stringToSign := fmt.Sprintf("%d\n%s", timestamp, p.config.Secret)
-	h := hmac.New(sha256.New, []byte(stringToSign))
-	h.Write([]byte{})
+	h := hmac.New(sha256.New, []byte(p.config.Secret))
+	h.Write([]byte(stringToSign))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 

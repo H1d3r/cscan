@@ -1175,12 +1175,17 @@ async function handleScanSubmit() {
           border-radius: 3px;
           color: var(--el-text-color-regular);
           cursor: pointer;
+          transition: all 0.2s;
           
           &:hover {
-            background: var(--el-color-primary-light-9);
+            background: var(--el-fill-color);
             color: var(--el-color-primary);
           }
         }
+        
+html.dark .hint-item:hover {
+  background: rgba(64, 158, 255, 0.15);
+}
       }
     }
 
@@ -1470,12 +1475,17 @@ async function handleScanSubmit() {
     align-items: center;
     gap: 8px;
     padding: 12px 16px;
-    background: var(--el-color-primary-light-9);
+    background: var(--el-fill-color-light);
     border-radius: 6px;
     margin-bottom: 20px;
+    border-left: 3px solid var(--el-color-primary);
     color: var(--el-color-primary);
     font-weight: 500;
   }
+  
+html.dark .scan-target-info {
+  background: rgba(64, 158, 255, 0.15);
+}
   
   .scan-form {
     .form-hint {

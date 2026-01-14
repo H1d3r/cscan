@@ -161,59 +161,110 @@
           <span>{{ $t('task.scanConfig') }}</span>
         </div>
         
+        <!-- 扫描策略概览卡片 -->
+        <div class="strategy-overview">
+          <div class="strategy-card">
+            <div class="strategy-header">
+              <el-icon class="strategy-icon"><Operation /></el-icon>
+              <span class="strategy-title">{{ $t('task.scanStrategy') }}</span>
+            </div>
+            <div class="strategy-stats">
+              <div class="stat-item">
+                <span class="stat-label">{{ $t('task.enabledModules') }}</span>
+                <span class="stat-value">{{ enabledModulesCount }}/6</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">{{ $t('task.taskSplit') }}</span>
+                <span class="stat-value">{{ parsedConfig.batchSize === 0 ? $t('task.noSplit') : (parsedConfig.batchSize || 50) }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">{{ $t('task.currentPhase') }}</span>
+                <span class="stat-value">{{ currentTask.currentPhase || '-' }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         <!-- 模块开关状态 -->
         <div class="module-grid">
           <div class="module-card" :class="{ active: parsedConfig.domainscan?.enable }">
             <el-icon class="module-icon"><Connection /></el-icon>
-            <span class="module-name">{{ $t('task.subdomainScan') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.subdomainScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.domainscan?.enable">
+                <span class="detail-item">{{ parsedConfig.domainscan?.subfinder !== false ? 'Subfinder' : '' }}</span>
+                <span class="detail-item" v-if="parsedConfig.domainscan?.subdomainDictIds?.length">{{ $t('task.dictBrute') }}</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.domainscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.domainscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
           <div class="module-card" :class="{ active: parsedConfig.portscan?.enable !== false }">
             <el-icon class="module-icon"><Monitor /></el-icon>
-            <span class="module-name">{{ $t('task.portScan') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.portScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.portscan?.enable !== false">
+                <span class="detail-item">{{ parsedConfig.portscan?.tool || 'naabu' }}</span>
+                <span class="detail-item">{{ parsedConfig.portscan?.ports || 'top100' }}</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.portscan?.enable !== false ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.portscan?.enable !== false ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
           <div class="module-card" :class="{ active: parsedConfig.portidentify?.enable }">
             <el-icon class="module-icon"><Search /></el-icon>
-            <span class="module-name">{{ $t('task.portIdentify') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.portIdentify') }}</span>
+              <div class="module-details" v-if="parsedConfig.portidentify?.enable">
+                <span class="detail-item">{{ parsedConfig.portidentify?.tool || 'nmap' }}</span>
+                <span class="detail-item">{{ parsedConfig.portidentify?.timeout || 30 }}s</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.portidentify?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.portidentify?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
           <div class="module-card" :class="{ active: parsedConfig.fingerprint?.enable }">
             <el-icon class="module-icon"><Stamp /></el-icon>
-            <span class="module-name">{{ $t('task.fingerprintScan') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.fingerprintScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.fingerprint?.enable">
+                <span class="detail-item">{{ parsedConfig.fingerprint?.tool === 'httpx' ? 'Httpx' : 'Wappalyzer' }}</span>
+                <span class="detail-item" v-if="parsedConfig.fingerprint?.screenshot">{{ $t('task.screenshot') }}</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.fingerprint?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.fingerprint?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
           <div class="module-card" :class="{ active: parsedConfig.pocscan?.enable }">
             <el-icon class="module-icon"><WarnTriangleFilled /></el-icon>
-            <span class="module-name">{{ $t('task.vulScan') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.vulScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.pocscan?.enable">
+                <span class="detail-item">Nuclei</span>
+                <span class="detail-item">{{ parsedConfig.pocscan?.severity || 'critical,high,medium' }}</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.pocscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.pocscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
           <div class="module-card" :class="{ active: parsedConfig.dirscan?.enable }">
             <el-icon class="module-icon"><FolderOpened /></el-icon>
-            <span class="module-name">{{ $t('task.dirScan') }}</span>
+            <div class="module-info">
+              <span class="module-name">{{ $t('task.dirScan') }}</span>
+              <div class="module-details" v-if="parsedConfig.dirscan?.enable">
+                <span class="detail-item">{{ parsedConfig.dirscan?.threads || 10 }} {{ $t('task.threads') }}</span>
+                <span class="detail-item" v-if="parsedConfig.dirscan?.dictIds?.length">{{ parsedConfig.dirscan.dictIds.length }} {{ $t('task.dicts') }}</span>
+              </div>
+            </div>
             <el-tag :type="parsedConfig.dirscan?.enable ? 'success' : 'info'" size="small" effect="plain">
               {{ parsedConfig.dirscan?.enable ? $t('task.enabled') : $t('task.disabled') }}
             </el-tag>
           </div>
-        </div>
-        
-        <!-- 任务分割信息 -->
-        <div class="batch-info">
-          <el-icon><Grid /></el-icon>
-          <span>{{ $t('task.taskSplit') }}: </span>
-          <el-tag type="primary" effect="plain" size="small">
-            {{ parsedConfig.batchSize === 0 ? $t('task.noSplit') : ((parsedConfig.batchSize || 50) + $t('task.targetsPerBatch')) }}
-          </el-tag>
         </div>
         
         <!-- 详细配置 - 折叠面板 -->
@@ -236,6 +287,10 @@
                 <span class="config-value">{{ parsedConfig.domainscan?.timeout || 300 }}{{ $t('task.seconds') }}</span>
               </div>
               <div class="config-item">
+                <span class="config-label">{{ $t('task.maxEnumTime') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.maxEnumerationTime || 10 }}{{ $t('task.minutes') }}</span>
+              </div>
+              <div class="config-item">
                 <span class="config-label">{{ $t('task.concurrentThreads') }}</span>
                 <span class="config-value">{{ parsedConfig.domainscan?.threads || 10 }}</span>
               </div>
@@ -253,7 +308,11 @@
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.rateLimit') }}</span>
-                <span class="config-value">{{ parsedConfig.domainscan?.rateLimit || 0 }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.rateLimit || 0 }} req/s</span>
+              </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.bruteforceEngine') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan?.bruteforceEngine || 'puredns' }}</span>
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.dictBrute') }}</span>
@@ -262,6 +321,10 @@
               <div v-if="parsedConfig.domainscan?.subdomainDictIds?.length" class="config-item">
                 <span class="config-label">{{ $t('task.dictCount') }}</span>
                 <span class="config-value">{{ parsedConfig.domainscan.subdomainDictIds.length }}</span>
+              </div>
+              <div v-if="parsedConfig.domainscan?.bandwidth" class="config-item">
+                <span class="config-label">{{ $t('task.bandwidth') }}</span>
+                <span class="config-value">{{ parsedConfig.domainscan.bandwidth }}</span>
               </div>
             </div>
           </el-collapse-item>
@@ -285,7 +348,7 @@
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.scanRate') }}</span>
-                <span class="config-value">{{ parsedConfig.portscan?.rate || 1000 }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.rate || 1000 }} pps</span>
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.portThreshold') }}</span>
@@ -307,6 +370,10 @@
                 <span class="config-label">{{ $t('task.excludeCdnWaf') }}</span>
                 <span class="config-value">{{ parsedConfig.portscan?.excludeCDN ? $t('common.yes') : $t('common.no') }}</span>
               </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.retries') }}</span>
+                <span class="config-value">{{ parsedConfig.portscan?.retries || 3 }}</span>
+              </div>
               <div v-if="parsedConfig.portscan?.excludeHosts" class="config-item full-width">
                 <span class="config-label">{{ $t('task.excludeTargets') }}</span>
                 <span class="config-value">{{ parsedConfig.portscan.excludeHosts }}</span>
@@ -324,10 +391,26 @@
             </template>
             <div class="config-grid">
               <div class="config-item">
+                <span class="config-label">{{ $t('task.identifyTool') }}</span>
+                <span class="config-value highlight">{{ parsedConfig.portidentify?.tool || 'nmap' }}</span>
+              </div>
+              <div class="config-item">
                 <span class="config-label">{{ $t('task.timeout') }}</span>
                 <span class="config-value">{{ parsedConfig.portidentify?.timeout || 30 }}{{ $t('task.seconds') }}</span>
               </div>
-              <div v-if="parsedConfig.portidentify?.args" class="config-item full-width">
+              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
+                <span class="config-label">{{ $t('task.concurrent') }}</span>
+                <span class="config-value">{{ parsedConfig.portidentify?.concurrency || 10 }}</span>
+              </div>
+              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
+                <span class="config-label">{{ $t('task.scanUDP') }}</span>
+                <span class="config-value">{{ parsedConfig.portidentify?.udp ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
+                <span class="config-label">{{ $t('task.fastMode') }}</span>
+                <span class="config-value">{{ parsedConfig.portidentify?.fastMode ? $t('common.yes') : $t('common.no') }}</span>
+              </div>
+              <div v-if="parsedConfig.portidentify?.args && parsedConfig.portidentify?.tool === 'nmap'" class="config-item full-width">
                 <span class="config-label">{{ $t('task.extraParams') }}</span>
                 <span class="config-value code">{{ parsedConfig.portidentify.args }}</span>
               </div>
@@ -373,6 +456,10 @@
                 <span class="config-label">{{ $t('task.concurrent') }}</span>
                 <span class="config-value">{{ parsedConfig.fingerprint?.concurrency || 10 }}</span>
               </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.filterMode') }}</span>
+                <span class="config-value">{{ parsedConfig.fingerprint?.filterMode || 'default' }}</span>
+              </div>
             </div>
           </el-collapse-item>
           
@@ -385,6 +472,10 @@
               </div>
             </template>
             <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.scanEngine') }}</span>
+                <span class="config-value highlight">Nuclei</span>
+              </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.pocSource') }}</span>
                 <span class="config-value">{{ parsedConfig.pocscan?.customPocOnly ? $t('task.customPocOnly') : $t('task.defaultAndCustom') }}</span>
@@ -409,9 +500,21 @@
                 <span class="config-label">{{ $t('task.concurrent') }}</span>
                 <span class="config-value">{{ parsedConfig.pocscan?.concurrency || 25 }}</span>
               </div>
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.rateLimit') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan?.rateLimit || 150 }} req/s</span>
+              </div>
+              <div v-if="parsedConfig.pocscan?.pocTypes?.length" class="config-item full-width">
+                <span class="config-label">{{ $t('task.pocTypes') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan.pocTypes.join(', ') }}</span>
+              </div>
               <div v-if="parsedConfig.pocscan?.nucleiTemplateIds?.length" class="config-item full-width">
                 <span class="config-label">{{ $t('task.specifyNucleiTemplate') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan.nucleiTemplateIds.length }} {{ $t('task.dictCount') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan.nucleiTemplateIds.length }} {{ $t('task.templates') }}</span>
+              </div>
+              <div v-if="parsedConfig.pocscan?.customPocIds?.length" class="config-item full-width">
+                <span class="config-label">{{ $t('task.customPocs') }}</span>
+                <span class="config-value">{{ parsedConfig.pocscan.customPocIds.length }} {{ $t('task.pocs') }}</span>
               </div>
             </div>
           </el-collapse-item>
@@ -425,6 +528,10 @@
               </div>
             </template>
             <div class="config-grid">
+              <div class="config-item">
+                <span class="config-label">{{ $t('task.scanTool') }}</span>
+                <span class="config-value highlight">{{ parsedConfig.dirscan?.tool || 'dirsearch' }}</span>
+              </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.concurrent') }}</span>
                 <span class="config-value">{{ parsedConfig.dirscan?.threads || parsedConfig.dirscan?.concurrency || 10 }}</span>
@@ -443,7 +550,15 @@
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.useDict') }}</span>
-                <span class="config-value">{{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dictCount')) : $t('task.defaultDict') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan?.dictIds?.length ? (parsedConfig.dirscan.dictIds.length + ' ' + $t('task.dicts')) : $t('task.defaultDict') }}</span>
+              </div>
+              <div v-if="parsedConfig.dirscan?.extensions" class="config-item">
+                <span class="config-label">{{ $t('task.fileExtensions') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan.extensions }}</span>
+              </div>
+              <div v-if="parsedConfig.dirscan?.recursiveDepth" class="config-item">
+                <span class="config-label">{{ $t('task.recursiveDepth') }}</span>
+                <span class="config-value">{{ parsedConfig.dirscan.recursiveDepth }}</span>
               </div>
             </div>
           </el-collapse-item>
@@ -614,16 +729,30 @@
           </template>
           <el-form label-width="100px" class="tab-form">
             <el-form-item :label="$t('task.enable')">
-              <el-switch v-model="form.portidentifyEnable" :disabled="!availableTools.nmap" />
-              <span v-if="!availableTools.nmap" class="tool-tip" style="margin-left:10px">(Nmap {{ $t('task.notInstalled') }})</span>
+              <el-switch v-model="form.portidentifyEnable" />
             </el-form-item>
             <template v-if="form.portidentifyEnable">
+              <el-form-item :label="$t('task.identifyTool')">
+                <el-radio-group v-model="form.portidentifyTool">
+                  <el-radio label="nmap">Nmap</el-radio>
+                  <el-radio label="fingerprintx">Fingerprintx</el-radio>
+                </el-radio-group>
+              </el-form-item>
               <el-form-item :label="$t('task.timeoutSeconds')">
                 <el-input-number v-model="form.portidentifyTimeout" :min="5" :max="300" />
                 <span class="form-hint">{{ $t('task.singleHostTimeout') }}</span>
               </el-form-item>
-              <el-form-item :label="$t('task.nmapParams')">
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.concurrent')">
+                <el-input-number v-model="form.portidentifyConcurrency" :min="1" :max="100" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'nmap'" :label="$t('task.nmapParams')">
                 <el-input v-model="form.portidentifyArgs" placeholder="-sV --version-intensity 5" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.scanUDP')">
+                <el-switch v-model="form.portidentifyUDP" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.fastMode')">
+                <el-switch v-model="form.portidentifyFastMode" />
               </el-form-item>
             </template>
             <el-alert v-if="!form.portidentifyEnable" type="info" :closable="false" show-icon>
@@ -837,6 +966,12 @@ const form = reactive({
   excludeCDN: false,
   excludeHosts: '',
   portidentifyEnable: false,
+  portidentifyTool: 'nmap',
+  portidentifyTimeout: 30,
+  portidentifyConcurrency: 10,
+  portidentifyArgs: '',
+  portidentifyUDP: false,
+  portidentifyFastMode: false,
   portidentifyTimeout: 30,
   portidentifyArgs: '',
   fingerprintEnable: true,
@@ -1037,6 +1172,19 @@ const parsedConfig = computed(() => {
   }
 })
 
+// 计算启用的模块数量
+const enabledModulesCount = computed(() => {
+  if (!parsedConfig.value) return 0
+  let count = 0
+  if (parsedConfig.value.domainscan?.enable) count++
+  if (parsedConfig.value.portscan?.enable !== false) count++
+  if (parsedConfig.value.portidentify?.enable) count++
+  if (parsedConfig.value.fingerprint?.enable) count++
+  if (parsedConfig.value.pocscan?.enable) count++
+  if (parsedConfig.value.dirscan?.enable) count++
+  return count
+})
+
 function resetForm() {
   Object.assign(form, {
     id: '', name: '', target: '', workspaceId: '', orgId: '', workers: [],
@@ -1116,8 +1264,12 @@ function applyConfig(config) {
     excludeCDN: config.portscan?.excludeCDN ?? false,
     excludeHosts: config.portscan?.excludeHosts || '',
     portidentifyEnable: config.portidentify?.enable ?? false,
+    portidentifyTool: config.portidentify?.tool || 'nmap',
     portidentifyTimeout: config.portidentify?.timeout || 30,
+    portidentifyConcurrency: config.portidentify?.concurrency || 10,
     portidentifyArgs: config.portidentify?.args || '',
+    portidentifyUDP: config.portidentify?.udp ?? false,
+    portidentifyFastMode: config.portidentify?.fastMode ?? false,
     fingerprintEnable: config.fingerprint?.enable ?? true,
     fingerprintTool: config.fingerprint?.tool || (config.fingerprint?.httpx ? 'httpx' : 'builtin'),
     fingerprintIconHash: config.fingerprint?.iconHash ?? true,
@@ -1156,7 +1308,7 @@ function buildConfig() {
     batchSize: form.batchSize,
     domainscan: { enable: form.domainscanEnable, subfinder: form.domainscanSubfinder, timeout: form.domainscanTimeout, maxEnumerationTime: form.domainscanMaxEnumTime, threads: form.domainscanThreads, rateLimit: form.domainscanRateLimit, all: form.domainscanAll, recursive: form.domainscanRecursive, removeWildcard: form.domainscanRemoveWildcard, resolveDNS: form.domainscanResolveDNS, concurrent: form.domainscanConcurrent },
     portscan: { enable: form.portscanEnable, tool: form.portscanTool, rate: form.portscanRate, ports: form.ports, portThreshold: form.portThreshold, scanType: form.scanType, timeout: form.portscanTimeout, skipHostDiscovery: form.skipHostDiscovery, excludeCDN: form.excludeCDN, excludeHosts: form.excludeHosts },
-    portidentify: { enable: form.portidentifyEnable, timeout: form.portidentifyTimeout, args: form.portidentifyArgs },
+    portidentify: { enable: form.portidentifyEnable, tool: form.portidentifyTool, timeout: form.portidentifyTimeout, concurrency: form.portidentifyConcurrency, args: form.portidentifyArgs, udp: form.portidentifyUDP, fastMode: form.portidentifyFastMode },
     fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, targetTimeout: form.fingerprintTimeout },
     pocscan: { enable: form.pocscanEnable, useNuclei: true, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout }
   }
@@ -1167,7 +1319,7 @@ const scanConfigFields = [
   'batchSize',
   'domainscanEnable', 'domainscanSubfinder', 'domainscanTimeout', 'domainscanMaxEnumTime', 'domainscanThreads', 'domainscanRateLimit', 'domainscanAll', 'domainscanRecursive', 'domainscanRemoveWildcard', 'domainscanResolveDNS', 'domainscanConcurrent',
   'portscanEnable', 'portscanTool', 'portscanRate', 'ports', 'portThreshold', 'scanType', 'portscanTimeout', 'skipHostDiscovery', 'excludeCDN', 'excludeHosts',
-  'portidentifyEnable', 'portidentifyTimeout', 'portidentifyArgs',
+  'portidentifyEnable', 'portidentifyTool', 'portidentifyTimeout', 'portidentifyConcurrency', 'portidentifyArgs', 'portidentifyUDP', 'portidentifyFastMode',
   'fingerprintEnable', 'fingerprintTool', 'fingerprintIconHash', 'fingerprintCustomEngine', 'fingerprintScreenshot', 'fingerprintTimeout',
   'pocscanEnable', 'pocscanAutoScan', 'pocscanAutomaticScan', 'pocscanCustomOnly', 'pocscanSeverity', 'pocscanTargetTimeout'
 ]
@@ -1446,9 +1598,10 @@ function closeLogDialog() {
   justify-content: space-between;
   align-items: flex-start;
   padding: 20px;
-  background: linear-gradient(135deg, var(--el-color-primary-light-9) 0%, var(--el-fill-color-light) 100%);
+  background: linear-gradient(135deg, var(--el-fill-color-light) 0%, var(--el-fill-color-lighter) 100%);
   border-radius: 12px;
   margin-bottom: 16px;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .detail-header-main {
@@ -1590,6 +1743,54 @@ function closeLogDialog() {
   padding: 16px;
 }
 
+.strategy-overview {
+  margin-bottom: 16px;
+}
+
+.strategy-card {
+  background: var(--el-bg-color);
+  border-radius: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.strategy-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  .strategy-icon {
+    font-size: 18px;
+    color: var(--el-color-primary);
+  }
+  .strategy-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--el-text-color-primary);
+  }
+}
+
+.strategy-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  .stat-label {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+  .stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--el-color-primary);
+  }
+}
+
 .module-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1599,30 +1800,56 @@ function closeLogDialog() {
 
 .module-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 12px 8px;
+  gap: 10px;
+  padding: 12px;
   background: var(--el-bg-color);
   border-radius: 8px;
   border: 1px solid var(--el-border-color-lighter);
   transition: all 0.2s ease;
   &.active {
-    border-color: var(--el-color-success-light-5);
-    background: var(--el-color-success-light-9);
+    border-color: var(--el-color-success);
+    background: var(--el-fill-color-light);
   }
+}
+
+html.dark .module-card.active {
+  border-color: var(--el-color-success);
+  background: rgba(103, 194, 58, 0.15);
 }
 
 .module-icon {
   font-size: 20px;
   color: var(--el-text-color-secondary);
+  flex-shrink: 0;
   .active & { color: var(--el-color-success); }
 }
 
+.module-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .module-name {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-regular);
-  text-align: center;
+  font-weight: 500;
+}
+
+.module-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  .detail-item {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    background: var(--el-fill-color-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
 }
 
 .batch-info {

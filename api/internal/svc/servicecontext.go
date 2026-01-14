@@ -58,7 +58,17 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI(c.Mongo.Uri))
+	// 配置MongoDB连接池和超时
+	clientOptions := options.Client().
+		ApplyURI(c.Mongo.Uri).
+		SetMaxPoolSize(100).                    // 最大连接数
+		SetMinPoolSize(10).                     // 最小连接数
+		SetMaxConnIdleTime(30 * time.Second).   // 空闲连接超时
+		SetConnectTimeout(10 * time.Second).    // 连接超时
+		SetServerSelectionTimeout(10 * time.Second). // 服务器选择超时
+		SetSocketTimeout(30 * time.Second)      // Socket超时
+
+	mongoClient, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to connect MongoDB: %v", err))
 	}
@@ -71,12 +81,19 @@ func NewServiceContext(c config.Config) *ServiceContext {
 
 	mongoDB := mongoClient.Database(c.Mongo.DbName)
 
-	// Redis连接 - 使用go-zero配置
+	// Redis连接 - 使用go-zero配置，增加连接池和超时设置
 	fmt.Println("Connecting to Redis:", c.Redis.Host)
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     c.Redis.Host,
-		Password: c.Redis.Pass,
-		DB:       0,
+		Addr:         c.Redis.Host,
+		Password:     c.Redis.Pass,
+		DB:           0,
+		PoolSize:     100,                    // 连接池大小
+		MinIdleConns: 10,                     // 最小空闲连接数
+		MaxRetries:   3,                      // 最大重试次数
+		DialTimeout:  5 * time.Second,        // 连接超时
+		ReadTimeout:  3 * time.Second,        // 读超时
+		WriteTimeout: 3 * time.Second,        // 写超时
+		PoolTimeout:  4 * time.Second,        // 连接池超时
 	})
 
 	// 测试 Redis 连接

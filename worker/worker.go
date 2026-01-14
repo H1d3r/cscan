@@ -372,6 +372,7 @@ func (w *Worker) registerScanners() {
 	w.scanners["portscan"] = scanner.NewPortScanner()
 	w.scanners["masscan"] = scanner.NewMasscanScanner()
 	w.scanners["nmap"] = scanner.NewNmapScanner()
+	w.scanners["fingerprintx"] = scanner.NewFingerprintxScanner()
 	w.scanners["naabu"] = scanner.NewNaabuScanner()
 	w.scanners["subfinder"] = scanner.NewSubfinderScanner()
 	w.scanners["subdomain_bruteforce"] = scanner.NewSubdomainBruteforceScanner()
@@ -405,6 +406,9 @@ func (w *Worker) Start() {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+
+	// Worker 启动时恢复之前未完成的任务
+	w.recoverOrphanedTasks()
 
 	// 启动任务处理协程
 	for i := 0; i < w.config.Concurrency; i++ {
@@ -671,6 +675,29 @@ func (w *Worker) pullTask() bool {
 		return true
 	}
 	return false
+}
+
+// recoverOrphanedTasks Worker 启动时恢复之前未完成的任务
+func (w *Worker) recoverOrphanedTasks() {
+	w.logger.Info("Checking for orphaned tasks to recover...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := w.httpClient.RecoverTasks(ctx)
+	if err != nil {
+		w.logger.Warn("Failed to recover orphaned tasks: %v", err)
+		return
+	}
+
+	if resp.RecoveredCount > 0 {
+		w.logger.Info("Recovered %d orphaned tasks:", resp.RecoveredCount)
+		for _, task := range resp.RecoveredTasks {
+			w.logger.Info("  - Task %s (workspace: %s, status: %s)", task.TaskId, task.WorkspaceId, task.Status)
+		}
+	} else {
+		w.logger.Info("No orphaned tasks found")
+	}
 }
 
 // Stop 停止Worker
@@ -1490,6 +1517,43 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		w.updateTaskProgressWithPhase(ctx, task.TaskId, 60, "指纹识别中", "指纹识别")
 
 		if s, ok := w.scanners["fingerprint"]; ok {
+			// 根据过滤模式处理资产
+			assetsToScan := allAssets
+			filterMode := config.Fingerprint.FilterMode
+			if filterMode == "" {
+				filterMode = "http_mapping" // 默认使用HTTP映射模式
+			}
+
+			if filterMode == "service_mapping" {
+				// 模式B：使用服务映射过滤非HTTP服务
+				var httpAssets []*scanner.Asset
+				nonHttpCount := 0
+				
+				for _, asset := range allAssets {
+					// 通过全局HTTP服务检查器判断服务是否为HTTP
+					// 如果服务映射中明确标识为非HTTP，则排除
+					if globalHttpServiceChecker := scanner.GetHttpServiceChecker(); globalHttpServiceChecker != nil {
+						serviceLower := strings.ToLower(asset.Service)
+						if isHttp, found := globalHttpServiceChecker.IsHttpService(serviceLower); found {
+							if !isHttp {
+								// 服务映射中明确标识为非HTTP，排除
+								nonHttpCount++
+								continue
+							}
+						}
+						// 未在服务映射中找到或标识为HTTP，保留
+					}
+					httpAssets = append(httpAssets, asset)
+				}
+				
+				assetsToScan = httpAssets
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=service_mapping, filtered %d assets (excluded %d non-HTTP services), remaining %d assets", 
+					len(allAssets), nonHttpCount, len(httpAssets))
+			} else {
+				// 模式A：使用HTTP映射（默认行为，不做额外过滤）
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=http_mapping, using all %d assets", len(allAssets))
+			}
+
 			// 获取单目标超时配置
 			targetTimeout := config.Fingerprint.TargetTimeout
 			if targetTimeout <= 0 {
@@ -1497,7 +1561,8 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			}
 			// 使用Worker并发数覆盖配置中的并发数
 			config.Fingerprint.Concurrency = w.config.Concurrency
-			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v", len(allAssets), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan)
+			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v, filterMode=%s", 
+				len(assetsToScan), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan, filterMode)
 
 			// 每次扫描前实时加载HTTP服务映射配置
 			w.loadHttpServiceMappings()
@@ -1520,7 +1585,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			}
 
 			result, err := s.Scan(fpCtx, &scanner.ScanConfig{
-				Assets:     allAssets,
+				Assets:     assetsToScan,
 				Options:    config.Fingerprint,
 				TaskLogger: fpTaskLogger,
 			})
@@ -1682,8 +1747,17 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 				w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
 			} else {
 				// 没有预设的模板ID，根据自动扫描配置生成标签并获取模板
+				var matchInfos []TagMatchInfo
 				if config.PocScan.AutoScan || config.PocScan.AutomaticScan {
-					autoTags = w.generateAutoTags(allAssets, config.PocScan)
+					autoTags, matchInfos = w.generateAutoTags(allAssets, config.PocScan)
+					// 输出匹配信息日志
+					for _, info := range matchInfos {
+						sourceDesc := "自定义标签映射"
+						if info.Source == "builtin" {
+							sourceDesc = "内置映射"
+						}
+						w.taskLog(task.TaskId, LevelInfo, "Auto-scan matched: fingerprint [%s] -> tags %v (source: %s)", info.Fingerprint, info.Tags, sourceDesc)
+					}
 				}
 
 				if len(autoTags) > 0 {
@@ -2399,9 +2473,18 @@ func GetSystemInfo() map[string]interface{} {
 	}
 }
 
+// TagMatchInfo 标签匹配信息
+type TagMatchInfo struct {
+	Fingerprint string   // 匹配的指纹名称
+	Tags        []string // 匹配到的标签
+	Source      string   // 来源: "custom"(自定义标签映射) 或 "builtin"(内置映射)
+}
+
 // generateAutoTags 根据资产的应用信息生成Nuclei标签
-func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.PocScanConfig) []string {
+// 返回: 标签列表, 匹配信息列表
+func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.PocScanConfig) ([]string, []TagMatchInfo) {
 	tagSet := make(map[string]bool)
+	matchInfoMap := make(map[string]*TagMatchInfo) // 用于去重，key为 fingerprint+source
 
 	for _, asset := range assets {
 		for _, app := range asset.App {
@@ -2412,6 +2495,14 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 			if pocConfig.AutoScan && pocConfig.TagMappings != nil {
 				for mappedApp, tags := range pocConfig.TagMappings {
 					if strings.ToLower(mappedApp) == appNameLower {
+						key := appName + "_custom"
+						if _, exists := matchInfoMap[key]; !exists {
+							matchInfoMap[key] = &TagMatchInfo{
+								Fingerprint: appName,
+								Tags:        tags,
+								Source:      "custom",
+							}
+						}
 						for _, tag := range tags {
 							tagSet[tag] = true
 						}
@@ -2423,6 +2514,14 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 			// 模式2: 基于Wappalyzer内置映射
 			if pocConfig.AutomaticScan {
 				if tags, ok := mapping.WappalyzerNucleiMapping[appNameLower]; ok {
+					key := appName + "_builtin"
+					if _, exists := matchInfoMap[key]; !exists {
+						matchInfoMap[key] = &TagMatchInfo{
+							Fingerprint: appName,
+							Tags:        tags,
+							Source:      "builtin",
+						}
+					}
 					for _, tag := range tags {
 						tagSet[tag] = true
 					}
@@ -2435,7 +2534,13 @@ func (w *Worker) generateAutoTags(assets []*scanner.Asset, pocConfig *scheduler.
 	for tag := range tagSet {
 		tags = append(tags, tag)
 	}
-	return tags
+
+	matchInfos := make([]TagMatchInfo, 0, len(matchInfoMap))
+	for _, info := range matchInfoMap {
+		matchInfos = append(matchInfos, *info)
+	}
+
+	return tags, matchInfos
 }
 
 // getTemplatesByTags 通过 HTTP 接口从数据库获取符合标签的模板
@@ -3173,10 +3278,26 @@ func (c *WorkerHttpServiceChecker) SetNonHttpPorts(ports []int) {
 	}
 }
 
-// executePortIdentify 执行端口识别阶段（Nmap服务识别）
+// executePortIdentify 执行端口识别阶段（Nmap/Fingerprintx 服务识别）
 func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
-	w.taskLog(task.TaskId, LevelInfo, "Port identify: Nmap (%d assets)", len(assets))
+	// 确定使用的工具
+	tool := config.Tool
+	if tool == "" {
+		tool = "nmap" // 默认使用 nmap
+	}
 
+	w.taskLog(task.TaskId, LevelInfo, "Port identify: %s (%d assets)", tool, len(assets))
+
+	// 根据工具选择不同的执行逻辑
+	if tool == "fingerprintx" {
+		return w.executePortIdentifyWithFingerprintx(ctx, task, assets, config)
+	} else {
+		return w.executePortIdentifyWithNmap(ctx, task, assets, config)
+	}
+}
+
+// executePortIdentifyWithNmap 使用 Nmap 执行端口识别
+func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
 	// 获取超时配置
 	timeout := config.Timeout
 	if timeout <= 0 {
@@ -3272,6 +3393,59 @@ func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskIn
 
 	w.taskLog(task.TaskId, LevelInfo, "Port identify completed: %d assets", len(identifiedAssets))
 	return identifiedAssets
+}
+
+// executePortIdentifyWithFingerprintx 使用 Fingerprintx 执行端口识别
+func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig) []*scanner.Asset {
+	// 获取配置
+	timeout := config.Timeout
+	if timeout <= 0 {
+		timeout = 10 // fingerprintx 默认10秒/目标
+	}
+
+	concurrency := config.Concurrency
+	if concurrency <= 0 {
+		concurrency = 10 // 默认并发10
+	}
+
+	// 构建 fingerprintx 选项
+	fpxOpts := &scanner.FingerprintxOptions{
+		Timeout:     timeout,
+		Concurrency: concurrency,
+		UDP:         config.UDP,
+		FastMode:    config.FastMode,
+	}
+
+	// 创建扫描配置
+	scanConfig := &scanner.ScanConfig{
+		Assets:      assets,
+		Options:     fpxOpts,
+		WorkspaceId: task.WorkspaceId,
+		MainTaskId:  task.TaskId,
+		TaskLogger: func(level, format string, args ...interface{}) {
+			w.taskLog(task.TaskId, level, format, args...)
+		},
+		OnProgress: func(progress int, message string) {
+			// 可以在这里更新任务进度
+			w.taskLog(task.TaskId, LevelDebug, "Progress: %d%% - %s", progress, message)
+		},
+	}
+
+	// 执行扫描
+	fpxScanner := w.scanners["fingerprintx"]
+	result, err := fpxScanner.Scan(ctx, scanConfig)
+
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "Fingerprintx error: %v", err)
+		// 失败时返回原始资产
+		for _, asset := range assets {
+			asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
+		}
+		return assets
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "Port identify completed: %d assets", len(result.Assets))
+	return result.Assets
 }
 
 // executeDirScan 执行目录扫描阶段

@@ -169,11 +169,27 @@
                 <el-col :span="12">
                   <el-form-item :label="$t('task.scanRate')">
                     <el-input-number v-model="form.portscanRate" :min="100" :max="100000" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.packetsPerSecond') }}</span>
                   </el-form-item>
                 </el-col>
                 <el-col :span="12">
                   <el-form-item :label="$t('task.portThreshold')">
                     <el-input-number v-model="form.portThreshold" :min="0" :max="65535" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.skipIfExceeded') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.workers')">
+                    <el-input-number v-model="form.portscanWorkers" :min="10" :max="200" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.internalThreads') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.retries')">
+                    <el-input-number v-model="form.portscanRetries" :min="0" :max="5" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.retryCount') }}</span>
                   </el-form-item>
                 </el-col>
               </el-row>
@@ -189,6 +205,20 @@
                 <el-col :span="12">
                   <el-form-item :label="$t('task.timeoutSeconds')">
                     <el-input-number v-model="form.portscanTimeout" :min="5" :max="1200" style="width:100%" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.warmUpTime')">
+                    <el-input-number v-model="form.portscanWarmUpTime" :min="0" :max="10" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.warmUpTimeHint') }}</span>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.tcpVerify')">
+                    <el-switch v-model="form.portscanVerify" />
+                    <span class="form-hint">{{ $t('task.tcpVerifyHint') }}</span>
                   </el-form-item>
                 </el-col>
               </el-row>
@@ -218,12 +248,27 @@
               <el-switch v-model="form.portidentifyEnable" />
             </el-form-item>
             <template v-if="form.portidentifyEnable">
+              <el-form-item :label="$t('task.identifyTool')">
+                <el-radio-group v-model="form.portidentifyTool">
+                  <el-radio label="nmap">Nmap</el-radio>
+                  <el-radio label="fingerprintx">Fingerprintx</el-radio>
+                </el-radio-group>
+              </el-form-item>
               <el-form-item :label="$t('task.timeoutSeconds')">
                 <el-input-number v-model="form.portidentifyTimeout" :min="5" :max="300" />
                 <span class="form-hint">{{ $t('task.singleHostTimeout') }}</span>
               </el-form-item>
-              <el-form-item :label="$t('task.nmapParams')">
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.concurrent')">
+                <el-input-number v-model="form.portidentifyConcurrency" :min="1" :max="100" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'nmap'" :label="$t('task.nmapParams')">
                 <el-input v-model="form.portidentifyArgs" placeholder="-sV --version-intensity 5" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.scanUDP')">
+                <el-switch v-model="form.portidentifyUDP" />
+              </el-form-item>
+              <el-form-item v-if="form.portidentifyTool === 'fingerprintx'" :label="$t('task.fastMode')">
+                <el-switch v-model="form.portidentifyFastMode" />
               </el-form-item>
             </template>
           </el-collapse-item>
@@ -248,6 +293,13 @@
                 <el-checkbox v-model="form.fingerprintIconHash">{{ $t('task.iconHash') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintCustomEngine">{{ $t('task.customFingerprint') }}</el-checkbox>
                 <el-checkbox v-model="form.fingerprintScreenshot">{{ $t('task.screenshot') }}</el-checkbox>
+              </el-form-item>
+              <el-form-item :label="$t('task.filterMode')">
+                <el-radio-group v-model="form.fingerprintFilterMode">
+                  <el-radio label="http_mapping">{{ $t('task.httpMappingMode') }}</el-radio>
+                  <el-radio label="service_mapping">{{ $t('task.serviceMappingMode') }}</el-radio>
+                </el-radio-group>
+                <span class="form-hint">{{ form.fingerprintFilterMode === 'http_mapping' ? $t('task.httpMappingModeHint') : $t('task.serviceMappingModeHint') }}</span>
               </el-form-item>
               <el-form-item :label="$t('task.activeScan')">
                 <el-checkbox v-model="form.fingerprintActiveScan">{{ $t('task.enableActiveScan') }}</el-checkbox>
@@ -829,7 +881,7 @@ const form = reactive({
   // 端口扫描
   portscanEnable: true,
   portscanTool: 'naabu',
-  portscanRate: 1000,
+  portscanRate: 3000, // 提高默认值从1000到3000
   ports: 'top100',
   portThreshold: 100,
   scanType: 'c',
@@ -837,10 +889,18 @@ const form = reactive({
   skipHostDiscovery: false,
   excludeCDN: false,
   excludeHosts: '',
+  portscanWorkers: 50, // Naabu内部工作线程，默认50
+  portscanRetries: 2, // 重试次数，默认2
+  portscanWarmUpTime: 1, // 预热时间(秒)，默认1
+  portscanVerify: false, // TCP验证，默认false
   // 端口识别
   portidentifyEnable: false,
+  portidentifyTool: 'nmap',
   portidentifyTimeout: 30,
+  portidentifyConcurrency: 10,
   portidentifyArgs: '',
+  portidentifyUDP: false,
+  portidentifyFastMode: false,
   // 指纹识别
   fingerprintEnable: true,
   fingerprintTool: 'httpx',
@@ -850,6 +910,7 @@ const form = reactive({
   fingerprintActiveScan: false,
   fingerprintActiveTimeout: 10,
   fingerprintTimeout: 30,
+  fingerprintFilterMode: 'http_mapping', // 过滤模式: http_mapping(HTTP映射) 或 service_mapping(服务映射)
   // 漏洞扫描
   pocscanEnable: false,
   pocscanMode: 'auto',
@@ -1003,8 +1064,12 @@ function applyConfig(config) {
     excludeHosts: config.portscan?.excludeHosts || '',
     // 端口识别
     portidentifyEnable: config.portidentify?.enable ?? false,
+    portidentifyTool: config.portidentify?.tool || 'nmap',
     portidentifyTimeout: config.portidentify?.timeout || 30,
+    portidentifyConcurrency: config.portidentify?.concurrency || 10,
     portidentifyArgs: config.portidentify?.args || '',
+    portidentifyUDP: config.portidentify?.udp ?? false,
+    portidentifyFastMode: config.portidentify?.fastMode ?? false,
     // 指纹识别
     fingerprintEnable: config.fingerprint?.enable ?? true,
     fingerprintTool: config.fingerprint?.tool || (config.fingerprint?.httpx ? 'httpx' : 'builtin'),
@@ -1014,6 +1079,7 @@ function applyConfig(config) {
     fingerprintActiveScan: config.fingerprint?.activeScan ?? false,
     fingerprintActiveTimeout: config.fingerprint?.activeTimeout || 10,
     fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
+    fingerprintFilterMode: config.fingerprint?.filterMode || 'http_mapping',
     // 漏洞扫描
     pocscanEnable: config.pocscan?.enable ?? false,
     pocscanMode: isManualMode ? 'manual' : 'auto',
@@ -1077,8 +1143,12 @@ watch(
     excludeCDN: form.excludeCDN,
     excludeHosts: form.excludeHosts,
     portidentifyEnable: form.portidentifyEnable,
+    portidentifyTool: form.portidentifyTool,
     portidentifyTimeout: form.portidentifyTimeout,
+    portidentifyConcurrency: form.portidentifyConcurrency,
     portidentifyArgs: form.portidentifyArgs,
+    portidentifyUDP: form.portidentifyUDP,
+    portidentifyFastMode: form.portidentifyFastMode,
     fingerprintEnable: form.fingerprintEnable,
     fingerprintTool: form.fingerprintTool,
     fingerprintIconHash: form.fingerprintIconHash,
@@ -1147,8 +1217,12 @@ function buildConfig() {
     },
     portidentify: {
       enable: form.portidentifyEnable,
+      tool: form.portidentifyTool,
       timeout: form.portidentifyTimeout,
-      args: form.portidentifyArgs
+      concurrency: form.portidentifyConcurrency,
+      args: form.portidentifyArgs,
+      udp: form.portidentifyUDP,
+      fastMode: form.portidentifyFastMode
     },
     fingerprint: {
       enable: form.fingerprintEnable,
@@ -1158,7 +1232,8 @@ function buildConfig() {
       screenshot: form.fingerprintScreenshot,
       activeScan: form.fingerprintActiveScan,
       activeTimeout: form.fingerprintActiveTimeout,
-      targetTimeout: form.fingerprintTimeout
+      targetTimeout: form.fingerprintTimeout,
+      filterMode: form.fingerprintFilterMode
     },
     pocscan: {
       enable: form.pocscanEnable,
@@ -1208,6 +1283,23 @@ async function handleSubmit() {
 
   submitting.value = true
   try {
+    // 清除防抖定时器，确保最新配置被保存
+    if (saveConfigTimer) {
+      clearTimeout(saveConfigTimer)
+      saveConfigTimer = null
+    }
+
+    // 在新建任务时，先保存配置到用户配置
+    if (!isEdit.value) {
+      try {
+        const config = buildConfig()
+        await saveScanConfig({ config: JSON.stringify(config) })
+      } catch (e) {
+        console.warn('保存用户配置失败:', e)
+        // 不阻断任务创建流程
+      }
+    }
+
     const config = buildConfig()
     const params = {
       name: form.name,

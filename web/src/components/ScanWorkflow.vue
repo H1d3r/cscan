@@ -22,7 +22,7 @@
               <el-icon v-else><Clock /></el-icon>
             </div>
             <div class="node-content">
-              <span class="node-name">{{ phase.name }}</span>
+              <span class="node-name">{{ phase.name.value }}</span>
               <span v-if="phase.duration" class="node-duration">{{ phase.duration }}</span>
             </div>
           </div>
@@ -60,12 +60,12 @@ const props = defineProps({
 
 // 所有扫描阶段定义
 const allPhases = [
-  { key: 'domainscan', name: '子域名扫描', configKey: 'domainscan', progress: 10 },
-  { key: 'portscan', name: '端口扫描', configKey: 'portscan', progress: 20 },
-  { key: 'portidentify', name: '端口识别', configKey: 'portidentify', progress: 40 },
-  { key: 'fingerprint', name: '指纹识别', configKey: 'fingerprint', progress: 60 },
-  { key: 'dirscan', name: '目录扫描', configKey: 'dirscan', progress: 70 },
-  { key: 'pocscan', name: '漏洞扫描', configKey: 'pocscan', progress: 80 }
+  { key: 'domainscan', name: computed(() => t('task.workflowSubdomainScan')), configKey: 'domainscan', progress: 10 },
+  { key: 'portscan', name: computed(() => t('task.workflowPortScan')), configKey: 'portscan', progress: 20 },
+  { key: 'portidentify', name: computed(() => t('task.workflowPortIdentify')), configKey: 'portidentify', progress: 40 },
+  { key: 'fingerprint', name: computed(() => t('task.workflowFingerprint')), configKey: 'fingerprint', progress: 60 },
+  { key: 'dirscan', name: computed(() => t('task.workflowDirScan')), configKey: 'dirscan', progress: 70 },
+  { key: 'pocscan', name: computed(() => t('task.workflowVulScan')), configKey: 'pocscan', progress: 80 }
 ]
 
 // 阶段名称映射（后端返回的中文名称 -> key）
@@ -223,7 +223,11 @@ function toggleExpand(key) {
 
 .workflow-node.is-success {
   border-color: var(--el-color-success);
-  background: var(--el-color-success-light-9);
+  background: var(--el-fill-color-light);
+}
+
+html.dark .workflow-node.is-success {
+  background: rgba(103, 194, 58, 0.15);
 }
 
 .workflow-node.is-success .node-icon {
@@ -232,7 +236,11 @@ function toggleExpand(key) {
 
 .workflow-node.is-running {
   border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  background: var(--el-fill-color-light);
+}
+
+html.dark .workflow-node.is-running {
+  background: rgba(64, 158, 255, 0.15);
 }
 
 .workflow-node.is-running .node-icon {
@@ -241,7 +249,11 @@ function toggleExpand(key) {
 
 .workflow-node.is-failed {
   border-color: var(--el-color-danger);
-  background: var(--el-color-danger-light-9);
+  background: var(--el-fill-color-light);
+}
+
+html.dark .workflow-node.is-failed {
+  background: rgba(245, 108, 108, 0.15);
 }
 
 .workflow-node.is-failed .node-icon {

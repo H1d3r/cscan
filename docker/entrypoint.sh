@@ -25,5 +25,9 @@ export JWT_SECRET
 # 使用envsubst替换配置文件中的环境变量
 envsubst '${JWT_SECRET}' < /app/etc/cscan-api.yaml.template > /app/etc/cscan-api.yaml
 
+# 初始化 Nuclei 模板库（后台执行，不阻塞主进程）
+echo "[INFO] Starting Nuclei templates initialization..."
+/app/init-nuclei-templates.sh &
+
 # 执行传入的命令
 exec "$@"

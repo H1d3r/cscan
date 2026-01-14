@@ -82,6 +82,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("Found task: name=%s, taskId(UUID)=%s, objectId=%s, actualWorkspaceId=%s", task.Name, task.TaskId, queryTaskId, actualWorkspaceId)
 
 	// 获取资产列表
+	l.Logger.Infof("Querying assets from workspace: %s", actualWorkspaceId)
 	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
 	
 	// 构建查询条件：匹配主任务ID或子任务ID（子任务格式: {mainTaskId}-{index}）
@@ -94,6 +95,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			{"taskId": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}}, // 兼容：UUID-index格式
 		},
 	}
+	l.Logger.Infof("Asset query filter: %+v", assetFilter)
 	assets, err := assetModel.Find(l.ctx, assetFilter, 0, 0)
 	if err != nil {
 		l.Logger.Errorf("查询资产失败: %v", err)
@@ -101,6 +103,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	l.Logger.Infof("Found %d assets for task (objectId=%s, UUID=%s)", len(assets), queryTaskId, task.TaskId)
 
 	// 获取漏洞列表
+	l.Logger.Infof("Querying vuls from workspace: %s", actualWorkspaceId)
 	vulModel := l.svcCtx.GetVulModel(actualWorkspaceId)
 	// 同样匹配主任务ID或子任务ID
 	vulFilter := bson.M{
@@ -111,6 +114,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			{"task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}}, // 兼容：UUID-index格式
 		},
 	}
+	l.Logger.Infof("Vul query filter: %+v", vulFilter)
 	vuls, err := vulModel.Find(l.ctx, vulFilter, 0, 0)
 	if err != nil {
 		l.Logger.Errorf("查询漏洞失败: %v", err)
@@ -119,6 +123,8 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 
 	// 获取目录扫描结果
 	dirScanModel := l.svcCtx.GetDirScanResultModel()
+	// 构建查询条件：只按 main_task_id 查询，不限制 workspace_id
+	// 因为目录扫描结果已经通过 main_task_id 关联到任务
 	dirScanFilter := bson.M{
 		"$or": []bson.M{
 			{"main_task_id": queryTaskId},
@@ -127,10 +133,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
 	}
-	// 如果有 actualWorkspaceId，添加过滤条件
-	if actualWorkspaceId != "" && actualWorkspaceId != "all" {
-		dirScanFilter["workspace_id"] = actualWorkspaceId
-	}
+	l.Logger.Infof("DirScan query filter: %+v, actualWorkspaceId=%s", dirScanFilter, actualWorkspaceId)
 	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 1000)
 	if err != nil {
 		l.Logger.Errorf("查询目录扫描结果失败: %v", err)
@@ -333,6 +336,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 
 	// 获取目录扫描结果
 	dirScanModel := l.svcCtx.GetDirScanResultModel()
+	// 构建查询条件：只按 main_task_id 查询，不限制 workspace_id
 	dirScanFilter := bson.M{
 		"$or": []bson.M{
 			{"main_task_id": queryTaskId},
@@ -340,9 +344,6 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 			{"main_task_id": task.TaskId},
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
-	}
-	if actualWorkspaceId != "" && actualWorkspaceId != "all" {
-		dirScanFilter["workspace_id"] = actualWorkspaceId
 	}
 	dirScans, _ := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 10000)
 

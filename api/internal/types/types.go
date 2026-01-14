@@ -1042,6 +1042,19 @@ type NucleiTemplateSyncResp struct {
 	ErrorCount   int    `json:"errorCount"`   // 失败数量
 }
 
+// NucleiTemplateDownloadReq 下载Nuclei模板库请求
+type NucleiTemplateDownloadReq struct {
+	Region string `json:"region,optional"` // 下载源：auto/github/gitee
+	Force  bool   `json:"force,optional"`  // 是否强制重新下载
+}
+
+// NucleiTemplateDownloadResp 下载Nuclei模板库响应
+type NucleiTemplateDownloadResp struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	TaskId string `json:"taskId,omitempty"` // 异步任务ID（如果是异步执行）
+}
+
 type NucleiTemplateWithContent struct {
 	Id          string   `json:"id"`          // 模板ID
 	Name        string   `json:"name"`        // 模板名称

@@ -236,6 +236,7 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 		item := notify.ConfigItem{
 			Provider:        c.Provider,
 			Config:          c.Config,
+			Status:          c.Status,
 			MessageTemplate: c.MessageTemplate,
 		}
 		// 转换高危过滤配置

@@ -369,3 +369,22 @@ func ValidatePocSyntaxHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// NucleiTemplateDownloadHandler 下载Nuclei默认模板库
+func NucleiTemplateDownloadHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.NucleiTemplateDownloadReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		l := logic.NewNucleiTemplateDownloadLogic(r.Context(), svcCtx)
+		resp, err := l.DownloadTemplates(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

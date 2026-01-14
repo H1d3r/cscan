@@ -16,6 +16,7 @@
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="download">{{ $t('poc.downloadTemplateLib') }}</el-dropdown-item>
                     <el-dropdown-item command="local">{{ $t('poc.importFromLocal') }}</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -818,6 +819,44 @@
       </template>
     </el-dialog>
 
+    <!-- 下载Nuclei模板库对话框 -->
+    <el-dialog v-model="downloadTemplateDialogVisible" :title="$t('poc.downloadTemplateLib')" width="600px">
+      <el-form label-width="120px">
+        <el-form-item :label="$t('poc.downloadSource')">
+          <el-radio-group v-model="downloadTemplateRegion">
+            <el-radio value="auto">{{ $t('poc.autoDetect') }}</el-radio>
+            <el-radio value="github">GitHub ({{ $t('poc.international') }})</el-radio>
+            <el-radio value="gitee">Gitee ({{ $t('poc.china') }})</el-radio>
+          </el-radio-group>
+          <div style="margin-top: 8px; color: #909399; font-size: 12px">
+            {{ $t('poc.downloadSourceTip') }}
+          </div>
+        </el-form-item>
+        <el-form-item :label="$t('poc.forceDownload')">
+          <el-switch v-model="downloadTemplateForce" />
+          <div style="margin-top: 8px; color: #909399; font-size: 12px">
+            {{ $t('poc.forceDownloadTip') }}
+          </div>
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon style="margin-top: 15px">
+        <template #title>
+          {{ $t('poc.downloadNote') }}
+        </template>
+        <template #default>
+          <div style="margin-top: 5px; color: #909399; font-size: 12px">
+            {{ $t('poc.downloadNoteTip') }}
+          </div>
+        </template>
+      </el-alert>
+      <template #footer>
+        <el-button @click="downloadTemplateDialogVisible = false">{{ $t('poc.cancel') }}</el-button>
+        <el-button type="primary" @click="handleDownloadTemplates" :loading="downloadTemplateLoading">
+          {{ $t('poc.startDownload') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- POC验证对话框 -->
     <el-dialog v-model="pocValidateDialogVisible" :title="$t('poc.validatePoc')" width="700px" @close="handleValidateDialogClose">
       <el-form label-width="80px">
@@ -1062,7 +1101,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened } from '@element-plus/icons-vue'
-import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
+import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
 import jsYaml from 'js-yaml'
@@ -1114,6 +1153,12 @@ const folderInputRef = ref(null)
 const forceImport = ref(false)
 const templateContentDialogVisible = ref(false)
 const currentTemplate = ref({})
+
+// 下载模板库
+const downloadTemplateDialogVisible = ref(false)
+const downloadTemplateLoading = ref(false)
+const downloadTemplateRegion = ref('auto')
+const downloadTemplateForce = ref(false)
 
 // 标签映射
 const tagMappings = ref([])
@@ -1494,9 +1539,43 @@ async function loadNucleiTemplates() {
 }
 
 async function handleSyncCommand(command) {
-  if (command === 'local') {
+  if (command === 'download') {
+    // 显示下载对话框
+    downloadTemplateDialogVisible.value = true
+    downloadTemplateRegion.value = 'auto'
+    downloadTemplateForce.value = false
+  } else if (command === 'local') {
     forceImport.value = false
     folderInputRef.value?.click()
+  }
+}
+
+// 下载Nuclei模板库
+async function handleDownloadTemplates() {
+  try {
+    downloadTemplateLoading.value = true
+    const res = await downloadNucleiTemplates({
+      region: downloadTemplateRegion.value,
+      force: downloadTemplateForce.value
+    })
+    
+    if (res.code === 0) {
+      ElMessage.success(res.msg || '模板库下载任务已启动')
+      downloadTemplateDialogVisible.value = false
+      
+      // 提示用户稍后刷新
+      ElMessage.info({
+        message: '模板下载需要一些时间，请稍后刷新页面查看',
+        duration: 5000
+      })
+    } else {
+      ElMessage.error(res.msg || '下载失败')
+    }
+  } catch (error) {
+    console.error('下载模板库失败:', error)
+    ElMessage.error('下载失败: ' + (error.message || '未知错误'))
+  } finally {
+    downloadTemplateLoading.value = false
   }
 }
 

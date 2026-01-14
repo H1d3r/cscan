@@ -243,7 +243,9 @@ func ValidateTaskConfig(config *TaskConfig) error {
 	}
 
 	if config.PortIdentify != nil && config.PortIdentify.Enable {
+		v.OneOf("portidentify.tool", config.PortIdentify.Tool, "nmap", "fingerprintx", "")
 		v.NonNegative("portidentify.timeout", config.PortIdentify.Timeout)
+		v.NonNegative("portidentify.concurrency", config.PortIdentify.Concurrency)
 	}
 
 	if config.DomainScan != nil && config.DomainScan.Enable {

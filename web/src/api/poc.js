@@ -51,6 +51,11 @@ export function syncNucleiTemplates(data = {}) {
   return request.post('/poc/nuclei/sync', data)
 }
 
+// 下载Nuclei默认模板库
+export function downloadNucleiTemplates(data = {}) {
+  return request.post('/poc/nuclei/download', data)
+}
+
 // 清空Nuclei模板
 export function clearNucleiTemplates() {
   return request.post('/poc/nuclei/clear')
