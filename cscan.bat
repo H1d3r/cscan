@@ -242,18 +242,19 @@ REM Remove any remaining spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
 for /f "tokens=*" %%a in ("!REMOTE_VER_CLEAN!") do set "REMOTE_VER_CLEAN=%%a"
 
-if "!LOCAL_VER_CLEAN!"=="!REMOTE_VER_CLEAN!" (
-    echo [CSCAN] Already running the latest version
-    set /p "force=Force re-pull images? (Y/N): "
-    if /i not "!force!"=="Y" (
-        echo [CSCAN] Upgrade cancelled
-        goto :pause_return
-    )
-    goto :do_upgrade
-)
+if not "!LOCAL_VER_CLEAN!"=="!REMOTE_VER_CLEAN!" goto :version_different
 
+echo [CSCAN] Already running the latest version
+set /p "force=Force re-pull images? (Y/N): "
+if /i not "!force!"=="Y" (
+    echo [CSCAN] Upgrade cancelled
+    goto :pause_return
+)
+goto :do_upgrade
+
+:version_different
 set /p "confirm=Confirm upgrade? Services will restart. (Y/N): "
-if /i not "%confirm%"=="Y" (
+if /i not "!confirm!"=="Y" (
     echo [CSCAN] Upgrade cancelled
     goto :pause_return
 )
