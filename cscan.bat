@@ -245,7 +245,11 @@ for /f "tokens=*" %%a in ("!REMOTE_VER_CLEAN!") do set "REMOTE_VER_CLEAN=%%a"
 if "!LOCAL_VER_CLEAN!"=="!REMOTE_VER_CLEAN!" (
     echo [CSCAN] Already running the latest version
     set /p "force=Force re-pull images? (Y/N): "
-    if /i not "!force!"=="Y" goto :pause_return
+    if /i not "!force!"=="Y" (
+        echo [CSCAN] Upgrade cancelled
+        goto :pause_return
+    )
+    goto :do_upgrade
 )
 
 set /p "confirm=Confirm upgrade? Services will restart. (Y/N): "
@@ -254,6 +258,7 @@ if /i not "%confirm%"=="Y" (
     goto :pause_return
 )
 
+:do_upgrade
 echo [CSCAN] Pulling latest images...
 docker compose pull cscan-api cscan-rpc cscan-web
 if %errorlevel% neq 0 (
