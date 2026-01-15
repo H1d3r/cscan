@@ -1722,8 +1722,15 @@ async function showTemplateContent(row) {
 
 function copyTemplateContent() {
   if (currentTemplate.value.content) {
-    navigator.clipboard.writeText(currentTemplate.value.content)
-    ElMessage.success(t('poc.copiedToClipboard'))
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(currentTemplate.value.content).then(() => {
+        ElMessage.success(t('poc.copiedToClipboard'))
+      }).catch(() => {
+        fallbackCopyToClipboard(currentTemplate.value.content)
+      })
+    } else {
+      fallbackCopyToClipboard(currentTemplate.value.content)
+    }
   }
 }
 
@@ -2765,11 +2772,39 @@ function previewConvertedPoc(poc) {
 
 // 复制转换后的 POC
 function copyConvertedPoc() {
-  navigator.clipboard.writeText(convertedPocPreviewContent.value).then(() => {
-    ElMessage.success(t('poc.copiedToClipboard'))
-  }).catch(() => {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(convertedPocPreviewContent.value).then(() => {
+      ElMessage.success(t('poc.copiedToClipboard'))
+    }).catch(() => {
+      fallbackCopyToClipboard(convertedPocPreviewContent.value)
+    })
+  } else {
+    fallbackCopyToClipboard(convertedPocPreviewContent.value)
+  }
+}
+
+function fallbackCopyToClipboard(text) {
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-999999px'
+    textarea.style.top = '-999999px'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    
+    if (successful) {
+      ElMessage.success(t('poc.copiedToClipboard'))
+    } else {
+      ElMessage.error(t('poc.importFailed'))
+    }
+  } catch (err) {
+    console.error('复制失败:', err)
     ElMessage.error(t('poc.importFailed'))
-  })
+  }
 }
 
 // 处理文件上传

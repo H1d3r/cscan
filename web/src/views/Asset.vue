@@ -876,43 +876,60 @@ function handleAppTagClick(app) {
     const ids = getCustomFingerprintIds(app)
     if (ids.length > 0) {
       const textToCopy = ids.length > 1 ? ids.join(',') : ids[0]
-      navigator.clipboard.writeText(textToCopy).then(() => {
-        if (ids.length > 1) {
-          ElMessage.success(`已复制${ids.length}个指纹ID: ${textToCopy}`)
-        } else {
-          ElMessage.success(`已复制指纹ID: ${textToCopy}`)
-        }
-      }).catch(() => {
-        // 降级方案
-        const textarea = document.createElement('textarea')
-        textarea.value = textToCopy
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-        if (ids.length > 1) {
-          ElMessage.success(`已复制${ids.length}个指纹ID: ${textToCopy}`)
-        } else {
-          ElMessage.success(`已复制指纹ID: ${textToCopy}`)
-        }
-      })
+      const successMsg = ids.length > 1 
+        ? `已复制${ids.length}个指纹ID: ${textToCopy}` 
+        : `已复制指纹ID: ${textToCopy}`
+      
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          ElMessage.success(successMsg)
+        }).catch(() => {
+          fallbackCopyToClipboard(textToCopy, successMsg)
+        })
+      } else {
+        fallbackCopyToClipboard(textToCopy, successMsg)
+      }
     }
   }
 }
 
 // 复制IconHash
 function copyIconHash(hash) {
-  navigator.clipboard.writeText(hash).then(() => {
-    ElMessage.success(`已复制IconHash: ${hash}`)
-  }).catch(() => {
+  const successMsg = `已复制IconHash: ${hash}`
+  
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(hash).then(() => {
+      ElMessage.success(successMsg)
+    }).catch(() => {
+      fallbackCopyToClipboard(hash, successMsg)
+    })
+  } else {
+    fallbackCopyToClipboard(hash, successMsg)
+  }
+}
+
+function fallbackCopyToClipboard(text, successMsg) {
+  try {
     const textarea = document.createElement('textarea')
-    textarea.value = hash
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-999999px'
+    textarea.style.top = '-999999px'
     document.body.appendChild(textarea)
+    textarea.focus()
     textarea.select()
-    document.execCommand('copy')
+    const successful = document.execCommand('copy')
     document.body.removeChild(textarea)
-    ElMessage.success(`已复制IconHash: ${hash}`)
-  })
+    
+    if (successful) {
+      ElMessage.success(successMsg)
+    } else {
+      ElMessage.error('复制失败')
+    }
+  } catch (err) {
+    console.error('复制失败:', err)
+    ElMessage.error('复制失败')
+  }
 }
 
 // 快速扫描处理

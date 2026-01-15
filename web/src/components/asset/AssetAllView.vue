@@ -1087,8 +1087,41 @@ function getIconDataUrl(iconData) {
 
 function copyIconHash() {
   if (currentAsset.value && currentAsset.value.iconHash) {
-    navigator.clipboard.writeText(currentAsset.value.iconHash)
-    ElMessage.success('已复制IconHash')
+    const hash = currentAsset.value.iconHash
+    
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(hash).then(() => {
+        ElMessage.success('已复制IconHash')
+      }).catch(() => {
+        fallbackCopyToClipboard(hash)
+      })
+    } else {
+      fallbackCopyToClipboard(hash)
+    }
+  }
+}
+
+function fallbackCopyToClipboard(text) {
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-999999px'
+    textarea.style.top = '-999999px'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    
+    if (successful) {
+      ElMessage.success('已复制IconHash')
+    } else {
+      ElMessage.error('复制失败')
+    }
+  } catch (err) {
+    console.error('复制失败:', err)
+    ElMessage.error('复制失败')
   }
 }
 

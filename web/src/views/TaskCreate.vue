@@ -956,7 +956,7 @@ onMounted(async () => {
         const config = JSON.parse(res.config)
         applyConfig(config)
       }
-    } catch (e) { console.error('加载扫描配置失败:', e) }
+    } catch (e) { console.error('Load scan config failed:', e) }
     
     // 设置默认工作空间
     let wsId = workspaceStore.currentWorkspaceId
@@ -1106,7 +1106,7 @@ function debounceSaveConfig() {
   if (saveConfigTimer) clearTimeout(saveConfigTimer)
   saveConfigTimer = setTimeout(() => {
     const config = buildConfig()
-    saveScanConfig({ config: JSON.stringify(config) }).catch(e => console.error('自动保存配置失败:', e))
+    saveScanConfig({ config: JSON.stringify(config) }).catch(e => console.error('Auto save config failed:', e))
   }, 500)
 }
 
@@ -1414,7 +1414,7 @@ async function loadNucleiTemplatesForSelect() {
       restoreNucleiTableSelection()
     }
   } catch (e) {
-    console.error('加载Nuclei模板失败:', e)
+    console.error('Load Nuclei templates failed:', e)
   } finally {
     nucleiTemplateLoading.value = false
     // 延迟重置标志位，确保selection-change事件处理完成
@@ -1453,7 +1453,7 @@ async function loadCustomPocsForSelect() {
       restoreCustomPocTableSelection()
     }
   } catch (e) {
-    console.error('加载自定义POC失败:', e)
+    console.error('Load custom POC failed:', e)
   } finally {
     customPocLoading.value = false
     // 延迟重置标志位，确保selection-change事件处理完成
@@ -1551,7 +1551,7 @@ async function selectAllNucleiTemplates() {
       tag: nucleiTemplateFilter.tag
     })
     if (firstRes.code !== 0) {
-      throw new Error(firstRes.msg || '获取数据失败')
+      throw new Error(firstRes.msg || 'Failed to fetch data')
     }
     
     const total = firstRes.total || 0
@@ -1600,7 +1600,7 @@ async function selectAllNucleiTemplates() {
     const addedText = addedCount < allTemplates.length ? t('task.newlyAdded', { count: addedCount }) : ''
     ElMessage.success(t('task.selectedTemplatesCount', { total: allTemplates.length, added: addedText }))
   } catch (e) {
-    console.error('选择全部失败:', e)
+    console.error('Select all failed:', e)
     ElMessage.error(t('task.selectAllFailed'))
   } finally {
     selectAllNucleiLoading.value = false
@@ -1623,7 +1623,7 @@ async function selectAllCustomPocs() {
       enabled: true
     })
     if (firstRes.code !== 0) {
-      throw new Error(firstRes.msg || '获取数据失败')
+      throw new Error(firstRes.msg || 'Failed to fetch data')
     }
     
     const total = firstRes.total || 0
@@ -1672,7 +1672,7 @@ async function selectAllCustomPocs() {
     const addedText = addedCount < allPocs.length ? t('task.newlyAdded', { count: addedCount }) : ''
     ElMessage.success(t('task.selectedPocsCount', { total: allPocs.length, added: addedText }))
   } catch (e) {
-    console.error('选择全部失败:', e)
+    console.error('Select all failed:', e)
     ElMessage.error(t('task.selectAllFailed'))
   } finally {
     selectAllCustomLoading.value = false
@@ -1759,7 +1759,7 @@ async function viewPocContent(row, type) {
         currentViewPoc.value.content = row.content || t('task.noContent')
       }
     } catch (e) {
-      console.error('获取POC内容失败:', e)
+      console.error('Get POC content failed:', e)
       currentViewPoc.value.content = t('task.getContentFailed')
     } finally {
       pocContentLoading.value = false
@@ -1770,11 +1770,39 @@ async function viewPocContent(row, type) {
 // 复制POC内容
 function copyPocContent() {
   if (currentViewPoc.value.content) {
-    navigator.clipboard.writeText(currentViewPoc.value.content).then(() => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(currentViewPoc.value.content).then(() => {
+        ElMessage.success(t('task.copiedToClipboard'))
+      }).catch(() => {
+        fallbackCopyToClipboard(currentViewPoc.value.content)
+      })
+    } else {
+      fallbackCopyToClipboard(currentViewPoc.value.content)
+    }
+  }
+}
+
+function fallbackCopyToClipboard(text) {
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-999999px'
+    textarea.style.top = '-999999px'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    
+    if (successful) {
       ElMessage.success(t('task.copiedToClipboard'))
-    }).catch(() => {
+    } else {
       ElMessage.error(t('task.copyFailed'))
-    })
+    }
+  } catch (err) {
+    console.error('Copy failed:', err)
+    ElMessage.error(t('task.copyFailed'))
   }
 }
 
@@ -1803,7 +1831,7 @@ async function loadDictList() {
       dictList.value = res.list || []
     }
   } catch (e) {
-    console.error('加载字典列表失败:', e)
+    console.error('Load dictionary list failed:', e)
   } finally {
     dictLoading.value = false
   }
@@ -1857,7 +1885,7 @@ async function loadSubdomainDictList() {
       subdomainDictList.value = res.list || []
     }
   } catch (e) {
-    console.error('加载子域名字典列表失败:', e)
+    console.error('Load subdomain dictionary list failed:', e)
   } finally {
     subdomainDictLoading.value = false
   }
@@ -1911,7 +1939,7 @@ async function loadRecursiveDictList() {
       recursiveDictList.value = res.list || []
     }
   } catch (e) {
-    console.error('加载递归字典列表失败:', e)
+    console.error('Load recursive dictionary list failed:', e)
   } finally {
     recursiveDictLoading.value = false
   }

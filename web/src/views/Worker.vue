@@ -577,18 +577,43 @@ function copyToClipboard(text) {
     ElMessage.warning(t('worker.contentEmpty'))
     return
   }
-  navigator.clipboard.writeText(text).then(() => {
-    ElMessage.success(t('worker.copiedToClipboard'))
-  }).catch(() => {
-    // 降级方案
+  
+  // 检查 Clipboard API 是否可用
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      ElMessage.success(t('worker.copiedToClipboard'))
+    }).catch(() => {
+      // 降级方案
+      fallbackCopyToClipboard(text)
+    })
+  } else {
+    // 直接使用降级方案
+    fallbackCopyToClipboard(text)
+  }
+}
+
+function fallbackCopyToClipboard(text) {
+  try {
     const textarea = document.createElement('textarea')
     textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-999999px'
+    textarea.style.top = '-999999px'
     document.body.appendChild(textarea)
+    textarea.focus()
     textarea.select()
-    document.execCommand('copy')
+    const successful = document.execCommand('copy')
     document.body.removeChild(textarea)
-    ElMessage.success(t('worker.copiedToClipboard'))
-  })
+    
+    if (successful) {
+      ElMessage.success(t('worker.copiedToClipboard'))
+    } else {
+      ElMessage.error(t('worker.copyFailed'))
+    }
+  } catch (err) {
+    console.error('复制失败:', err)
+    ElMessage.error(t('worker.copyFailed'))
+  }
 }
 
 function openConsole(workerName) {
