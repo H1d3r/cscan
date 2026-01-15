@@ -1,5 +1,7 @@
 import request from './request'
 
+// ==================== 任务管理 ====================
+
 export function getTaskList(data) {
   return request.post('/task/list', data)
 }
@@ -71,4 +73,51 @@ export function saveScanConfig(data) {
 
 export function getScanConfig() {
   return request.post('/user/scanConfig/get')
+}
+
+// ==================== 扫描配置模板 ====================
+
+// 获取模板列表
+export function getScanTemplateList(data) {
+  return request.post('/task/template/list', data)
+}
+
+// 保存模板
+export function saveScanTemplate(data) {
+  return request.post('/task/template/save', data)
+}
+
+// 删除模板
+export function deleteScanTemplate(data) {
+  return request.post('/task/template/delete', data)
+}
+
+// 获取模板详情
+export function getScanTemplateDetail(data) {
+  return request.post('/task/template/detail', data)
+}
+
+// 从任务创建模板
+export function createTemplateFromTask(data) {
+  return request.post('/task/template/fromTask', data)
+}
+
+// 获取模板分类和标签
+export function getScanTemplateCategories() {
+  return request.post('/task/template/categories')
+}
+
+// 导出模板
+export function exportScanTemplates(data) {
+  return request.post('/task/template/export', data)
+}
+
+// 导入模板
+export function importScanTemplates(data) {
+  return request.post('/task/template/import', data)
+}
+
+// 使用模板（增加使用计数）
+export function useScanTemplate(data) {
+  return request.post('/task/template/use', data)
 }

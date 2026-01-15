@@ -52,16 +52,26 @@
             <span v-else>0</span>
           </template>
         </el-table-column>
-        <el-table-column prop="concurrency" :label="$t('worker.concurrency')" width="100">
+        <el-table-column prop="concurrency" :label="$t('worker.concurrency')" width="140">
           <template #default="{ row }">
-            <span 
-              class="editable-name" 
-              @click="openConcurrencyDialog(row)"
-              :title="$t('worker.clickToEditConcurrency')"
-            >
-              {{ row.concurrency || 5 }}
-              <el-icon class="edit-icon"><Edit /></el-icon>
-            </span>
+            <div class="concurrency-cell">
+              <span 
+                class="editable-name" 
+                @click="openConcurrencyDialog(row)"
+                :title="$t('worker.clickToEditConcurrency')"
+              >
+                {{ row.effectiveConcurrency || row.concurrency || 5 }}
+                <el-icon class="edit-icon"><Edit /></el-icon>
+              </span>
+              <el-tag 
+                v-if="row.schedulerMode && row.schedulerMode !== 'normal'" 
+                :type="getSchedulerModeType(row.schedulerMode)"
+                size="small"
+                style="margin-left: 4px"
+              >
+                {{ getSchedulerModeText(row.schedulerMode) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="status" :label="$t('worker.status')" width="120">
@@ -428,6 +438,26 @@ function getHealthStatusText(status) {
   return texts[status] || status
 }
 
+function getSchedulerModeType(mode) {
+  const types = {
+    'aggressive': 'success',
+    'normal': '',
+    'conservative': 'warning',
+    'critical': 'danger'
+  }
+  return types[mode] || 'info'
+}
+
+function getSchedulerModeText(mode) {
+  const texts = {
+    'aggressive': t('worker.modeAggressive'),
+    'normal': t('worker.modeNormal'),
+    'conservative': t('worker.modeConservative'),
+    'critical': t('worker.modeCritical')
+  }
+  return texts[mode] || mode
+}
+
 async function deleteWorker(workerName) {
   try {
     const res = await request.post('/worker/delete', { name: workerName })
@@ -644,6 +674,13 @@ function openConsole(workerName) {
       font-size: 14px;
       transition: opacity 0.2s;
     }
+  }
+
+  .concurrency-cell {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 
   .hint-text {

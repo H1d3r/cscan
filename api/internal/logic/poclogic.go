@@ -1378,7 +1378,12 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesAsync(region string, forc
 		// 每次尝试前确保目录不存在
 		_ = os.RemoveAll(templatesDir)
 		
+		// 配置 git 环境变量，禁用 SSL 验证（解决 schannel 问题）
 		cmd := exec.Command("git", "clone", "--depth", "1", repoURL, templatesDir)
+		cmd.Env = append(os.Environ(),
+			"GIT_SSL_NO_VERIFY=true",
+			"GIT_TERMINAL_PROMPT=0",
+		)
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			successURL = repoURL

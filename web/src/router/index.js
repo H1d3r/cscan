@@ -86,6 +86,12 @@ const routes = [
         meta: { title: '任务管理', icon: 'List' }
       },
       {
+        path: 'task/template',
+        name: 'ScanTemplate',
+        component: lazyLoad(() => import('@/views/ScanTemplate.vue')),
+        meta: { title: '扫描模板', icon: 'Document', hidden: true }
+      },
+      {
         path: 'cron-task',
         name: 'CronTask',
         component: lazyLoad(() => import('@/views/CronTask.vue')),

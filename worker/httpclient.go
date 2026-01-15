@@ -177,6 +177,10 @@ type HeartbeatReq struct {
 	TaskExecutedNumber int32   `json:"taskExecutedNumber"`
 	IsDaemon           bool    `json:"isDaemon"`
 	Concurrency        int     `json:"concurrency"`
+	// 智能调度器状态
+	SchedulerMode        string `json:"schedulerMode,omitempty"`        // 调度模式
+	EffectiveConcurrency int    `json:"effectiveConcurrency,omitempty"` // 实际生效的并发数
+	IsThrottled          bool   `json:"isThrottled,omitempty"`          // 是否限流
 }
 
 // HeartbeatResp 心跳响应

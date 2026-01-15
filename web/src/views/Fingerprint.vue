@@ -1772,6 +1772,11 @@ function showBuiltinImportDialog() {
   builtinImportDialogVisible.value = true
 }
 
+// 处理文件超出限制
+function handleExceed() {
+  ElMessage.warning(t('fingerprint.fileLimitExceeded'))
+}
+
 // 处理内置指纹文件选择
 function handleBuiltinFileChange(file) {
   if (!file || !file.raw) return

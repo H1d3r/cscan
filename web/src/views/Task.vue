@@ -5,6 +5,9 @@
       <el-button type="primary" @click="goToCreateTask">
         <el-icon><Plus /></el-icon>{{ $t('task.newTask') }}
       </el-button>
+      <el-button @click="goToTemplateManage">
+        <el-icon><Document /></el-icon>{{ $t('task.scanTemplate') }}
+      </el-button>
       <el-switch
         v-model="autoRefresh"
         style="margin-left: 20px"
@@ -1207,6 +1210,11 @@ function resetForm() {
 // 跳转到新建任务页面
 function goToCreateTask() {
   router.push('/task/create')
+}
+
+// 跳转到模板管理页面
+function goToTemplateManage() {
+  router.push('/task/template')
 }
 
 // 跳转到编辑任务页面

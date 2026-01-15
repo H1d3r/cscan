@@ -32,8 +32,7 @@ func NewCheckTaskLogic(ctx context.Context, svcCtx *svc.ServiceContext) *CheckTa
 // 优先从 Worker 专属队列获取任务，然后从公共队列获取
 func (l *CheckTaskLogic) CheckTask(in *pb.CheckTaskReq) (*pb.CheckTaskResp, error) {
 	workerName := in.TaskId // TaskId 实际上是 Worker 名称
-	l.Logger.Infof("CheckTask: received request from worker '%s'", workerName)
-	
+
 	publicQueueKey := "cscan:task:queue"
 	workerQueueKey := "cscan:task:queue:worker:" + strings.ToLower(workerName)
 	processingKey := "cscan:task:processing"

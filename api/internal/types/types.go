@@ -477,8 +477,9 @@ type MainTaskListResp struct {
 type MainTaskCreateReq struct {
 	Name        string   `json:"name"`
 	Target      string   `json:"target"`
-	ProfileId   string   `json:"profileId,optional"` // 可选，兼容旧版
-	Config      string   `json:"config,optional"`    // 直接传递配置JSON
+	ProfileId   string   `json:"profileId,optional"`   // 可选，兼容旧版
+	TemplateId  string   `json:"templateId,optional"`  // 扫描配置模板ID
+	Config      string   `json:"config,optional"`      // 直接传递配置JSON
 	OrgId       string   `json:"orgId,optional"`
 	Workers     []string `json:"workers,optional"`     // 指定执行任务的 Worker 列表
 	WorkspaceId string   `json:"workspaceId,optional"` // 任务所属工作空间ID
@@ -688,6 +689,11 @@ type Worker struct {
 	Status       string            `json:"status"`
 	UpdateTime   string            `json:"updateTime"`
 	Tools        map[string]bool   `json:"tools"`        // 工具安装状态
+	// 智能调度器状态
+	SchedulerMode       string  `json:"schedulerMode,omitempty"`       // 调度模式: aggressive, normal, conservative, critical
+	EffectiveConcurrency int    `json:"effectiveConcurrency,omitempty"` // 实际生效的并发数
+	IsThrottled         bool    `json:"isThrottled,omitempty"`          // 是否处于限流状态
+	HealthStatus        string  `json:"healthStatus,omitempty"`         // 健康状态: healthy, warning, overloaded, throttled
 }
 
 type WorkerListResp struct {
@@ -1876,6 +1882,7 @@ type NotifyConfig struct {
 	Config          string          `json:"config"`          // JSON格式的配置详情
 	Status          string          `json:"status"`          // enable/disable
 	MessageTemplate string          `json:"messageTemplate"` // 自定义消息模板
+	WebURL          string          `json:"webUrl"`          // 前端URL，用于生成报告链接
 	CreateTime      string          `json:"createTime"`
 	UpdateTime      string          `json:"updateTime"`
 	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,omitempty"` // 高危过滤配置
@@ -1904,6 +1911,7 @@ type NotifyConfigSaveReq struct {
 	Config          string          `json:"config"`
 	Status          string          `json:"status,optional"`
 	MessageTemplate string          `json:"messageTemplate,optional"`
+	WebURL          string          `json:"webUrl,optional"`         // 前端URL，用于生成报告链接
 	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,optional"` // 高危过滤配置
 }
 
@@ -2025,4 +2033,120 @@ type PortStatItem struct {
 	Port    int    `json:"port"`
 	Service string `json:"service"`
 	Count   int64  `json:"count"`
+}
+
+// ==================== 扫描配置模板 ====================
+
+// ScanTemplate 扫描配置模板
+type ScanTemplate struct {
+	Id          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`    // quick/standard/full/custom
+	Tags        []string `json:"tags"`
+	Config      string   `json:"config"`      // 扫描配置JSON
+	IsBuiltin   bool     `json:"isBuiltin"`   // 是否内置模板
+	UseCount    int      `json:"useCount"`    // 使用次数
+	CreateTime  string   `json:"createTime"`
+}
+
+// ScanTemplateListReq 模板列表请求
+type ScanTemplateListReq struct {
+	Page     int      `json:"page,default=1"`
+	PageSize int      `json:"pageSize,default=20"`
+	Keyword  string   `json:"keyword,optional"`   // 搜索关键词
+	Category string   `json:"category,optional"`  // 分类筛选
+	Tags     []string `json:"tags,optional"`      // 标签筛选
+}
+
+// ScanTemplateListResp 模板列表响应
+type ScanTemplateListResp struct {
+	Code  int            `json:"code"`
+	Msg   string         `json:"msg"`
+	Total int            `json:"total"`
+	List  []ScanTemplate `json:"list"`
+}
+
+// ScanTemplateSaveReq 保存模板请求
+type ScanTemplateSaveReq struct {
+	Id          string   `json:"id,optional"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,optional"`
+	Category    string   `json:"category,optional"`
+	Tags        []string `json:"tags,optional"`
+	Config      string   `json:"config"`
+	SortNumber  int      `json:"sortNumber,optional"`
+}
+
+// ScanTemplateDeleteReq 删除模板请求
+type ScanTemplateDeleteReq struct {
+	Id string `json:"id"`
+}
+
+// ScanTemplateDetailReq 模板详情请求
+type ScanTemplateDetailReq struct {
+	Id string `json:"id"`
+}
+
+// ScanTemplateDetailResp 模板详情响应
+type ScanTemplateDetailResp struct {
+	Code int           `json:"code"`
+	Msg  string        `json:"msg"`
+	Data *ScanTemplate `json:"data,omitempty"`
+}
+
+// ScanTemplateFromTaskReq 从任务创建模板请求
+type ScanTemplateFromTaskReq struct {
+	TaskId      string `json:"taskId"`                // 任务ID
+	Name        string `json:"name"`                  // 模板名称
+	Description string `json:"description,optional"`  // 模板描述
+}
+
+// ScanTemplateCategoriesResp 模板分类响应
+type ScanTemplateCategoriesResp struct {
+	Code       int      `json:"code"`
+	Msg        string   `json:"msg"`
+	Categories []string `json:"categories"`
+	Tags       []string `json:"tags"`
+}
+
+// ScanTemplateExportReq 导出模板请求
+type ScanTemplateExportReq struct {
+	Ids []string `json:"ids,optional"` // 指定导出的模板ID，为空则导出全部
+}
+
+// ScanTemplateExportItem 导出模板项
+type ScanTemplateExportItem struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`
+	Tags        []string `json:"tags"`
+	Config      string   `json:"config"`
+}
+
+// ScanTemplateExportResp 导出模板响应
+type ScanTemplateExportResp struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data string `json:"data"` // JSON格式的模板数据
+}
+
+// ScanTemplateImportReq 导入模板请求
+type ScanTemplateImportReq struct {
+	Data         string `json:"data"`                   // JSON格式的模板数据
+	SkipExisting bool   `json:"skipExisting,optional"`  // 是否跳过已存在的模板
+}
+
+// ScanTemplateImportResp 导入模板响应
+type ScanTemplateImportResp struct {
+	Code     int      `json:"code"`
+	Msg      string   `json:"msg"`
+	Imported int      `json:"imported"` // 成功导入数量
+	Skipped  int      `json:"skipped"`  // 跳过数量
+	Errors   []string `json:"errors"`   // 错误信息
+}
+
+// ScanTemplateUseReq 使用模板请求
+type ScanTemplateUseReq struct {
+	Id string `json:"id"`
 }

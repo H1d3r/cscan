@@ -19,6 +19,7 @@ type NotifyResult struct {
 	StartTime   time.Time `json:"startTime"`
 	EndTime     time.Time `json:"endTime"`
 	WorkspaceId string    `json:"workspaceId"`
+	ReportURL   string    `json:"reportUrl"` // 报告URL地址
 	// 高危检测结果
 	HighRiskInfo *HighRiskInfo `json:"highRiskInfo,omitempty"`
 }
@@ -112,6 +113,7 @@ func FormatMessage(result *NotifyResult, template string) string {
 		"{{startTime}}", result.StartTime.Format("2006-01-02 15:04:05"),
 		"{{endTime}}", result.EndTime.Format("2006-01-02 15:04:05"),
 		"{{workspaceId}}", result.WorkspaceId,
+		"{{reportUrl}}", result.ReportURL,
 	)
 
 	return replacer.Replace(template)
@@ -126,7 +128,8 @@ const DefaultTemplate = `{{statusEmoji}} 扫描任务完成
 发现漏洞: {{vulCount}}
 执行时长: {{duration}}
 开始时间: {{startTime}}
-结束时间: {{endTime}}`
+结束时间: {{endTime}}
+报告地址: {{reportUrl}}`
 
 // MarkdownTemplate Markdown格式模板
 const MarkdownTemplate = `## {{statusEmoji}} 扫描任务完成
@@ -139,4 +142,5 @@ const MarkdownTemplate = `## {{statusEmoji}} 扫描任务完成
 | 发现漏洞 | {{vulCount}} |
 | 执行时长 | {{duration}} |
 | 开始时间 | {{startTime}} |
-| 结束时间 | {{endTime}} |`
+| 结束时间 | {{endTime}} |
+| 报告地址 | {{reportUrl}} |`

@@ -27,6 +27,7 @@ type ConfigItem struct {
 	Status          string          `json:"status"`
 	MessageTemplate string          `json:"messageTemplate"`
 	HighRiskFilter  *HighRiskFilter `json:"highRiskFilter,omitempty"`
+	WebURL          string          `json:"webUrl"` // 前端URL，用于生成报告链接
 }
 
 // HighRiskFilter 高危过滤配置
@@ -187,6 +188,7 @@ func TestProvider(providerType, configJSON, messageTemplate string) error {
 		AssetCount: 100,
 		VulCount:   5,
 		Duration:   "10m30s",
+		ReportURL:  "https://example.com/report?taskId=test-task-id",
 	}
 
 	ctx := context.Background()

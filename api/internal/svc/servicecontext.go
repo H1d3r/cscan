@@ -39,6 +39,7 @@ type ServiceContext struct {
 	CommandHistoryModel      *model.CommandHistoryModel
 	AuditLogModel            *model.AuditLogModel
 	NotifyConfigModel        *model.NotifyConfigModel
+	ScanTemplateModel        *model.ScanTemplateModel
 
 	// 调度器
 	Scheduler *scheduler.Scheduler
@@ -132,6 +133,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CommandHistoryModel:      model.NewCommandHistoryModel(mongoDB),
 		AuditLogModel:            model.NewAuditLogModel(mongoDB),
 		NotifyConfigModel:        model.NewNotifyConfigModel(mongoDB),
+		ScanTemplateModel:        model.NewScanTemplateModel(mongoDB),
 		Scheduler:               scheduler.NewScheduler(rdb),
 		TemplateCategories:      []string{},
 		TemplateTags:            []string{},
@@ -153,6 +155,9 @@ func NewServiceContext(c config.Config) *ServiceContext {
 
 	// 设置黑名单模型（用于启动时导入默认黑名单）
 	svcCtx.SyncMethods.SetBlacklistModel(model.NewBlacklistConfigModel(svcCtx.MongoDB))
+
+	// 初始化内置扫描模板
+	sync.InitBuiltinTemplates(svcCtx.ScanTemplateModel)
 
 	return svcCtx
 }

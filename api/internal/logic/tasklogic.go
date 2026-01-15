@@ -311,7 +311,7 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 		taskConfig["workers"] = req.Workers
 	}
 
-	// 优先使用直接传递的 config，否则从 profile 获取
+	// 优先使用直接传递的 config，否则从 template 或 profile 获取
 	profileName := "自定义配置"
 	if req.Config != "" {
 		// 直接使用传递的配置
@@ -321,6 +321,23 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 				taskConfig[k] = v
 			}
 		}
+	} else if req.TemplateId != "" {
+		// 从扫描配置模板获取配置
+		template, err := l.svcCtx.ScanTemplateModel.FindById(l.ctx, req.TemplateId)
+		if err != nil {
+			return &types.BaseRespWithId{Code: 400, Msg: "扫描模板不存在"}, nil
+		}
+		profileName = template.Name
+		if template.Config != "" {
+			var templateConfig map[string]interface{}
+			if err := json.Unmarshal([]byte(template.Config), &templateConfig); err == nil {
+				for k, v := range templateConfig {
+					taskConfig[k] = v
+				}
+			}
+		}
+		// 增加模板使用计数
+		l.svcCtx.ScanTemplateModel.IncrUseCount(l.ctx, req.TemplateId)
 	} else if req.ProfileId != "" {
 		// 从 profile 获取配置（兼容旧版）
 		profile, err := l.svcCtx.ProfileModel.FindById(l.ctx, req.ProfileId)

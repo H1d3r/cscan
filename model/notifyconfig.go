@@ -18,6 +18,7 @@ type NotifyConfig struct {
 	Config          string             `bson:"config" json:"config"`                     // JSON格式的配置详情
 	Status          string             `bson:"status" json:"status"`                     // enable/disable
 	MessageTemplate string             `bson:"message_template" json:"messageTemplate"`  // 自定义消息模板
+	WebURL          string             `bson:"web_url" json:"webUrl"`                    // 前端URL，用于生成报告链接
 	CreateTime      time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime      time.Time          `bson:"update_time" json:"updateTime"`
 	// 高危过滤配置
@@ -148,6 +149,7 @@ func (m *NotifyConfigModel) Upsert(ctx context.Context, doc *NotifyConfig) error
 		"config":           doc.Config,
 		"status":           doc.Status,
 		"message_template": doc.MessageTemplate,
+		"web_url":          doc.WebURL,
 		"update_time":      now,
 	}
 	// 添加高危过滤配置

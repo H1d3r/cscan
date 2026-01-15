@@ -76,8 +76,11 @@ type Worker struct {
 	// 终端处理器
 	terminalHandler *TerminalHandler
 
-	// 资源管理器
+	// 资源管理器（旧版，保留兼容）
 	resourceManager *ResourceManager
+
+	// 自适应调度器（新版智能调度）
+	adaptiveScheduler *AdaptiveScheduler
 
 	// 任务执行器集成
 	taskRunnerIntegration *TaskRunnerIntegration
@@ -242,8 +245,15 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		w.wsClient.SendTerminalOutput(sessionId, data)
 	})
 
-	// 创建资源管理器
+	// 创建资源管理器（旧版，保留兼容）
 	w.resourceManager = NewResourceManager(config.Concurrency)
+
+	// 创建自适应调度器（新版智能调度）
+	adaptiveConfig := DefaultAdaptiveSchedulerConfig(config.Concurrency)
+	w.adaptiveScheduler = NewAdaptiveScheduler(adaptiveConfig)
+	w.adaptiveScheduler.SetLogger(func(level, format string, args ...interface{}) {
+		w.logger.Info("[Scheduler] "+format, args...)
+	})
 
 	// 注册扫描器
 	w.registerScanners()
@@ -367,6 +377,24 @@ func (w *Worker) GetWorkerInfo() *WorkerInfoPayload {
 	return w.sysInfoCollector.Collect(taskStarted, taskRunning, concurrency)
 }
 
+// GetSchedulerStats 获取调度器统计信息
+func (w *Worker) GetSchedulerStats() *SchedulerStats {
+	if w.adaptiveScheduler != nil {
+		stats := w.adaptiveScheduler.GetStats()
+		return &stats
+	}
+	return nil
+}
+
+// GetScannerConfigRecommendation 获取扫描器配置建议
+func (w *Worker) GetScannerConfigRecommendation() *ScannerConfigRecommendation {
+	if w.adaptiveScheduler != nil {
+		config := w.adaptiveScheduler.GetScannerConfig()
+		return &config
+	}
+	return nil
+}
+
 // registerScanners 注册扫描器
 func (w *Worker) registerScanners() {
 	w.scanners["portscan"] = scanner.NewPortScanner()
@@ -384,6 +412,11 @@ func (w *Worker) registerScanners() {
 // Start 启动Worker
 func (w *Worker) Start() {
 	w.isRunning = true
+
+	// 启动自适应调度器
+	if w.adaptiveScheduler != nil {
+		w.adaptiveScheduler.Start()
+	}
 
 	// 启动 WebSocket 客户端（用于日志推送和控制信号）
 	go func() {
@@ -514,28 +547,36 @@ func (w *Worker) fetchTasksWithRecovery() {
 }
 
 // fetchTasksLoop 任务拉取循环（内部方法）
+// 使用自适应调度器动态调整拉取间隔
 func (w *Worker) fetchTasksLoop() {
-	emptyCount := 0
-	baseInterval := 500 * time.Millisecond
-	maxInterval := 2 * time.Second
-
 	for {
 		select {
 		case <-w.stopChan:
 			return
 		default:
 			hasTask := w.pullTask()
-			if hasTask {
-				emptyCount = 0
-				time.Sleep(50 * time.Millisecond)
-			} else {
-				emptyCount++
-				interval := baseInterval * time.Duration(emptyCount)
-				if interval > maxInterval {
-					interval = maxInterval
+			
+			// 使用自适应调度器获取动态拉取间隔
+			var interval time.Duration
+			if w.adaptiveScheduler != nil {
+				interval = w.adaptiveScheduler.GetPullInterval()
+				if hasTask {
+					// 有任务时使用较短间隔
+					interval = interval / 2
+					if interval < 50*time.Millisecond {
+						interval = 50 * time.Millisecond
+					}
 				}
-				time.Sleep(interval)
+			} else {
+				// 回退到固定间隔
+				if hasTask {
+					interval = 100 * time.Millisecond
+				} else {
+					interval = 500 * time.Millisecond
+				}
 			}
+			
+			time.Sleep(interval)
 		}
 	}
 }
@@ -643,14 +684,18 @@ func (w *Worker) pullTask() bool {
 		return false
 	}
 
-	// 使用资源管理器检查是否可以接受新任务
-	// 这会综合检查并发槽位和系统资源（CPU/内存）
-	if w.resourceManager != nil && !w.resourceManager.CanAcceptTask() {
-		return false
-	}
-
-	// 保留原有的CPU过载检查作为备用（当resourceManager为nil时）
-	if w.resourceManager == nil && w.isCPUOverloaded() {
+	// 优先使用自适应调度器检查是否可以接受新任务
+	if w.adaptiveScheduler != nil {
+		if !w.adaptiveScheduler.CanAcceptTask() {
+			return false
+		}
+	} else if w.resourceManager != nil {
+		// 回退到旧版资源管理器
+		if !w.resourceManager.CanAcceptTask() {
+			return false
+		}
+	} else if w.isCPUOverloaded() {
+		// 最后回退到简单的CPU检查
 		return false
 	}
 
@@ -704,6 +749,11 @@ func (w *Worker) recoverOrphanedTasks() {
 func (w *Worker) Stop() {
 	w.isRunning = false
 
+	// 停止自适应调度器
+	if w.adaptiveScheduler != nil {
+		w.adaptiveScheduler.Stop()
+	}
+
 	// 通知服务器Worker即将离线，删除Redis状态数据
 	w.notifyOffline()
 
@@ -722,6 +772,11 @@ func (w *Worker) Stop() {
 // StopImmediate 立即停止Worker（跳过当前任务，不等待完成）
 func (w *Worker) StopImmediate() {
 	w.isRunning = false
+
+	// 停止自适应调度器
+	if w.adaptiveScheduler != nil {
+		w.adaptiveScheduler.Stop()
+	}
 
 	// 通知服务器Worker即将离线，删除Redis状态数据
 	w.notifyOffline()
@@ -853,8 +908,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	baseCtx := context.Background()
 	startTime := time.Now()
 
-	// 获取资源槽位
-	if w.resourceManager != nil {
+	// 获取资源槽位（优先使用自适应调度器）
+	if w.adaptiveScheduler != nil {
+		w.adaptiveScheduler.AcquireSlot()
+	} else if w.resourceManager != nil {
 		w.resourceManager.AcquireSlot()
 	}
 
@@ -885,8 +942,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		// 清除控制信号
 		w.ClearTaskControlSignal(task.TaskId)
 
-		// 释放资源槽位
-		if w.resourceManager != nil {
+		// 释放资源槽位（优先使用自适应调度器）
+		if w.adaptiveScheduler != nil {
+			w.adaptiveScheduler.ReleaseSlot()
+		} else if w.resourceManager != nil {
 			w.resourceManager.ReleaseSlot()
 		}
 	}()
@@ -2256,16 +2315,31 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 	}
 	w.mu.Unlock()
 
+	// 获取调度器状态
+	var schedulerMode string
+	var effectiveConcurrency int
+	var isThrottled bool
+	if w.adaptiveScheduler != nil {
+		schedulerMode = w.adaptiveScheduler.GetCurrentMode().String()
+		effectiveConcurrency = w.adaptiveScheduler.GetCurrentConcurrency()
+		isThrottled = w.adaptiveScheduler.IsThrottled()
+	} else {
+		effectiveConcurrency = w.config.Concurrency
+	}
+
 	// 通过 HTTP 接口发送心跳
 	resp, err := w.httpClient.Heartbeat(ctx, &HeartbeatReq{
-		WorkerName:         w.config.Name,
-		IP:                 w.config.IP,
-		CpuLoad:            cpuLoad,
-		MemUsed:            memUsed,
-		TaskStartedNumber:  int32(w.taskStarted),
-		TaskExecutedNumber: int32(w.taskExecuted),
-		IsDaemon:           false,
-		Concurrency:        w.config.Concurrency,
+		WorkerName:           w.config.Name,
+		IP:                   w.config.IP,
+		CpuLoad:              cpuLoad,
+		MemUsed:              memUsed,
+		TaskStartedNumber:    int32(w.taskStarted),
+		TaskExecutedNumber:   int32(w.taskExecuted),
+		IsDaemon:             false,
+		Concurrency:          w.config.Concurrency,
+		SchedulerMode:        schedulerMode,
+		EffectiveConcurrency: effectiveConcurrency,
+		IsThrottled:          isThrottled,
 	})
 
 	if err != nil {

@@ -42,6 +42,7 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 			Config:          c.Config,
 			Status:          c.Status,
 			MessageTemplate: c.MessageTemplate,
+			WebURL:          c.WebURL,
 			CreateTime:      c.CreateTime.Local().Format("2006-01-02 15:04:05"),
 			UpdateTime:      c.UpdateTime.Local().Format("2006-01-02 15:04:05"),
 		}
@@ -101,6 +102,7 @@ func (l *NotifyConfigSaveLogic) NotifyConfigSave(req *types.NotifyConfigSaveReq)
 		Config:          req.Config,
 		Status:          req.Status,
 		MessageTemplate: req.MessageTemplate,
+		WebURL:          req.WebURL,
 		HighRiskFilter:  highRiskFilter,
 	}
 
@@ -111,6 +113,7 @@ func (l *NotifyConfigSaveLogic) NotifyConfigSave(req *types.NotifyConfigSaveReq)
 			"config":           req.Config,
 			"status":           req.Status,
 			"message_template": req.MessageTemplate,
+			"web_url":          req.WebURL,
 		}
 		if highRiskFilter != nil {
 			update["high_risk_filter"] = highRiskFilter

@@ -2,6 +2,14 @@
   <div class="task-create-page">
     <el-card class="create-card">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px" class="task-form">
+        <!-- 模板选择 -->
+        <ScanTemplateSelect 
+          v-model="selectedTemplate"
+          :show-save-button="!isEdit"
+          :current-config="currentConfig"
+          @config-loaded="handleTemplateConfigLoaded"
+        />
+
         <!-- 基本信息 -->
         <el-form-item :label="$t('task.taskName')" prop="name">
           <el-input v-model="form.name" :placeholder="$t('task.pleaseEnterTaskName')" />
@@ -758,6 +766,7 @@ import { getNucleiTemplateList, getCustomPocList, getNucleiTemplateDetail } from
 import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import { useWorkspaceStore } from '@/stores/workspace'
+import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
 import request from '@/api/request'
 
 const router = useRouter()
@@ -771,6 +780,10 @@ const organizations = ref([])
 const workers = ref([])
 const activeCollapse = ref(['portscan', 'fingerprint'])
 const isEdit = ref(false)
+const selectedTemplate = ref(null)
+
+// 计算当前配置（用于保存为模板）
+const currentConfig = computed(() => buildConfig())
 
 // POC选择相关
 const pocSelectDialogVisible = ref(false)
@@ -1098,6 +1111,11 @@ function applyConfig(config) {
     dirscanStatusCodes: config.dirscan?.statusCodes || [200, 301, 302, 401, 403],
     dirscanFollowRedirect: config.dirscan?.followRedirect ?? false
   })
+}
+
+// 处理模板配置加载
+function handleTemplateConfigLoaded(config) {
+  applyConfig(config)
 }
 
 // 防抖保存配置

@@ -5,7 +5,7 @@ MaxBytes: 104857600  # 100MB
 Timeout: 300000      # 5分钟超时 (毫秒)
 
 Log:
-  Level: info
+  Level: error
   Stat: false
   Mode: console
   Encoding: plain
@@ -26,5 +26,5 @@ Redis:
 
 TaskRpc:
   Endpoints:
-    - localhost:9000
+    - 127.0.0.1:9000
   Timeout: 30000

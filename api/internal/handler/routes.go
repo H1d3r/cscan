@@ -184,6 +184,17 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/task/logs", Handler: task.GetTaskLogsHandler(svcCtx)},
 		{Method: http.MethodGet, Path: "/api/v1/task/logs/stream", Handler: task.TaskLogsStreamHandler(svcCtx)},
 
+		// 扫描配置模板管理
+		{Method: http.MethodPost, Path: "/api/v1/task/template/list", Handler: task.ScanTemplateListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/save", Handler: task.ScanTemplateSaveHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/delete", Handler: task.ScanTemplateDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/detail", Handler: task.ScanTemplateDetailHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/fromTask", Handler: task.ScanTemplateFromTaskHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/categories", Handler: task.ScanTemplateCategoriesHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/export", Handler: task.ScanTemplateExportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/import", Handler: task.ScanTemplateImportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/task/template/use", Handler: task.ScanTemplateUseHandler(svcCtx)},
+
 		// 定时任务管理
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/list", Handler: task.CronTaskListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/task/cron/save", Handler: task.CronTaskSaveHandler(svcCtx)},

@@ -4,7 +4,7 @@ MaxRecvMsgSize: 104857600
 MaxSendMsgSize: 104857600
 
 Log:
-  Level: info
+  Level: error
   Stat: false
   Mode: console
   Encoding: plain

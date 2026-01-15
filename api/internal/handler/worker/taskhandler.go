@@ -77,7 +77,7 @@ func WorkerTaskCheckHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		rpcResp, err := svcCtx.TaskRpcClient.CheckTask(r.Context(), rpcReq)
 		if err != nil {
-			logx.Errorf("[WorkerTaskCheck] RPC CheckTask error: %v", err)
+			// RPC 连接错误不输出日志，避免 Worker 轮询时产生大量日志
 			response.Error(w, err)
 			return
 		}
@@ -123,7 +123,7 @@ func WorkerTaskUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 		rpcResp, err := svcCtx.TaskRpcClient.UpdateTask(r.Context(), rpcReq)
 		if err != nil {
-			logx.Errorf("[WorkerTaskUpdate] RPC UpdateTask error: %v", err)
+			logx.Errorf("[WorkerTaskUpdate] RPC error: %v", err)
 			response.Error(w, err)
 			return
 		}
@@ -189,16 +189,11 @@ func WorkerTaskControlHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			ctrlKey := "cscan:task:ctrl:" + taskId
 			action, err := svcCtx.RedisClient.Get(ctx, ctrlKey).Result()
 			if err == nil && action != "" {
-				logx.Infof("[WorkerTaskControl] Found control signal for task %s: %s", taskId, action)
 				signals = append(signals, TaskControlSignal{
 					TaskId: taskId,
 					Action: action,
 				})
 			}
-		}
-
-		if len(signals) > 0 {
-			logx.Infof("[WorkerTaskControl] Returning %d control signals to worker", len(signals))
 		}
 
 		httpx.OkJson(w, &WorkerTaskControlResp{
@@ -280,7 +275,6 @@ func WorkerTaskRecoveryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 					if worker == req.WorkerName {
 						svcCtx.RedisClient.SRem(ctx, processingKey, taskId)
 						svcCtx.RedisClient.Del(ctx, statusKey)
-						logx.Infof("[WorkerTaskRecovery] Cleaned up processing task %s for worker %s", taskId, req.WorkerName)
 					}
 				}
 			}
@@ -365,12 +359,12 @@ func WorkerTaskRecoveryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 					Status:      task.Status,
 					StartTime:   startTimeStr,
 				})
-
-				logx.Infof("[WorkerTaskRecovery] Recovered task %s for workspace %s", task.TaskId, ws.Name)
 			}
 		}
 
-		logx.Infof("[WorkerTaskRecovery] Worker %s recovered %d tasks", req.WorkerName, len(recoveredTasks))
+		if len(recoveredTasks) > 0 {
+			logx.Infof("[WorkerTaskRecovery] Worker %s recovered %d tasks", req.WorkerName, len(recoveredTasks))
+		}
 
 		httpx.OkJson(w, &WorkerTaskRecoveryResp{
 			Code:           0,

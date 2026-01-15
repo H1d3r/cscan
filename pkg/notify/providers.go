@@ -518,6 +518,7 @@ func (p *WebhookProvider) Send(ctx context.Context, result *NotifyResult) error 
 				"duration":   result.Duration,
 				"startTime":  result.StartTime.Format(time.RFC3339),
 				"endTime":    result.EndTime.Format(time.RFC3339),
+				"reportUrl":  result.ReportURL,
 				"message":    FormatMessage(result, p.config.MessageTemplate),
 			}
 			data, _ := json.Marshal(payload)

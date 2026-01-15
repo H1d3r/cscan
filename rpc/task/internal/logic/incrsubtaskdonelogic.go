@@ -2,6 +2,8 @@ package logic
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"cscan/pkg/notify"
@@ -141,12 +143,14 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 
 	// 构建通知配置列表
 	var configItems []notify.ConfigItem
+	var webURL string // 用于生成报告URL
 	for _, c := range configs {
 		item := notify.ConfigItem{
 			Provider:        c.Provider,
 			Config:          c.Config,
 			Status:          c.Status,
 			MessageTemplate: c.MessageTemplate,
+			WebURL:          c.WebURL,
 		}
 		// 转换高危过滤配置
 		if c.HighRiskFilter != nil {
@@ -158,6 +162,18 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 			}
 		}
 		configItems = append(configItems, item)
+		// 获取第一个配置的WebURL作为报告URL的基础
+		if webURL == "" && c.WebURL != "" {
+			webURL = c.WebURL
+		}
+	}
+
+	// 构建报告URL
+	reportURL := ""
+	if webURL != "" {
+		// 去除末尾的斜杠
+		webURL = strings.TrimSuffix(webURL, "/")
+		reportURL = fmt.Sprintf("%s/report?taskId=%s", webURL, mainTaskId)
 	}
 
 	// 构建通知结果
@@ -168,6 +184,7 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 		AssetCount:  int(assetCount),
 		VulCount:    int(vulCount),
 		WorkspaceId: workspaceId,
+		ReportURL:   reportURL,
 	}
 
 	// 设置时间（处理指针类型）

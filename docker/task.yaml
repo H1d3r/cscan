@@ -9,6 +9,12 @@ Log:
   Mode: console
   Encoding: plain
   TimeFormat: 2006-01-02 15:04:05
+
+Telemetry:
+  Name: task.rpc
+  Endpoint: ""
+  Sampler: 0
+  Batcher: ""
   
 Mongo:
   Uri: "mongodb://mongodb:27017"
