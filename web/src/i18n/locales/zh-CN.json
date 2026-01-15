@@ -597,7 +597,17 @@
     "workflowPortIdentify": "端口识别",
     "workflowFingerprint": "指纹识别",
     "workflowDirScan": "目录扫描",
-    "workflowVulScan": "漏洞扫描"
+    "workflowVulScan": "漏洞扫描",
+    "scanStrategy": "扫描策略",
+    "enabledModules": "已启用模块",
+    "currentPhase": "当前阶段",
+    "threads": "线程",
+    "dicts": "字典",
+    "templates": "模板",
+    "pocs": "POC",
+    "bandwidth": "带宽",
+    "bruteforceEngine": "爆破引擎",
+    "customPocs": "自定义POC"
   },
   "search": {
     "title": "在线搜索",

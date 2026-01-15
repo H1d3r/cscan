@@ -605,7 +605,17 @@
     "workflowPortIdentify": "Port Identify",
     "workflowFingerprint": "Fingerprint Scan",
     "workflowDirScan": "Directory Scan",
-    "workflowVulScan": "Vulnerability Scan"
+    "workflowVulScan": "Vulnerability Scan",
+    "scanStrategy": "Scan Strategy",
+    "enabledModules": "Enabled Modules",
+    "currentPhase": "Current Phase",
+    "threads": "Threads",
+    "dicts": "Dicts",
+    "templates": "Templates",
+    "pocs": "POCs",
+    "bandwidth": "Bandwidth",
+    "bruteforceEngine": "Brute Force Engine",
+    "customPocs": "Custom POCs"
   },
   "search": {
     "title": "Online Search",

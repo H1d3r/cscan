@@ -3283,15 +3283,18 @@ func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskIn
 	// 确定使用的工具
 	tool := config.Tool
 	if tool == "" {
+		w.taskLog(task.TaskId, LevelInfo, "Port identify: tool not specified, using default 'nmap'")
 		tool = "nmap" // 默认使用 nmap
 	}
 
-	w.taskLog(task.TaskId, LevelInfo, "Port identify: %s (%d assets)", tool, len(assets))
+	w.taskLog(task.TaskId, LevelInfo, "Port identify: using tool '%s' (%d assets)", tool, len(assets))
 
 	// 根据工具选择不同的执行逻辑
 	if tool == "fingerprintx" {
+		w.taskLog(task.TaskId, LevelInfo, "Port identify: executing with Fingerprintx")
 		return w.executePortIdentifyWithFingerprintx(ctx, task, assets, config)
 	} else {
+		w.taskLog(task.TaskId, LevelInfo, "Port identify: executing with Nmap")
 		return w.executePortIdentifyWithNmap(ctx, task, assets, config)
 	}
 }
