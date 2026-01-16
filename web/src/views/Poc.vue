@@ -24,15 +24,6 @@
               <el-button type="danger" size="small" plain style="margin-left: 10px" @click="handleClearTemplates">
                 {{ $t('poc.clearTemplates') }}
               </el-button>
-              <input 
-                ref="folderInputRef" 
-                type="file" 
-                webkitdirectory 
-                directory 
-                multiple 
-                style="display: none" 
-                @change="handleFolderSelect"
-              />
             </div>
           </template>
           <p class="tip-text">
@@ -1092,6 +1083,17 @@
         </el-button>
       </template>
     </el-dialog>
+    
+    <!-- 隐藏的文件选择器 - 放在根级别确保ref正确绑定 -->
+    <input 
+      ref="folderInputRef" 
+      type="file" 
+      webkitdirectory 
+      directory 
+      multiple 
+      style="display: none" 
+      @change="handleFolderSelect"
+    />
   </div>
 </template>
 
