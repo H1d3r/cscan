@@ -44,6 +44,24 @@ const routes = [
         meta: { title: '资产管理', icon: 'DataAnalysis' }
       },
       {
+        path: 'asset-groups',
+        name: 'AssetGroups',
+        component: lazyLoad(() => import('@/views/AssetGroups.vue')),
+        meta: { title: '资产分组', icon: 'FolderOpened' }
+      },
+      {
+        path: 'asset-inventory',
+        name: 'AssetInventory',
+        component: lazyLoad(() => import('@/views/AssetInventory.vue')),
+        meta: { title: '资产清单', icon: 'List' }
+      },
+      {
+        path: 'screenshots',
+        name: 'Screenshots',
+        component: lazyLoad(() => import('@/views/Screenshots.vue')),
+        meta: { title: '截图清单', icon: 'Picture' }
+      },
+      {
         path: 'site',
         name: 'Site',
         component: lazyLoad(() => import('@/views/Site.vue')),
@@ -60,12 +78,6 @@ const routes = [
         name: 'IP',
         component: lazyLoad(() => import('@/views/IP.vue')),
         meta: { title: 'IP管理', icon: 'Position', hidden: true }
-      },
-      {
-        path: 'asset',
-        name: 'Asset',
-        component: lazyLoad(() => import('@/views/Asset.vue')),
-        meta: { title: '资产管理', icon: 'Monitor', hidden: true }
       },
       {
         path: 'task/create',

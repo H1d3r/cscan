@@ -48,6 +48,7 @@ type Asset struct {
 	IconHashFile  string             `bson:"icon_hash_file,omitempty" json:"iconHashFile"`
 	IconHashBytes []byte             `bson:"icon_hash_bytes,omitempty" json:"-"`
 	Screenshot    string             `bson:"screenshot,omitempty" json:"screenshot"`
+	Labels        []string           `bson:"labels,omitempty" json:"labels"` // 自定义标签
 	OrgId         string             `bson:"org_id,omitempty" json:"orgId"`
 	ColorTag      string             `bson:"color,omitempty" json:"colorTag"`
 	Memo          string             `bson:"memo,omitempty" json:"memo"`
@@ -278,6 +279,48 @@ func (m *AssetModel) Update(ctx context.Context, id string, update bson.M) error
 	}
 	update["update_time"] = time.Now()
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	return err
+}
+
+// UpdateLabels 更新资产标签
+func (m *AssetModel) UpdateLabels(ctx context.Context, id string, labels []string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	update := bson.M{
+		"labels":      labels,
+		"update_time": time.Now(),
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	return err
+}
+
+// AddLabel 添加单个标签
+func (m *AssetModel) AddLabel(ctx context.Context, id string, label string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	update := bson.M{
+		"$addToSet": bson.M{"labels": label}, // 使用 $addToSet 避免重复
+		"$set":      bson.M{"update_time": time.Now()},
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
+	return err
+}
+
+// RemoveLabel 删除单个标签
+func (m *AssetModel) RemoveLabel(ctx context.Context, id string, label string) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	update := bson.M{
+		"$pull": bson.M{"labels": label},
+		"$set":  bson.M{"update_time": time.Now()},
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
 	return err
 }
 

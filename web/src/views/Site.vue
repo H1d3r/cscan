@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="site-page">
     <!-- 搜索区域 -->
     <el-card class="search-card">
@@ -81,12 +81,13 @@
             <div class="site-cell">
               <el-image 
                 v-if="row.screenshot" 
-                :src="getScreenshotUrl(row.screenshot)" 
-                :preview-src-list="[getScreenshotUrl(row.screenshot)]"
+                :src="formatScreenshotUrl(row.screenshot)" 
+                :preview-src-list="[formatScreenshotUrl(row.screenshot)]"
                 :z-index="9999"
                 :preview-teleported="true"
                 :hide-on-click-modal="true"
                 fit="cover"
+                lazy
                 class="site-screenshot"
               />
               <div class="site-info">
@@ -177,6 +178,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { formatScreenshotUrl } from '@/utils/screenshot'
 
 const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
@@ -309,17 +311,6 @@ async function handleBatchDelete() {
 function showDetail(row) {
   currentSite.value = row
   detailVisible.value = true
-}
-
-function getScreenshotUrl(screenshot) {
-  if (!screenshot) return ''
-  if (screenshot.startsWith('data:') || screenshot.startsWith('/9j/') || screenshot.startsWith('iVBOR')) {
-    if (!screenshot.startsWith('data:')) {
-      return `data:image/png;base64,${screenshot}`
-    }
-    return screenshot
-  }
-  return `/api/screenshot/${screenshot}`
 }
 
 function getStatusType(status) {

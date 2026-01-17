@@ -44,7 +44,7 @@ service TaskService {
   rpc GetSubfinderProviders(GetSubfinderProvidersReq) returns (GetSubfinderProvidersResp);
   // 递增子任务完成数（模块级别）
   rpc IncrSubTaskDone(IncrSubTaskDoneReq) returns (IncrSubTaskDoneResp);
-}}
+}
 
 message CheckTaskReq {
   string taskId = 1;
@@ -131,6 +131,7 @@ message SaveTaskResultReq {
   string mainTaskId = 2;
   repeated AssetDocument assets = 3;
   string orgId = 4;
+  bool isFinalSave = 5; // 是否是任务完成时的最终保存（用于记录变更历史）
 }
 
 message SaveTaskResultResp {

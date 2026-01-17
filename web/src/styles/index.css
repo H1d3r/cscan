@@ -1707,3 +1707,220 @@ html.dark .logs-bg {
 .hint-text {
   font-size: 12px;
 }
+/* ============================================ */
+/* 修复资产管理页面滚动问题 */
+/* ============================================ */
+
+/* 确保资产管理页面的tab内容可以正常滚动 */
+.asset-management-page .el-tab-pane {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: calc(100vh - 200px) !important;
+  max-height: none !important;
+}
+
+/* 修复可能影响滚动的组件 */
+.asset-all-view,
+.dirscan-view,
+.site-view,
+.domain-view,
+.ip-view,
+.vul-view {
+  overflow: visible !important;
+  height: auto !important;
+  min-height: auto !important;
+  max-height: none !important;
+}
+
+/* 确保表格容器不会阻止滚动 */
+.asset-management-page .table-card,
+.asset-management-page .collapse-card {
+  overflow: visible !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
+}
+
+.asset-management-page .table-card .el-card__body,
+.asset-management-page .collapse-card .el-card__body {
+  overflow: visible !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
+}
+
+/* 修复Element Plus表格在tab中的滚动问题 */
+.asset-management-page .el-table {
+  overflow: visible !important;
+  height: auto !important;
+  max-height: 600px !important;
+}
+
+.asset-management-page .el-table__body-wrapper {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  max-height: 500px !important;
+}
+
+/* 确保AssetManagement页面本身可以滚动 */
+.asset-management-page {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: 100vh !important;
+}
+
+.asset-management-page .asset-tabs {
+  height: auto !important;
+  min-height: 100vh !important;
+  overflow: visible !important;
+}
+
+.asset-management-page .asset-tabs .el-tabs__content {
+  overflow-y: visible !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: calc(100vh - 100px) !important;
+}
+/* ============================================ */
+/* 大幅优化资产管理页面搜索区域高度 */
+/* ============================================ */
+
+/* 大幅压缩搜索卡片的内边距 */
+.asset-all-view .search-card {
+  margin-bottom: 12px;
+}
+
+.asset-all-view .search-card .el-card__body {
+  padding: 8px 12px;
+}
+
+/* 压缩tab标签的间距 */
+.asset-all-view .search-tabs .el-tabs__header {
+  margin-bottom: 4px;
+}
+
+.asset-all-view .search-tabs .el-tabs__content {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* 大幅压缩搜索行间距 */
+.asset-all-view .quick-search-form .search-row {
+  gap: 8px;
+  margin: 0;
+}
+
+/* 压缩搜索项 */
+.asset-all-view .search-item {
+  min-width: 100px;
+  max-width: 140px;
+}
+
+.asset-all-view .search-item .search-label {
+  font-size: 10px;
+  margin-bottom: 2px;
+  color: var(--el-text-color-secondary);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+/* 大幅压缩输入框高度 */
+.asset-all-view .search-item .el-input .el-input__wrapper,
+.asset-all-view .search-item .el-select .el-select__wrapper {
+  height: 26px;
+  min-height: 26px;
+}
+
+.asset-all-view .search-item .el-input .el-input__inner {
+  height: 26px;
+  line-height: 26px;
+  font-size: 12px;
+}
+
+/* 压缩按钮高度 */
+.asset-all-view .search-actions {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  text-align: right;
+}
+
+.asset-all-view .search-actions .el-button {
+  height: 26px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* 大幅压缩统计面板的间距 */
+.asset-all-view .stat-panel {
+  padding: 4px 0;
+  gap: 12px;
+}
+
+.asset-all-view .stat-column {
+  min-width: 90px;
+}
+
+.asset-all-view .stat-column .stat-title {
+  margin-bottom: 2px;
+  padding-bottom: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  border-bottom: 1px solid #409eff;
+  line-height: 1.2;
+}
+
+.asset-all-view .stat-item {
+  padding: 1px 0;
+  margin: 0;
+}
+
+.asset-all-view .stat-item .stat-count {
+  min-width: 20px;
+  padding: 0 3px;
+  margin-right: 3px;
+  font-size: 9px;
+  background: #409eff;
+  color: #fff;
+  border-radius: 2px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.asset-all-view .stat-item .stat-name {
+  font-size: 10px;
+  color: #409eff;
+  line-height: 1.2;
+}
+
+.asset-all-view .stat-item-icon .stat-icon-img {
+  width: 12px;
+  height: 12px;
+  margin-right: 3px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+/* 压缩过滤列 */
+.asset-all-view .filter-column {
+  margin-left: auto;
+}
+
+.asset-all-view .filter-column .el-checkbox {
+  margin-right: 0;
+  height: auto;
+}
+
+.asset-all-view .filter-column .el-checkbox .el-checkbox__label {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.asset-all-view .filter-column .el-select {
+  margin-top: 3px;
+}
+
+.asset-all-view .filter-column .el-select .el-select__wrapper {
+  height: 24px;
+  min-height: 24px;
+}

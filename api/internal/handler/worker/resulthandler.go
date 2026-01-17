@@ -61,6 +61,7 @@ type WorkerTaskResultReq struct {
 	MainTaskId  string                `json:"mainTaskId"`
 	OrgId       string                `json:"orgId"`
 	Assets      []WorkerAssetDocument `json:"assets"`
+	IsFinalSave bool                  `json:"isFinalSave"` // 是否是任务完成时的最终保存
 }
 
 // WorkerTaskResultResp 资产结果上报响应
@@ -183,6 +184,7 @@ func WorkerTaskResultHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			MainTaskId:  req.MainTaskId,
 			OrgId:       req.OrgId,
 			Assets:      pbAssets,
+			IsFinalSave: req.IsFinalSave, // 传递最终保存标志
 		}
 
 		rpcResp, err := svcCtx.TaskRpcClient.SaveTaskResult(r.Context(), rpcReq)

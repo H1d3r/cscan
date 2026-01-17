@@ -775,6 +775,7 @@ type SaveTaskResultReq struct {
 	MainTaskId    string                 `protobuf:"bytes,2,opt,name=mainTaskId,proto3" json:"mainTaskId,omitempty"`
 	Assets        []*AssetDocument       `protobuf:"bytes,3,rep,name=assets,proto3" json:"assets,omitempty"`
 	OrgId         string                 `protobuf:"bytes,4,opt,name=orgId,proto3" json:"orgId,omitempty"`
+	IsFinalSave   bool                   `protobuf:"varint,5,opt,name=isFinalSave,proto3" json:"isFinalSave,omitempty"` // 是否是任务完成时的最终保存（用于记录变更历史）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -835,6 +836,13 @@ func (x *SaveTaskResultReq) GetOrgId() string {
 		return x.OrgId
 	}
 	return ""
+}
+
+func (x *SaveTaskResultReq) GetIsFinalSave() bool {
+	if x != nil {
+		return x.IsFinalSave
+	}
+	return false
 }
 
 type SaveTaskResultResp struct {
@@ -3859,14 +3867,15 @@ const file_task_proto_rawDesc = "" +
 	"\blocation\x18\x03 \x01(\tR\blocation\"2\n" +
 	"\x04IPV6\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x1a\n" +
-	"\blocation\x18\x02 \x01(\tR\blocation\"\x98\x01\n" +
+	"\blocation\x18\x02 \x01(\tR\blocation\"\xba\x01\n" +
 	"\x11SaveTaskResultReq\x12 \n" +
 	"\vworkspaceId\x18\x01 \x01(\tR\vworkspaceId\x12\x1e\n" +
 	"\n" +
 	"mainTaskId\x18\x02 \x01(\tR\n" +
 	"mainTaskId\x12+\n" +
 	"\x06assets\x18\x03 \x03(\v2\x13.task.AssetDocumentR\x06assets\x12\x14\n" +
-	"\x05orgId\x18\x04 \x01(\tR\x05orgId\"\xa6\x01\n" +
+	"\x05orgId\x18\x04 \x01(\tR\x05orgId\x12 \n" +
+	"\visFinalSave\x18\x05 \x01(\bR\visFinalSave\"\xa6\x01\n" +
 	"\x12SaveTaskResultResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1e\n" +

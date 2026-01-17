@@ -172,3 +172,183 @@ func AssetPortsStatsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// AssetGroupsHandler 资产分组
+func AssetGroupsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetGroupsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetGroupsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetGroups(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetInventoryHandler 资产清单
+func AssetInventoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetInventoryReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetInventoryLogic(r.Context(), svcCtx)
+		resp, err := l.AssetInventory(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// ScreenshotsHandler 截图清单
+func ScreenshotsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.ScreenshotsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewScreenshotsLogic(r.Context(), svcCtx)
+		resp, err := l.Screenshots(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetUpdateLabelsHandler 更新资产标签
+func AssetUpdateLabelsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetUpdateLabelsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetUpdateLabelsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetUpdateLabels(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetAddLabelHandler 添加资产标签
+func AssetAddLabelHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetAddLabelReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetAddLabelLogic(r.Context(), svcCtx)
+		resp, err := l.AssetAddLabel(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetRemoveLabelHandler 删除资产标签
+func AssetRemoveLabelHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetRemoveLabelReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetRemoveLabelLogic(r.Context(), svcCtx)
+		resp, err := l.AssetRemoveLabel(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetFilterOptionsHandler 获取资产过滤器选项
+func AssetFilterOptionsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetFilterOptionsReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetFilterOptionsLogic(r.Context(), svcCtx)
+		resp, err := l.AssetFilterOptions(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// DeleteAssetGroupHandler 删除资产分组
+func DeleteAssetGroupHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.DeleteAssetGroupReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewDeleteAssetGroupLogic(r.Context(), svcCtx)
+		resp, err := l.DeleteAssetGroup(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
+// AssetExposuresHandler 获取资产暴露面（目录扫描和漏洞扫描结果）
+func AssetExposuresHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetExposuresReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+
+		workspaceId := middleware.GetWorkspaceId(r.Context())
+		l := logic.NewAssetExposuresLogic(r.Context(), svcCtx)
+		resp, err := l.AssetExposures(&req, workspaceId)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

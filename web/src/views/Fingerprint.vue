@@ -2980,7 +2980,7 @@ async function handleActiveValidateFingerprint() {
     }
     
     .rule-content {
-      background: var(--el-fill-color-darker, #1e1e1e);
+      background: var(--code-bg);
       color: var(--el-text-color-primary);
       padding: 12px;
       border-radius: 4px;
@@ -3109,7 +3109,7 @@ async function handleActiveValidateFingerprint() {
       padding: 12px 15px;
       font-family: 'Consolas', 'Monaco', monospace;
       font-size: 13px;
-      background: var(--el-fill-color-darker, #1e1e1e);
+      background: var(--code-bg);
       color: var(--el-text-color-primary);
       white-space: pre-wrap;
       word-break: break-all;

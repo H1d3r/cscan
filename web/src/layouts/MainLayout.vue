@@ -1,7 +1,7 @@
-﻿<template>
+<template>
   <el-container class="layout-container">
     <!-- 侧边栏 -->
-    <el-aside :width="isCollapse ? '64px' : '250px'" class="aside">
+    <el-aside :width="isCollapse ? '64px' : '250px'" :class="['aside', { collapsed: isCollapse }]">
       <div class="logo">
         <img src="/logo.png" alt="logo" />
         <span v-show="!isCollapse">CSCAN</span>
@@ -11,7 +11,6 @@
         <el-menu :default-active="$route.path" :default-openeds="defaultOpeneds" :collapse="isCollapse" router
           :unique-opened="false">
           <!-- 主控台分组 -->
-          <div v-show="!isCollapse" class="menu-group-title">{{ $t('navigation.groupDashboard') }}</div>
           <el-menu-item index="/dashboard">
             <el-icon>
               <Odometer />
@@ -25,8 +24,10 @@
             <template #title>{{ $t('navigation.assetManagement') }}</template>
           </el-menu-item>
 
+          <!-- 分割线 -->
+          <div class="menu-divider"></div>
+
           <!-- 扫描分组 -->
-          <div v-show="!isCollapse" class="menu-group-title">{{ $t('navigation.groupScan') }}</div>
             <el-menu-item index="/task">
               <el-icon>
                 <List />
@@ -64,8 +65,10 @@
               <template #title>{{ $t('navigation.subdomainConfig') }}</template>
           </el-menu-item>
 
+          <!-- 分割线 -->
+          <div class="menu-divider"></div>
+
           <!-- 工具分组 -->
-          <div v-show="!isCollapse" class="menu-group-title">{{ $t('navigation.groupTools') }}</div>
           <el-menu-item index="/online-search">
             <el-icon>
               <Search />
@@ -79,8 +82,11 @@
               </el-icon>
               <template #title>{{ $t('navigation.onlineApiConfig') }}</template>
             </el-menu-item>
+
+          <!-- 分割线 -->
+          <div class="menu-divider"></div>
+
           <!-- 系统管理分组 -->
-          <div v-show="!isCollapse" class="menu-group-title">{{ $t('navigation.groupSystem') }}</div>
             <el-menu-item index="/worker">
               <el-icon>
                 <Connection />
@@ -213,17 +219,19 @@ function handleCommand(command) {
 <style lang="scss" scoped>
 .layout-container {
   height: 100vh;
+  display: flex;
 }
 
 .aside {
   background: hsl(var(--sidebar));
   color: hsl(var(--sidebar-foreground));
-  transition: width 0.3s, background 0.3s;
+  transition: width 0.3s ease; // 只有宽度过渡，使用简单的ease
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   border-right: 1px solid hsl(var(--sidebar-border));
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 
   .logo {
     height: 64px;
@@ -243,6 +251,13 @@ function handleCommand(command) {
       margin-right: 10px;
       border-radius: 6px;
       background: transparent;
+      flex-shrink: 0;
+    }
+
+    span {
+      white-space: nowrap;
+      overflow: hidden;
+      // 文字随容器宽度自然显示/隐藏，无动画
     }
   }
 
@@ -261,13 +276,10 @@ function handleCommand(command) {
     }
   }
 
-  .menu-group-title {
-    padding: 16px 20px 8px;
-    font-size: 11px;
-    font-weight: 500;
-    color: hsl(var(--sidebar-foreground) / 0.5);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+  .menu-divider {
+    height: 1px;
+    background: hsl(var(--sidebar-border));
+    margin: 8px 16px;
   }
 
   .el-menu {
@@ -279,8 +291,31 @@ function handleCommand(command) {
       border-radius: 8px;
       height: 40px;
       line-height: 40px;
-      transition: all 0.3s;
       color: hsl(var(--sidebar-foreground));
+      display: flex;
+      align-items: center;
+      padding: 0 12px !important; // 使用padding而不是复杂的定位
+      overflow: hidden;
+      white-space: nowrap;
+      position: relative;
+
+      .el-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        margin-right: 12px; // 图标和文字之间的间距
+      }
+
+      span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+      }
 
       &:hover {
         background: hsl(var(--sidebar-accent)) !important;
@@ -301,6 +336,30 @@ function handleCommand(command) {
         height: 40px;
         line-height: 40px;
         color: hsl(var(--sidebar-foreground));
+        display: flex;
+        align-items: center;
+        padding: 0 12px !important; // 使用padding而不是复杂的定位
+        overflow: hidden;
+        white-space: nowrap;
+        position: relative;
+
+        .el-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          margin-right: 12px; // 图标和文字之间的间距
+        }
+
+        span {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          flex: 1;
+        }
 
         &:hover {
           background: hsl(var(--sidebar-accent)) !important;
@@ -325,31 +384,42 @@ function handleCommand(command) {
       }
     }
 
-    // 收起状态下的样式
+    // 收起状态：让Element Plus处理，只调整必要的样式
     &.el-menu--collapse {
       .el-menu-item {
-        margin: 2px 8px;
-        padding: 0 !important;
+        margin: 2px 0;
         justify-content: center;
-        
-        .el-icon {
-          margin-right: 0;
-        }
+        padding: 0 !important;
       }
 
       .el-sub-menu {
         .el-sub-menu__title {
-          margin: 2px 8px;
-          padding: 0 12px !important;
-          
-          .el-icon {
-            margin-right: 0;
-          }
+          margin: 2px 0;
+          justify-content: center;
+          padding: 0 !important;
         }
       }
     }
   }
 
+}
+
+// 简化的深度选择器，只处理必要的样式覆盖
+:deep(.el-menu) {
+  .el-menu-item, .el-sub-menu .el-sub-menu__title {
+    // 重置所有可能的隐藏样式
+    .el-icon {
+      display: flex !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    
+    span {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+  }
 }
 
 .header {
@@ -428,8 +498,29 @@ function handleCommand(command) {
 
 .main {
   background: hsl(var(--background));
-  padding: 20px 200px;
+  padding: 20px;
   overflow-y: auto;
+  overflow-x: hidden;
   transition: background 0.3s;
+  flex: 1;
+  max-width: 1500px;
+  width: 1500px;
+  margin: 0 auto;
+  
+  /* 隐藏滚动条 */
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+// 收起状态下logo图标居中
+.aside.collapsed {
+  .logo {
+    img {
+      margin-right: 0; // 收起时图标居中
+    }
+  }
 }
 </style>

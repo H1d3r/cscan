@@ -46,4 +46,9 @@ const themeStore = useThemeStore()
 themeStore.initTheme()
 themeStore.watchSystemTheme()
 
+// 初始化工作空间状态
+import { useWorkspaceStore } from './stores/workspace'
+const workspaceStore = useWorkspaceStore()
+workspaceStore.initialize()
+
 app.mount('#app')

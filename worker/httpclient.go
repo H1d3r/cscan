@@ -114,6 +114,7 @@ type TaskResultReq struct {
 	MainTaskId  string          `json:"mainTaskId"`
 	OrgId       string          `json:"orgId"`
 	Assets      []AssetDocument `json:"assets"`
+	IsFinalSave bool            `json:"isFinalSave"` // 是否是任务完成时的最终保存
 }
 
 // TaskResultResp 资产结果上报响应

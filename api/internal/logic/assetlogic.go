@@ -180,6 +180,9 @@ func NewAssetListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetLi
 }
 
 func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) (resp *types.AssetListResp, err error) {
+	// 添加调试日志
+	l.Logger.Infof("AssetList查询: workspaceId=%s, page=%d, pageSize=%d", workspaceId, req.Page, req.PageSize)
+	
 	// 构建查询条件
 	filter := bson.M{}
 
@@ -243,33 +246,68 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq, workspaceId string) 
 
 	// 获取需要查询的工作空间列表
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
+	l.Logger.Infof("AssetList查询工作空间列表: %v", wsIds)
 
 	// 如果查询多个工作空间
 	if len(wsIds) > 1 || workspaceId == "" || workspaceId == "all" {
-		// 收集所有工作空间的数据
+		// 优化：限制每个工作空间的查询数量，避免内存溢出
+		maxPerWorkspace := req.PageSize * 3 // 每个工作空间最多查询3页的数据
 		var allAssets []model.Asset
+		
 		for _, wsId := range wsIds {
 			assetModel := l.svcCtx.GetAssetModel(wsId)
-			wsTotal, _ := assetModel.Count(l.ctx, filter)
+			
+			// 先检查该工作空间是否有数据
+			wsTotal, err := assetModel.Count(l.ctx, filter)
+			if err != nil || wsTotal == 0 {
+				continue // 跳过没有数据的工作空间
+			}
 			total += wsTotal
 			
-			wsAssets, _ := assetModel.Find(l.ctx, filter, 0, 0) // 获取全部用于合并
+			// 限制查询数量，避免内存问题
+			limit := maxPerWorkspace
+			if wsTotal < int64(limit) {
+				limit = int(wsTotal)
+			}
+			
+			// 按时间排序查询
+			sortField := "update_time"
+			if !req.SortByUpdate {
+				sortField = "create_time"
+			}
+			
+			wsAssets, err := assetModel.FindWithSort(l.ctx, filter, 1, limit, sortField)
+			if err != nil {
+				l.Logger.Errorf("查询工作空间 %s 资产失败: %v", wsId, err)
+				continue
+			}
 			allAssets = append(allAssets, wsAssets...)
 		}
 		
-		// 按更新时间排序
+		// 如果没有找到任何资产
+		if len(allAssets) == 0 {
+			return &types.AssetListResp{
+				Code:  0,
+				Msg:   "success",
+				Total: 0,
+				List:  []types.Asset{},
+			}, nil
+		}
+		
+		// 按时间排序所有资产
 		sortAssetsByTime(allAssets, req.SortByUpdate)
 		
 		// 分页
 		start := (req.Page - 1) * req.PageSize
 		end := start + req.PageSize
 		if start > len(allAssets) {
-			start = len(allAssets)
+			assets = []model.Asset{}
+		} else {
+			if end > len(allAssets) {
+				end = len(allAssets)
+			}
+			assets = allAssets[start:end]
 		}
-		if end > len(allAssets) {
-			end = len(allAssets)
-		}
-		assets = allAssets[start:end]
 	} else {
 		// 查询指定工作空间
 		assetModel := l.svcCtx.GetAssetModel(workspaceId)
@@ -424,7 +462,13 @@ func (l *AssetStatLogic) AssetStat(workspaceId string) (resp *types.AssetStatRes
 		for _, wsId := range wsIds {
 			assetModel := l.svcCtx.GetAssetModel(wsId)
 			
-			wsTotal, _ := assetModel.Count(l.ctx, bson.M{})
+			// 检查工作空间是否有数据
+			wsTotal, err := assetModel.Count(l.ctx, bson.M{})
+			if err != nil || wsTotal == 0 {
+				l.Logger.Infof("跳过空工作空间: %s", wsId)
+				continue // 跳过没有数据的工作空间
+			}
+			
 			totalAsset += wsTotal
 			totalHost += wsTotal
 			
@@ -598,7 +642,13 @@ func NewAssetDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Asset
 }
 
 func (l *AssetDeleteLogic) AssetDelete(req *types.AssetDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	// 优先使用请求中的 workspaceId，如果没有则使用从上下文获取的
+	wsId := req.WorkspaceId
+	if wsId == "" {
+		wsId = workspaceId
+	}
+	
+	assetModel := l.svcCtx.GetAssetModel(wsId)
 	err = assetModel.Delete(l.ctx, req.Id)
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil

@@ -1,5 +1,9 @@
 package types
 
+import (
+	"time"
+)
+
 // ==================== 通用类型 ====================
 type BaseResp struct {
 	Code int    `json:"code"`
@@ -237,7 +241,8 @@ type IconHashStatItem struct {
 }
 
 type AssetDeleteReq struct {
-	Id string `json:"id"`
+	Id          string `json:"id"`
+	WorkspaceId string `json:"workspaceId,optional"` // 可选，用于跨工作空间删除
 }
 
 type AssetBatchDeleteReq struct {
@@ -392,6 +397,124 @@ type DomainDeleteReq struct {
 
 type DomainBatchDeleteReq struct {
 	Ids []string `json:"ids"`
+}
+
+// ==================== 资产分组管理 ====================
+type AssetGroupsReq struct {
+	Page     int    `json:"page,default=1"`
+	PageSize int    `json:"pageSize,default=20"`
+	Query    string `json:"query,optional"` // 搜索关键词
+}
+
+type AssetGroup struct {
+	Domain        string    `json:"domain"`        // 域名/分组名称
+	Source        string    `json:"source"`        // 来源
+	Status        string    `json:"status"`        // 状态：running/finished/failed/stopped
+	TotalServices int       `json:"totalServices"` // 总服务数
+	Duration      string    `json:"duration"`      // 持续时间
+	LastUpdated   string    `json:"lastUpdated"`   // 最后更新时间（相对时间）
+	FirstSeen     time.Time `json:"-"`             // 首次发现时间（内部使用）
+	LatestUpdate  time.Time `json:"-"`             // 最新更新时间（内部使用）
+}
+
+type AssetGroupsResp struct {
+	Code  int          `json:"code"`
+	Msg   string       `json:"msg"`
+	Total int          `json:"total"`
+	List  []AssetGroup `json:"list"`
+}
+
+type DeleteAssetGroupReq struct {
+	Domain string `json:"domain"` // 要删除的域名/分组名称
+}
+
+type DeleteAssetGroupResp struct {
+	Code         int    `json:"code"`
+	Msg          string `json:"msg"`
+	DeletedCount int64  `json:"deletedCount"` // 删除的资产数量
+}
+
+// ==================== 资产清单管理 ====================
+type AssetInventoryReq struct {
+	Page           int      `json:"page,default=1"`
+	PageSize       int      `json:"pageSize,default=20"`
+	Query          string   `json:"query,optional"`          // 搜索关键词
+	Technologies   []string `json:"technologies,optional"`   // 技术栈过滤
+	Ports          []int    `json:"ports,optional"`          // 端口过滤
+	StatusCodes    []string `json:"statusCodes,optional"`    // 状态码过滤
+	TimeRange      string   `json:"timeRange,optional"`      // 时间范围: all/24h/7d/30d
+	SortBy         string   `json:"sortBy,optional"`         // 排序字段: time/name/port
+	GroupId        string   `json:"groupId,optional"`        // 资产分组ID
+	Domain         string   `json:"domain,optional"`         // 域名过滤
+}
+
+type AssetInventoryItem struct {
+	Id              string   `json:"id"`
+	WorkspaceId     string   `json:"workspaceId"`      // 所属工作空间ID
+	Host            string   `json:"host"`
+	IP              string   `json:"ip"`
+	Port            int      `json:"port"`
+	Service         string   `json:"service"`
+	Title           string   `json:"title"`
+	Technologies    []string `json:"technologies"` // 技术栈
+	Labels          []string `json:"labels"`       // 自定义标签
+	Status          string   `json:"status"`       // HTTP状态码
+	LastUpdated     string   `json:"lastUpdated"`  // 最后更新时间（相对时间）
+	FirstSeen       string   `json:"firstSeen"`    // 首次发现时间（完整时间）
+	LastUpdatedFull string   `json:"lastUpdatedFull"` // 最后更新时间（完整时间）
+	Screenshot      string   `json:"screenshot,omitempty"`
+	IconHash        string   `json:"iconHash,omitempty"`
+	IconHashBytes   string   `json:"iconHashBytes,omitempty"` // Base64编码的图标数据
+	HttpHeader      string   `json:"httpHeader,omitempty"`
+	HttpBody        string   `json:"httpBody,omitempty"`
+	Banner          string   `json:"banner,omitempty"`
+	CName           string   `json:"cname,omitempty"`
+	ASN             string   `json:"asn,omitempty"`
+}
+
+type AssetInventoryResp struct {
+	Code  int                  `json:"code"`
+	Msg   string               `json:"msg"`
+	Total int                  `json:"total"`
+	List  []AssetInventoryItem `json:"list"`
+}
+
+// ==================== 截图清单管理 ====================
+type ScreenshotsReq struct {
+	Page         int      `json:"page,default=1"`
+	PageSize     int      `json:"pageSize,default=24"`
+	Query        string   `json:"query,optional"`        // 搜索关键词
+	Technologies []string `json:"technologies,optional"` // 技术栈过滤
+	Ports        []int    `json:"ports,optional"`        // 端口过滤
+	StatusCodes  []string `json:"statusCodes,optional"`  // 状态码过滤
+	TimeRange    string   `json:"timeRange,optional"`    // 时间范围: all/24h/7d/30d
+	SortBy       string   `json:"sortBy,optional"`       // 排序字段: time/name
+	Domain       string   `json:"domain,optional"`       // 域名过滤
+	HasScreenshot bool    `json:"hasScreenshot,optional"` // 只显示有截图的
+}
+
+type ScreenshotItem struct {
+	Id           string       `json:"id"`
+	Name         string       `json:"name"`         // 主机名
+	Port         int          `json:"port"`
+	IP           string       `json:"ip"`
+	Status       string       `json:"status"`       // HTTP状态码
+	StatusText   string       `json:"statusText"`   // 状态文本
+	Title        string       `json:"title"`        // 页面标题
+	Screenshot   string       `json:"screenshot"`   // 截图URL
+	LastUpdated  string       `json:"lastUpdated"`  // 最后更新时间
+	Technologies []Technology `json:"technologies"` // 技术栈
+}
+
+type Technology struct {
+	Name string `json:"name"`
+}
+
+type ScreenshotsResp struct {
+	Code  int              `json:"code"`
+	Msg   string           `json:"msg"`
+	Total int              `json:"total"`
+	List  []ScreenshotItem `json:"list"`
 }
 
 // ==================== IP管理 ====================
@@ -2200,4 +2323,68 @@ type ThemeConfigResp struct {
 type ThemeConfigSaveReq struct {
 	Theme      string `json:"theme"`
 	ColorTheme string `json:"colorTheme"`
+}
+
+// ==================== 资产标签管理 ====================
+type AssetUpdateLabelsReq struct {
+	Id     string   `json:"id"`
+	Labels []string `json:"labels"`
+}
+
+type AssetAddLabelReq struct {
+	Id    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type AssetRemoveLabelReq struct {
+	Id    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// ==================== 资产过滤器选项 ====================
+type AssetFilterOptionsReq struct {
+	Domain        string `json:"domain,optional"`        // 域名过滤
+	HasScreenshot bool   `json:"hasScreenshot,optional"` // 是否只查询有截图的资产
+}
+
+type AssetFilterOptionsResp struct {
+	Code         int      `json:"code"`
+	Msg          string   `json:"msg"`
+	Technologies []string `json:"technologies"` // 所有技术栈选项
+	Ports        []int    `json:"ports"`        // 所有端口选项
+	StatusCodes  []string `json:"statusCodes"`  // 所有状态码选项
+}
+
+// ==================== 资产暴露面 ====================
+type AssetExposuresReq struct {
+	AssetId string `json:"assetId"` // 资产ID
+}
+
+type DirScanResultItem struct {
+	URL           string `json:"url"`
+	Path          string `json:"path"`
+	Status        int    `json:"status"`
+	ContentLength int64  `json:"contentLength"`
+	ContentType   string `json:"contentType,omitempty"`
+	Title         string `json:"title,omitempty"`
+	RedirectURL   string `json:"redirectUrl,omitempty"`
+}
+
+type VulnResultItem struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Severity     string  `json:"severity"`
+	URL          string  `json:"url"`
+	Description  string  `json:"description,omitempty"`
+	CVE          string  `json:"cve,omitempty"`
+	CVSS         float64 `json:"cvss,omitempty"`
+	MatchedURL   string  `json:"matchedUrl,omitempty"`
+	DiscoveredAt string  `json:"discoveredAt,omitempty"`
+}
+
+type AssetExposuresResp struct {
+	Code           int                 `json:"code"`
+	Msg            string              `json:"msg"`
+	DirScanResults []DirScanResultItem `json:"dirScanResults"` // 目录扫描结果
+	VulnResults    []VulnResultItem    `json:"vulnResults"`    // 漏洞扫描结果
 }

@@ -1,102 +1,104 @@
-﻿<template>
+<template>
   <div class="asset-all-view">
     <!-- 搜索区域 -->
     <el-card class="search-card">
-      <el-tabs v-model="activeTab" class="search-tabs">
-        <el-tab-pane :label="$t('asset.quickSearch')" name="quick">
-          <div class="quick-search-form">
-            <div class="search-row">
-              <div class="search-item">
-                <label class="search-label">{{ $t('asset.host') }}</label>
-                <el-input v-model="searchForm.host" :placeholder="$t('asset.ipOrDomain')" clearable @keyup.enter="handleSearch" />
+      <template #default>
+        <el-tabs v-model="activeTab" class="search-tabs">
+          <el-tab-pane :label="$t('asset.quickSearch')" name="quick">
+            <div class="quick-search-form">
+              <div class="search-row">
+                <div class="search-item">
+                  <label class="search-label">{{ $t('asset.host') }}</label>
+                  <el-input v-model="searchForm.host" :placeholder="$t('asset.ipOrDomain')" clearable @keyup.enter="handleSearch" size="small" />
+                </div>
+                <div class="search-item">
+                  <label class="search-label">{{ $t('asset.port') }}</label>
+                  <el-input v-model.number="searchForm.port" :placeholder="$t('asset.portNumber')" clearable @keyup.enter="handleSearch" size="small" />
+                </div>
+                <div class="search-item">
+                  <label class="search-label">{{ $t('asset.service') }}</label>
+                  <el-input v-model="searchForm.service" placeholder="http/ssh..." clearable @keyup.enter="handleSearch" size="small" />
+                </div>
+                <div class="search-item">
+                  <label class="search-label">{{ $t('asset.pageTitle') }}</label>
+                  <el-input v-model="searchForm.title" :placeholder="$t('asset.webPageTitle')" clearable @keyup.enter="handleSearch" size="small" />
+                </div>
+                <div class="search-item">
+                  <label class="search-label">{{ $t('asset.app') }}</label>
+                  <el-input v-model="searchForm.app" :placeholder="$t('asset.fingerprintApp')" clearable @keyup.enter="handleSearch" size="small" />
+                </div>
+                <div class="search-item">
+                  <label class="search-label">{{ $t('domain.organization') }}</label>
+                  <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable @change="handleSearch" size="small">
+                    <el-option :label="$t('common.allOrganizations')" value="" />
+                    <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+                  </el-select>
+                </div>
               </div>
-              <div class="search-item">
-                <label class="search-label">{{ $t('asset.port') }}</label>
-                <el-input v-model.number="searchForm.port" :placeholder="$t('asset.portNumber')" clearable @keyup.enter="handleSearch" />
+            </div>
+          </el-tab-pane>
+          <el-tab-pane :label="$t('asset.statistics')" name="stat">
+            <div class="stat-panel">
+              <div class="stat-column">
+                <div class="stat-title">Port</div>
+                <div v-for="item in stat.topPorts" :key="'port-'+item.name" class="stat-item" @click="quickFilter('port', item.name)">
+                  <span class="stat-count">{{ item.count }}</span>
+                  <span class="stat-name">{{ item.name }}</span>
+                </div>
               </div>
-              <div class="search-item">
-                <label class="search-label">{{ $t('asset.service') }}</label>
-                <el-input v-model="searchForm.service" placeholder="http/ssh..." clearable @keyup.enter="handleSearch" />
+              <div class="stat-column">
+                <div class="stat-title">Service</div>
+                <div v-for="item in stat.topService" :key="'svc-'+item.name" class="stat-item" @click="quickFilter('service', item.name)">
+                  <span class="stat-count">{{ item.count }}</span>
+                  <span class="stat-name">{{ item.name }}</span>
+                </div>
               </div>
-              <div class="search-item">
-                <label class="search-label">{{ $t('asset.pageTitle') }}</label>
-                <el-input v-model="searchForm.title" :placeholder="$t('asset.webPageTitle')" clearable @keyup.enter="handleSearch" />
+              <div class="stat-column">
+                <div class="stat-title">App</div>
+                <div v-for="item in stat.topApp" :key="'app-'+item.name" class="stat-item" @click="quickFilter('app', item.name)">
+                  <span class="stat-count">{{ item.count }}</span>
+                  <span class="stat-name">{{ item.name }}</span>
+                </div>
               </div>
-              <div class="search-item">
-                <label class="search-label">{{ $t('asset.app') }}</label>
-                <el-input v-model="searchForm.app" :placeholder="$t('asset.fingerprintApp')" clearable @keyup.enter="handleSearch" />
+              <div class="stat-column">
+                <div class="stat-title">IconHash</div>
+                <div v-for="item in stat.topIconHash" :key="'icon-'+item.iconHash" class="stat-item stat-item-icon" @click="quickFilter('iconHash', item.iconHash)">
+                  <span class="stat-count">{{ item.count }}</span>
+                  <img 
+                    v-if="item.iconData && getIconDataUrl(item.iconData)" 
+                    :src="getIconDataUrl(item.iconData)" 
+                    class="stat-icon-img" 
+                    :title="item.iconHash"
+                    @error="handleIconError($event)"
+                  />
+                  <span v-else class="stat-name" :title="item.iconHash">{{ truncateText(item.iconHash, 10) }}</span>
+                </div>
               </div>
-              <div class="search-item">
-                <label class="search-label">{{ $t('domain.organization') }}</label>
-                <el-select v-model="searchForm.orgId" :placeholder="$t('common.allOrganizations')" clearable @change="handleSearch">
-                  <el-option :label="$t('common.allOrganizations')" value="" />
-                  <el-option v-for="org in organizations" :key="org.id" :label="org.name" :value="org.id" />
+              <div class="stat-column filter-column">
+                <el-checkbox v-model="searchForm.onlyUpdated">{{ $t('asset.onlyUpdated') }}</el-checkbox>
+                <el-select 
+                  v-model="searchForm.updatedWithinDays" 
+                  :placeholder="$t('asset.updatedWithinDays')" 
+                  clearable 
+                  size="small" 
+                  style="width: 120px; margin-top: 8px;"
+                  @change="handleSearch"
+                >
+                  <el-option :label="$t('asset.last1Day')" :value="1" />
+                  <el-option :label="$t('asset.last3Days')" :value="3" />
+                  <el-option :label="$t('asset.last7Days')" :value="7" />
+                  <el-option :label="$t('asset.last30Days')" :value="30" />
                 </el-select>
               </div>
             </div>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane :label="$t('asset.statistics')" name="stat">
-          <div class="stat-panel">
-            <div class="stat-column">
-              <div class="stat-title">Port</div>
-              <div v-for="item in stat.topPorts" :key="'port-'+item.name" class="stat-item" @click="quickFilter('port', item.name)">
-                <span class="stat-count">{{ item.count }}</span>
-                <span class="stat-name">{{ item.name }}</span>
-              </div>
-            </div>
-            <div class="stat-column">
-              <div class="stat-title">Service</div>
-              <div v-for="item in stat.topService" :key="'svc-'+item.name" class="stat-item" @click="quickFilter('service', item.name)">
-                <span class="stat-count">{{ item.count }}</span>
-                <span class="stat-name">{{ item.name }}</span>
-              </div>
-            </div>
-            <div class="stat-column">
-              <div class="stat-title">App</div>
-              <div v-for="item in stat.topApp" :key="'app-'+item.name" class="stat-item" @click="quickFilter('app', item.name)">
-                <span class="stat-count">{{ item.count }}</span>
-                <span class="stat-name">{{ item.name }}</span>
-              </div>
-            </div>
-            <div class="stat-column">
-              <div class="stat-title">IconHash</div>
-              <div v-for="item in stat.topIconHash" :key="'icon-'+item.iconHash" class="stat-item stat-item-icon" @click="quickFilter('iconHash', item.iconHash)">
-                <span class="stat-count">{{ item.count }}</span>
-                <img 
-                  v-if="item.iconData && getIconDataUrl(item.iconData)" 
-                  :src="getIconDataUrl(item.iconData)" 
-                  class="stat-icon-img" 
-                  :title="item.iconHash"
-                  @error="handleIconError($event)"
-                />
-                <span v-else class="stat-name" :title="item.iconHash">{{ truncateText(item.iconHash, 10) }}</span>
-              </div>
-            </div>
-            <div class="stat-column filter-column">
-              <el-checkbox v-model="searchForm.onlyUpdated">{{ $t('asset.onlyUpdated') }}</el-checkbox>
-              <el-select 
-                v-model="searchForm.updatedWithinDays" 
-                :placeholder="$t('asset.updatedWithinDays')" 
-                clearable 
-                size="small" 
-                style="width: 140px; margin-top: 8px"
-                @change="handleSearch"
-              >
-                <el-option :label="$t('asset.last1Day')" :value="1" />
-                <el-option :label="$t('asset.last3Days')" :value="3" />
-                <el-option :label="$t('asset.last7Days')" :value="7" />
-                <el-option :label="$t('asset.last30Days')" :value="30" />
-              </el-select>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-      <div class="search-actions">
-        <el-button type="primary" @click="handleSearch">{{ $t('common.search') }}</el-button>
-        <el-button @click="handleReset">{{ $t('common.reset') }}</el-button>
-        <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') }}</el-button>
-      </div>
+          </el-tab-pane>
+        </el-tabs>
+        <div class="search-actions">
+          <el-button type="primary" @click="handleSearch" size="small">{{ $t('common.search') }}</el-button>
+          <el-button @click="handleReset" size="small">{{ $t('common.reset') }}</el-button>
+          <el-button type="danger" plain @click="handleClear" size="small">{{ $t('asset.clearData') }}</el-button>
+        </div>
+      </template>
     </el-card>
 
     <!-- 数据表格 -->
@@ -126,7 +128,7 @@
           </el-dropdown>
         </div>
       </div>
-      <el-table :data="tableData" v-loading="loading" stripe size="small" @selection-change="handleSelectionChange">
+      <el-table :data="tableData" v-loading="loading" stripe size="small" max-height="600" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="40" />
         <el-table-column type="index" :label="$t('asset.index')" width="60" />
         <el-table-column :label="$t('dashboard.asset')" min-width="200">
@@ -646,14 +648,41 @@ async function loadData() {
   loading.value = true
   try {
     const res = await getAssetList({
-      page: pagination.page, pageSize: pagination.pageSize,
-      host: searchForm.host, port: searchForm.port, service: searchForm.service,
-      title: searchForm.title, app: searchForm.app, orgId: searchForm.orgId,
-      onlyUpdated: searchForm.onlyUpdated, iconHash: searchForm.iconHash,
+      page: pagination.page, 
+      pageSize: pagination.pageSize,
+      host: searchForm.host, 
+      port: searchForm.port, 
+      service: searchForm.service,
+      title: searchForm.title, 
+      app: searchForm.app, 
+      orgId: searchForm.orgId,
+      onlyUpdated: searchForm.onlyUpdated, 
+      iconHash: searchForm.iconHash,
       updatedWithinDays: searchForm.updatedWithinDays || 0
     })
-    if (res.code === 0) { tableData.value = res.list || []; pagination.total = res.total }
-  } finally { loading.value = false }
+    
+    // 添加调试信息
+    console.log('资产查询结果:', {
+      workspaceId: workspaceStore.currentWorkspaceId,
+      total: res.total,
+      listLength: res.list?.length || 0,
+      page: pagination.page,
+      pageSize: pagination.pageSize
+    })
+    
+    if (res.code === 0) { 
+      tableData.value = res.list || []
+      pagination.total = res.total 
+    } else {
+      console.error('资产查询失败:', res.msg)
+      ElMessage.error(res.msg || '查询失败')
+    }
+  } catch (error) {
+    console.error('资产查询异常:', error)
+    ElMessage.error('查询异常: ' + error.message)
+  } finally { 
+    loading.value = false 
+  }
 }
 
 async function loadStat() {
@@ -799,34 +828,101 @@ function showHistoryDetail(row) {
   historyDetailVisible.value = true
 }
 
-// 显示导入对话?
+// 显示导入对话框
 function showImportDialog() {
   importTargets.value = ''
   importDialogVisible.value = true
 }
 
-// 执行导入
-  async function handleImport() {
-    if (!importTargets.value.trim()) {
-      ElMessage.warning('请输入要导入的目标')
-      return
-    }
+// 验证导入目标格式
+function validateTargets(targets) {
+  const errors = []
+  const urlRegex = /^https?:\/\/.+/
+  const hostPortRegex = /^[^:]+:\d+$/
+  const domainRegex = /^[a-zA-Z0-9.-]+$/
   
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i].trim()
+    if (!target) continue
+    
+    const isValid = urlRegex.test(target) || 
+                   hostPortRegex.test(target) || 
+                   domainRegex.test(target)
+    
+    if (!isValid) {
+      errors.push(`第 ${i+1} 行: "${target}" 格式无效`)
+    }
+  }
+  return errors
+}
+
+// 执行导入
+async function handleImport() {
+  if (!importTargets.value.trim()) {
+    ElMessage.warning('请输入要导入的目标')
+    return
+  }
+
   const targets = importTargets.value.trim().split('\n').filter(line => line.trim())
   if (targets.length === 0) {
     ElMessage.warning('请输入要导入的目标')
     return
   }
-  
+
+  // 前端验证目标格式
+  const errors = validateTargets(targets)
+  if (errors.length > 0) {
+    const errorMsg = errors.slice(0, 3).join('\n') + 
+                    (errors.length > 3 ? `\n...等${errors.length}个错误` : '')
+    ElMessage.error(`目标格式错误:\n${errorMsg}`)
+    return
+  }
+
   importLoading.value = true
   try {
     const res = await importAsset({ targets })
     if (res.code === 0) {
       ElMessage.success(res.msg || '导入成功')
-      importDialogVisible.value = false
-      loadData()
-      loadStat()
-      emit('data-changed')
+      
+      // 只有当有新增资产时才关闭对话框并刷新数据
+      if (res.newCount > 0) {
+        importDialogVisible.value = false
+        pagination.page = 1
+        pagination.pageSize = 50
+        
+        // 完整重置搜索条件
+        Object.assign(searchForm, { 
+          query: '',
+          host: '', 
+          port: null, 
+          service: '', 
+          title: '', 
+          app: '', 
+          orgId: '', 
+          onlyUpdated: false, 
+          sortByUpdate: true,
+          iconHash: '', 
+          updatedWithinDays: null 
+        })
+        
+        // 等待数据刷新完成后再发送事件
+        try {
+          await Promise.all([loadData(), loadStat()])
+          emit('data-changed', {
+            type: 'import',
+            newCount: res.newCount,
+            skipCount: res.skipCount,
+            errorCount: res.errorCount,
+            total: res.total
+          })
+        } catch (error) {
+          console.error('刷新数据失败:', error)
+          ElMessage.warning('数据刷新失败，请手动刷新页面')
+        }
+      } else {
+        // 如果没有新增资产，保持对话框打开，让用户看到提示信息
+        ElMessage.info('所有目标都已存在，未新增资产')
+      }
     } else {
       ElMessage.error(res.msg || '导入失败')
     }
@@ -1204,33 +1300,181 @@ defineExpose({ refresh })
 
 <style scoped>
 .asset-all-view {
-  .search-card { margin-bottom: 15px; }
-  .search-tabs { :deep(.el-tabs__header) { margin-bottom: 10px; } }
-  .quick-search-form .search-row {
-    display: flex; flex-wrap: wrap; gap: 16px;
-    .search-item {
-      display: flex; flex-direction: column; min-width: 140px; flex: 1; max-width: 180px;
-      .search-label { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 6px; }
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+
+  .search-card { 
+    margin-bottom: 12px;
+    flex-shrink: 0;
+    
+    :deep(.el-card__body) {
+      padding: 8px 12px;
     }
   }
-  .search-actions { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); text-align: right; }
-  .stat-panel {
-    display: flex; gap: 30px;
-    .stat-column {
-      min-width: 140px;
-      .stat-title { font-weight: bold; margin-bottom: 8px; padding-bottom: 5px; border-bottom: 2px solid #409eff; }
-      .stat-item { display: flex; align-items: center; padding: 3px 0; cursor: pointer;
-        &:hover { background: var(--el-fill-color); }
-        .stat-count { min-width: 30px; padding: 1px 6px; margin-right: 8px; background: #409eff; color: #fff; border-radius: 3px; font-size: 12px; }
-        .stat-name { color: #409eff; font-size: 13px; }
+  
+  .search-tabs { 
+    :deep(.el-tabs__header) { 
+      margin-bottom: 4px; 
+    }
+    
+    :deep(.el-tabs__content) {
+      padding-top: 0;
+      padding-bottom: 0;
+    }
+  }
+  
+  .quick-search-form .search-row {
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 8px;
+    margin: 0;
+    
+    .search-item {
+      display: flex; 
+      flex-direction: column; 
+      min-width: 100px; 
+      flex: 1; 
+      max-width: 140px;
+      
+      .search-label { 
+        font-size: 10px; 
+        color: var(--el-text-color-secondary); 
+        margin-bottom: 2px; 
+        font-weight: 500;
+        line-height: 1.2;
       }
-      .stat-item-icon {
-        .stat-icon-img { width: 16px; height: 16px; margin-right: 4px; vertical-align: middle; border-radius: 2px; }
+      
+      :deep(.el-input),
+      :deep(.el-select) {
+        .el-input__wrapper,
+        .el-select__wrapper {
+          height: 26px;
+          min-height: 26px;
+        }
+        
+        .el-input__inner {
+          height: 26px;
+          line-height: 26px;
+          font-size: 12px;
+        }
       }
     }
-    .filter-column { margin-left: auto; }
+  }
+  
+  .search-actions { 
+    margin-top: 6px; 
+    padding-top: 4px; 
+    border-top: 1px solid var(--el-border-color-lighter); 
+    text-align: right;
+    
+    .el-button {
+      height: 26px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+  }
+  
+  .stat-panel {
+    display: flex; 
+    gap: 12px;
+    padding: 4px 0;
+    
+    .stat-column {
+      min-width: 90px;
+      
+      .stat-title { 
+        font-weight: 600; 
+        margin-bottom: 2px; 
+        padding-bottom: 1px; 
+        border-bottom: 1px solid #409eff; 
+        font-size: 10px;
+        line-height: 1.2;
+      }
+      
+      .stat-item { 
+        display: flex; 
+        align-items: center; 
+        padding: 1px 0; 
+        cursor: pointer;
+        margin: 0;
+        
+        &:hover { 
+          background: var(--el-fill-color); 
+          border-radius: 3px;
+          padding-left: 3px;
+          padding-right: 3px;
+        }
+        
+        .stat-count { 
+          min-width: 20px; 
+          padding: 0 3px; 
+          margin-right: 3px; 
+          background: #409eff; 
+          color: #fff; 
+          border-radius: 2px; 
+          font-size: 9px; 
+          text-align: center;
+          line-height: 1.3;
+        }
+        
+        .stat-name { 
+          color: #409eff; 
+          font-size: 10px; 
+          line-height: 1.2;
+        }
+      }
+      
+      .stat-item-icon {
+        .stat-icon-img { 
+          width: 12px; 
+          height: 12px; 
+          margin-right: 3px; 
+          vertical-align: middle; 
+          border-radius: 1px; 
+        }
+      }
+    }
+    
+    .filter-column { 
+      margin-left: auto;
+      
+      .el-checkbox {
+        margin-right: 0;
+        height: auto;
+        
+        :deep(.el-checkbox__label) {
+          font-size: 10px;
+          line-height: 1.2;
+        }
+      }
+      
+      .el-select {
+        margin-top: 3px;
+        
+        :deep(.el-select__wrapper) {
+          height: 24px;
+          min-height: 24px;
+        }
+      }
+    }
   }
   .table-card {
+    flex: 0 0 auto;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+    
+    :deep(.el-card__body) {
+      flex: 0 0 auto;
+      overflow: visible;
+      display: flex;
+      flex-direction: column;
+    }
+    
     .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
       .total-info { color: var(--el-text-color-secondary); font-size: 14px; }
     }

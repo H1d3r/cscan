@@ -170,9 +170,9 @@
           <el-table-column prop="server" label="Server" width="120" show-overflow-tooltip />
           <el-table-column :label="$t('report.screenshot')" width="100">
             <template #default="{ row }">
-              <el-image v-if="row.screenshot" :src="getScreenshotUrl(row.screenshot)" 
-                :preview-src-list="[getScreenshotUrl(row.screenshot)]" :z-index="9999" :preview-teleported="true"
-                fit="cover" style="width: 60px; height: 40px; cursor: pointer; border-radius: 4px">
+              <el-image v-if="row.screenshot" :src="formatScreenshotUrl(row.screenshot)" 
+                :preview-src-list="[formatScreenshotUrl(row.screenshot)]" :z-index="9999" :preview-teleported="true"
+                fit="cover" lazy style="width: 60px; height: 40px; cursor: pointer; border-radius: 4px">
                 <template #error><div class="image-error"><el-icon><Picture /></el-icon></div></template>
               </el-image>
               <span v-else>-</span>
@@ -273,6 +273,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Download, Back, Loading, Picture } from '@element-plus/icons-vue'
 import { getReportDetail, exportReport } from '@/api/report'
+import { formatScreenshotUrl } from '@/utils/screenshot'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -476,14 +477,6 @@ function getAppTagType(app) {
   if (app.includes('[builtin]')) return 'warning'
   if (app.includes('custom(')) return 'danger'
   return 'info'
-}
-
-function getScreenshotUrl(screenshot) {
-  if (!screenshot) return ''
-  if (screenshot.startsWith('data:') || screenshot.startsWith('/9j/') || screenshot.startsWith('iVBOR')) {
-    return screenshot.startsWith('data:') ? screenshot : `data:image/png;base64,${screenshot}`
-  }
-  return `/api/screenshot/${screenshot}`
 }
 </script>
 

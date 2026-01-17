@@ -434,7 +434,7 @@ defineExpose({ refresh })
   .pagination { margin-top: 20px; justify-content: flex-end; }
   .result-pre {
     margin: 0; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto;
-    background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px;
+    background: var(--code-bg); color: var(--code-text); padding: 12px; border-radius: 6px;
     font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5;
   }
 }

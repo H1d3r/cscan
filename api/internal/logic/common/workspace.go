@@ -16,18 +16,41 @@ func GetWorkspaceIds(ctx context.Context, svcCtx *svc.ServiceContext, workspaceI
 		return []string{workspaceId}
 	}
 
-	// 始终包含默认空间
-	ids := []string{"default"}
+	var ids []string
 
 	// 查询所有工作空间
 	workspaces, err := svcCtx.WorkspaceModel.Find(ctx, bson.M{}, 1, 100)
 	if err != nil {
-		return ids
+		// 如果查询失败，至少返回默认空间
+		return []string{"default"}
 	}
 
+	// 添加所有存在的工作空间
 	for _, ws := range workspaces {
 		ids = append(ids, ws.Id.Hex())
 	}
+
+	// 如果没有找到任何工作空间，添加默认空间
+	if len(ids) == 0 {
+		ids = append(ids, "default")
+	} else {
+		// 确保默认空间在列表中（如果存在的话）
+		hasDefault := false
+		for _, id := range ids {
+			if id == "default" {
+				hasDefault = true
+				break
+			}
+		}
+		if !hasDefault {
+			// 检查默认空间是否真的存在数据
+			defaultAssetModel := svcCtx.GetAssetModel("default")
+			if count, err := defaultAssetModel.Count(ctx, bson.M{}); err == nil && count > 0 {
+				ids = append(ids, "default")
+			}
+		}
+	}
+
 	return ids
 }
 

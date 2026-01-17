@@ -737,7 +737,7 @@ function getActionLabel(action) {
 
     .terminal-output {
       height: 400px;
-      background: var(--el-fill-color-darker, #1e1e1e);
+      background: var(--code-bg);
       border-radius: 4px;
       padding: 10px;
       font-family: 'Consolas', 'Monaco', monospace;
@@ -768,7 +768,7 @@ function getActionLabel(action) {
       display: flex;
       align-items: center;
       margin-top: 10px;
-      background: var(--el-fill-color-darker, #1e1e1e);
+      background: var(--code-bg);
       border-radius: 4px;
       padding: 5px 10px;
 

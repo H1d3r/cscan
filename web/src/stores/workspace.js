@@ -4,7 +4,14 @@ import request from '@/api/request'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const workspaces = ref([])
-  const currentWorkspaceId = ref(localStorage.getItem('currentWorkspaceId') || 'all')
+  
+  // 确保工作空间ID的正确初始化
+  const getInitialWorkspaceId = () => {
+    const stored = localStorage.getItem('currentWorkspaceId')
+    return stored && stored !== 'undefined' && stored !== 'null' ? stored : 'all'
+  }
+  
+  const currentWorkspaceId = ref(getInitialWorkspaceId())
   const loading = ref(false)
 
   // 获取有效的工作空间ID
@@ -39,8 +46,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   // 设置当前工作空间
   function setCurrentWorkspace(id) {
-    currentWorkspaceId.value = id || 'all'
-    localStorage.setItem('currentWorkspaceId', currentWorkspaceId.value)
+    const validId = id && id !== 'undefined' && id !== 'null' ? id : 'all'
+    currentWorkspaceId.value = validId
+    localStorage.setItem('currentWorkspaceId', validId)
+    
+    // 触发全局事件通知其他组件
+    window.dispatchEvent(new CustomEvent('workspace-changed', {
+      detail: { workspaceId: validId }
+    }))
+  }
+
+  // 初始化工作空间状态
+  function initialize() {
+    const wsId = getInitialWorkspaceId()
+    if (currentWorkspaceId.value !== wsId) {
+      currentWorkspaceId.value = wsId
+      localStorage.setItem('currentWorkspaceId', wsId)
+    }
   }
 
   // 获取当前工作空间名称
@@ -57,6 +79,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     currentWorkspaceId,
     effectiveWorkspaceId,
     loading,
+    initialize,
     loadWorkspaces,
     setCurrentWorkspace,
     getCurrentWorkspaceName

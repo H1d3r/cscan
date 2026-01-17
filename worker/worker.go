@@ -1956,6 +1956,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 更新任务状态为完成
 	duration := time.Since(startTime).Seconds()
 	result := fmt.Sprintf("Assets:%d Vuls:%d Duration:%.0fs", len(allAssets), len(allVuls), duration)
+	
 	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, result)
 	w.taskLog(task.TaskId, LevelInfo, "Completed: %s", result)
 	// 注意：taskExecuted 由 defer 递增，无需在此处理

@@ -1,153 +1,158 @@
-﻿<template>
-  <div class="asset-management-page">
-    <!-- Tab页切换 -->
-    <el-tabs v-model="activeTab" type="border-card" class="asset-tabs" @tab-change="handleTabChange">
-      <!-- 全局查看 Tab -->
-      <el-tab-pane :label="$t('asset.globalView')" name="all">
-        <AssetAllView ref="allViewRef" @data-changed="handleDataChanged" />
+<template>
+  <div class="asset-management">
+    <!-- 页面头部 -->
+    <div class="page-header">
+      <div class="header-content">
+        <h1>资产管理</h1>
+        <p class="description">
+          统一管理和查看所有资产信息，包括分组、清单和截图
+        </p>
+      </div>
+      <div class="header-actions">
+        <el-button @click="handleExport">
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
+        <el-button type="primary" @click="handleStartScan">
+          <el-icon><Search /></el-icon>
+          开始扫描
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 标签页 -->
+    <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+      <!-- 资产分组 -->
+      <el-tab-pane name="groups">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><FolderOpened /></el-icon>
+            资产分组
+          </span>
+        </template>
+        <AssetGroupsTab />
       </el-tab-pane>
 
-      <!-- 站点管理 Tab -->
-      <el-tab-pane :label="$t('asset.siteManagement')" name="site">
-        <SiteView ref="siteViewRef" @data-changed="handleDataChanged" />
+      <!-- 资产清单 -->
+      <el-tab-pane name="inventory">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><List /></el-icon>
+            资产清单
+          </span>
+        </template>
+        <AssetInventoryTab />
       </el-tab-pane>
 
-      <!-- 域名管理 Tab -->
-      <el-tab-pane :label="$t('asset.domainManagement')" name="domain">
-        <DomainView ref="domainViewRef" @data-changed="handleDataChanged" />
+      <!-- 截图清单 -->
+      <el-tab-pane name="screenshots">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><Picture /></el-icon>
+            截图清单
+          </span>
+        </template>
+        <ScreenshotsTab />
       </el-tab-pane>
-
-      <!-- IP管理 Tab -->
-      <el-tab-pane :label="$t('asset.ipManagement')" name="ip">
-        <IPView ref="ipViewRef" @data-changed="handleDataChanged" />
-      </el-tab-pane>
-
-      <!-- 目录管理 Tab -->
-      <el-tab-pane :label="$t('asset.dirManagement')" name="dirscan">
-        <DirScanView ref="dirscanViewRef" @data-changed="handleDataChanged" />
-      </el-tab-pane>
-
-      <!-- 漏洞管理 Tab -->
-      <el-tab-pane :label="$t('asset.vulManagement')" name="vul">
-        <VulView ref="vulViewRef" @data-changed="handleDataChanged" />
-      </el-tab-pane>
-
     </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-
-// 异步加载各个视图组件
-const AssetAllView = defineAsyncComponent(() => import('@/components/asset/AssetAllView.vue'))
-const SiteView = defineAsyncComponent(() => import('@/components/asset/SiteView.vue'))
-const DomainView = defineAsyncComponent(() => import('@/components/asset/DomainView.vue'))
-const IPView = defineAsyncComponent(() => import('@/components/asset/IPView.vue'))
-const VulView = defineAsyncComponent(() => import('@/components/asset/VulView.vue'))
-const DirScanView = defineAsyncComponent(() => import('@/components/asset/DirScanView.vue'))
+import { ElMessage } from 'element-plus'
+import {
+  Download,
+  Search,
+  FolderOpened,
+  List,
+  Picture
+} from '@element-plus/icons-vue'
+import AssetGroupsTab from './AssetManagement/AssetGroupsTab.vue'
+import AssetInventoryTab from './AssetManagement/AssetInventoryTab.vue'
+import ScreenshotsTab from './AssetManagement/ScreenshotsTab.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-// 有效的tab名称
-const validTabs = ['all', 'site', 'domain', 'ip', 'vul', 'dirscan']
+// 当前激活的标签页
+const activeTab = ref('groups')
 
-// 从URL获取初始tab，默认为'all'
-const getInitialTab = () => {
-  const tab = route.query.tab
-  return validTabs.includes(tab) ? tab : 'all'
+// 处理标签页切换
+const handleTabChange = (tabName) => {
+  // 更新URL参数，保留其他参数
+  router.push({
+    query: { ...route.query, tab: tabName }
+  })
 }
 
-const activeTab = ref(getInitialTab())
-const allViewRef = ref(null)
-const siteViewRef = ref(null)
-const domainViewRef = ref(null)
-const ipViewRef = ref(null)
-const vulViewRef = ref(null)
-const dirscanViewRef = ref(null)
+// 导出功能
+const handleExport = () => {
+  ElMessage.success('导出功能开发中')
+}
 
-// 监听路由变化，更新activeTab
+// 开始扫描
+const handleStartScan = () => {
+  router.push('/task/create')
+}
+
+// 监听路由变化，同步标签页
 watch(() => route.query.tab, (newTab) => {
-  if (validTabs.includes(newTab) && newTab !== activeTab.value) {
+  if (newTab && newTab !== activeTab.value) {
     activeTab.value = newTab
   }
-})
-
-// 工作空间切换时刷新当前Tab数据
-function handleWorkspaceChanged() {
-  refreshCurrentTab()
-}
-
-function handleTabChange(tabName) {
-  // Tab切换时更新URL
-  router.replace({ query: { ...route.query, tab: tabName } })
-}
-
-// 数据变化时刷新所有Tab
-function handleDataChanged() {
-  // 刷新所有视图
-  allViewRef.value?.refresh?.()
-  siteViewRef.value?.refresh?.()
-  domainViewRef.value?.refresh?.()
-  ipViewRef.value?.refresh?.()
-  vulViewRef.value?.refresh?.()
-  dirscanViewRef.value?.refresh?.()
-}
-
-function refreshCurrentTab() {
-  switch (activeTab.value) {
-    case 'all':
-      allViewRef.value?.refresh?.()
-      break
-    case 'site':
-      siteViewRef.value?.refresh?.()
-      break
-    case 'domain':
-      domainViewRef.value?.refresh?.()
-      break
-    case 'ip':
-      ipViewRef.value?.refresh?.()
-      break
-    case 'vul':
-      vulViewRef.value?.refresh?.()
-      break
-    case 'dirscan':
-      dirscanViewRef.value?.refresh?.()
-      break
-  }
-}
+}, { immediate: true })
 
 onMounted(() => {
-  window.addEventListener('workspace-changed', handleWorkspaceChanged)
-  // 如果URL没有tab参数，添加默认的tab参数
-  if (!route.query.tab) {
-    router.replace({ query: { ...route.query, tab: activeTab.value } })
+  // 从URL参数读取初始标签页
+  if (route.query.tab) {
+    activeTab.value = route.query.tab
   }
-})
-
-onUnmounted(() => {
-  window.removeEventListener('workspace-changed', handleWorkspaceChanged)
 })
 </script>
 
-<style scoped>
-.asset-management-page {
-  height: 100%;
+<style lang="scss" scoped>
+.asset-management {
+  padding: 24px;
+  background: hsl(var(--background));
+  min-height: 100vh;
+}
 
-  .asset-tabs {
-    height: 100%;
-
-    :deep(.el-tabs__content) {
-      padding: 16px;
-      height: calc(100% - 50px);
-      overflow-y: auto;
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  
+  .header-content {
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      color: hsl(var(--foreground));
+      margin: 0 0 8px 0;
     }
-
-    :deep(.el-tab-pane) {
-      height: 100%;
+    
+    .description {
+      color: hsl(var(--muted-foreground));
+      font-size: 14px;
+      margin: 0;
     }
+  }
+  
+  .header-actions {
+    display: flex;
+    gap: 12px;
+  }
+}
+
+.tab-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  
+  .el-icon {
+    font-size: 16px;
   }
 }
 </style>

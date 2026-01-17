@@ -734,7 +734,7 @@ function openConsole(workerName) {
       display: flex;
       align-items: flex-start;
       gap: 10px;
-      background: var(--el-fill-color-darker, #1e1e1e);
+      background: var(--code-bg);
       padding: 12px;
       border-radius: 4px;
       
