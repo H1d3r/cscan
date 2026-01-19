@@ -74,17 +74,17 @@ type WSControlPayload struct {
 
 // ==================== WebSocket Client ====================
 
-// WSClientConfig WebSocket客户端配�?
+// WSClientConfig WebSocket客户端配�?
 type WSClientConfig struct {
 	ServerURL       string        // WebSocket服务器URL (e.g., ws://server:8888/api/v1/worker/ws)
 	WorkerName      string        // Worker名称
 	InstallKey      string        // 安装密钥
 	ReconnectDelay  time.Duration // 初始重连延迟
-	MaxReconnect    time.Duration // 最大重连延�?
+	MaxReconnect    time.Duration // 最大重连延�?
 	PingInterval    time.Duration // 心跳间隔
-	WriteTimeout    time.Duration // 写超�?
-	ReadTimeout     time.Duration // 读超�?
-	LogBatchSize    int           // 日志批量发送大�?
+	WriteTimeout    time.Duration // 写超�?
+	ReadTimeout     time.Duration // 读超�?
+	LogBatchSize    int           // 日志批量发送大�?
 	LogFlushTimeout time.Duration // 日志刷新超时
 }
 
@@ -133,7 +133,7 @@ type TerminalOperationHandler interface {
 // WorkerControlHandler Worker级别控制处理函数类型
 type WorkerControlHandler func(action string, param string)
 
-// WorkerWSClient Worker WebSocket客户�?
+// WorkerWSClient Worker WebSocket客户�?
 type WorkerWSClient struct {
 	config               *WSClientConfig
 	conn                 net.Conn
@@ -156,7 +156,7 @@ type WorkerWSClient struct {
 	wg                   sync.WaitGroup
 }
 
-// NewWorkerWSClient 创建WebSocket客户�?
+// NewWorkerWSClient 创建WebSocket客户�?
 func NewWorkerWSClient(config *WSClientConfig) *WorkerWSClient {
 	return &WorkerWSClient{
 		config:    config,
@@ -197,7 +197,7 @@ func (c *WorkerWSClient) IsConnected() bool {
 	return c.connected.Load() && c.authenticated.Load()
 }
 
-// Connect 连接到WebSocket服务�?
+// Connect 连接到WebSocket服务�?
 func (c *WorkerWSClient) Connect(ctx context.Context) error {
 	return c.connectWithRetry(ctx, false)
 }
@@ -220,15 +220,15 @@ func (c *WorkerWSClient) connectWithRetry(ctx context.Context, isReconnect bool)
 		if err == nil {
 			// 连接成功
 			if isReconnect {
-				logx.Info("[WSClient] Reconnected to server")
+				logx.Info("[WSClient] Reconnected to server"))
 			} else {
-				logx.Info("[WSClient] Connected to server")
+				logx.Info("[WSClient] Connected to server"))
 			}
 			return nil
 		}
 
 		attempt++
-		logx.Infof("[WSClient] Connection attempt %d failed: %v, retrying in %v...", attempt, err, backoff)
+		logx.Info("[WSClient] Connection attempt %d failed: %v, retrying in %v..."), attempt, err, backoff)
 
 		select {
 		case <-ctx.Done():
@@ -238,7 +238,7 @@ func (c *WorkerWSClient) connectWithRetry(ctx context.Context, isReconnect bool)
 		case <-time.After(backoff):
 		}
 
-		// 指数退�?
+		// 指数退�?
 		backoff = time.Duration(float64(backoff) * 2)
 		if backoff > c.config.MaxReconnect {
 			backoff = c.config.MaxReconnect
@@ -262,7 +262,7 @@ func (c *WorkerWSClient) doConnect(ctx context.Context) error {
 	c.connMu.Unlock()
 	c.connected.Store(true)
 
-	// 发送认证消�?
+	// 发送认证消�?
 	if err := c.authenticate(); err != nil {
 		c.conn.Close()
 		c.connected.Store(false)
@@ -295,7 +295,7 @@ func (c *WorkerWSClient) buildWSURL() string {
 		serverURL = "ws://" + serverURL
 	}
 
-	// 解析URL并添加路�?
+	// 解析URL并添加路�?
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return serverURL + "/api/v1/worker/ws"
@@ -324,7 +324,7 @@ func (c *WorkerWSClient) authenticate() error {
 	}
 	msgData, _ := json.Marshal(msg)
 
-	// 发送认证消�?
+	// 发送认证消�?
 	c.connMu.RLock()
 	conn := c.conn
 	c.connMu.RUnlock()
@@ -333,7 +333,7 @@ func (c *WorkerWSClient) authenticate() error {
 		return fmt.Errorf("send auth message failed: %w", err)
 	}
 
-	// 等待认证响应（超�?0秒）
+	// 等待认证响应（超�?0秒）
 	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	defer conn.SetReadDeadline(time.Time{})
 
@@ -363,7 +363,7 @@ func (c *WorkerWSClient) authenticate() error {
 
 // Start 启动客户端（连接并启动读写协程）
 func (c *WorkerWSClient) Start(ctx context.Context) error {
-	// 连接服务�?
+	// 连接服务�?
 	if err := c.Connect(ctx); err != nil {
 		return err
 	}
@@ -387,7 +387,7 @@ func (c *WorkerWSClient) Start(ctx context.Context) error {
 	return nil
 }
 
-// Close 关闭客户�?
+// Close 关闭客户�?
 func (c *WorkerWSClient) Close() {
 	c.closeOnce.Do(func() {
 		close(c.closeChan)
@@ -395,7 +395,7 @@ func (c *WorkerWSClient) Close() {
 		c.connMu.Lock()
 		if c.conn != nil {
 			c.conn.Close()
-			c.conn = nil // 确保设为 nil，防止其�?goroutine 使用已关闭的连接
+			c.conn = nil // 确保设为 nil，防止其�?goroutine 使用已关闭的连接
 		}
 		c.connMu.Unlock()
 
@@ -403,7 +403,7 @@ func (c *WorkerWSClient) Close() {
 		c.authenticated.Store(false)
 	})
 
-	// 等待所有协程退�?
+	// 等待所有协程退�?
 	c.wg.Wait()
 }
 
@@ -423,12 +423,12 @@ func (c *WorkerWSClient) readPump(ctx context.Context) {
 		default:
 		}
 
-		// 使用读锁保护整个读取操作，防止竞态条�?
+		// 使用读锁保护整个读取操作，防止竞态条�?
 		c.connMu.RLock()
 		conn := c.conn
 		if conn == nil {
 			c.connMu.RUnlock()
-			// 连接断开，等待重�?
+			// 连接断开，等待重�?
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -455,7 +455,7 @@ func (c *WorkerWSClient) readPump(ctx context.Context) {
 
 		var msg WSMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			logx.Infof("[WSClient] Invalid message: %v", err)
+			logx.Info("[WSClient] Invalid message: %v"), err)
 			continue
 		}
 
@@ -474,7 +474,7 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 
 	logx.Infof("[WSClient] Read error: %v", err)
 	
-	// 关闭旧连�?
+	// 关闭旧连�?
 	c.connMu.Lock()
 	if c.conn != nil {
 		c.conn.Close()
@@ -487,7 +487,7 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 
 	// 尝试重连
 	if !c.reconnecting.CompareAndSwap(false, true) {
-		// 已经在重连中，等待重连完�?
+		// 已经在重连中，等待重连完�?
 		for c.reconnecting.Load() {
 			select {
 			case <-c.closeChan:
@@ -501,7 +501,7 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 		return true
 	}
 
-	// 使用独立�?context 进行重连，避免继承已取消的父 context
+	// 使用独立�?context 进行重连，避免继承已取消的父 context
 	reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
 	
 	go func() {
@@ -527,7 +527,7 @@ func (c *WorkerWSClient) handleReadError(ctx context.Context, err error) bool {
 		}
 		
 		if err := c.connectWithRetry(reconnectCtx, true); err != nil {
-			logx.Infof("[WSClient] Reconnect failed: %v", err)
+			logx.Info("[WSClient] Reconnect failed: %v"), err)
 		}
 	}()
 
@@ -560,7 +560,7 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 
 			if err := conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout)); err != nil {
 				c.connMu.RUnlock()
-				logx.Infof("[WSClient] SetWriteDeadline error: %v", err)
+				logx.Info("[WSClient] SetWriteDeadline error: %v"), err)
 				c.connected.Store(false)
 				continue
 			}
@@ -569,7 +569,7 @@ func (c *WorkerWSClient) writePump(ctx context.Context) {
 			c.connMu.RUnlock()
 
 			if err != nil {
-				logx.Infof("[WSClient] Write error: %v", err)
+				logx.Info("[WSClient] Write error: %v"), err)
 				// 触发重连
 				c.connected.Store(false)
 			}
@@ -584,7 +584,7 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 	ticker := time.NewTicker(c.config.PingInterval)
 	defer ticker.Stop()
 
-	// 心跳超时阈值：2倍心跳间�?
+	// 心跳超时阈值：2倍心跳间�?
 	heartbeatTimeout := c.config.PingInterval * 2
 
 	for {
@@ -604,9 +604,9 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 			c.pongMu.RUnlock()
 
 			if time.Since(lastPong) > heartbeatTimeout {
-				logx.Infof("[WSClient] Heartbeat timeout (no PONG for %v), triggering reconnect...", time.Since(lastPong))
+				logx.Info("[WSClient] Heartbeat timeout (no PONG for %v), triggering reconnect..."), time.Since(lastPong))
 				
-				// 关闭当前连接并触发重�?
+				// 关闭当前连接并触发重�?
 				c.connMu.Lock()
 				if c.conn != nil {
 					c.conn.Close()
@@ -617,12 +617,12 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 				c.connected.Store(false)
 				c.authenticated.Store(false)
 				
-				// 触发重连（如果没有正在进行的重连�?
+				// 触发重连（如果没有正在进行的重连�?
 				if c.reconnecting.CompareAndSwap(false, true) {
 					go func() {
 						defer c.reconnecting.Store(false)
 						
-						// 使用独立�?context 进行重连
+						// 使用独立�?context 进行重连
 						reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
 						defer reconnectCancel()
 						
@@ -637,7 +637,7 @@ func (c *WorkerWSClient) pingPump(ctx context.Context) {
 						
 						time.Sleep(time.Second)
 						if err := c.connectWithRetry(reconnectCtx, true); err != nil {
-							logx.Infof("[WSClient] Reconnect from pingPump failed: %v", err)
+							logx.Info("[WSClient] Reconnect from pingPump failed: %v"), err)
 						}
 					}()
 				}
@@ -678,9 +678,9 @@ func (c *WorkerWSClient) logFlushPump(ctx context.Context) {
 func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 	switch msg.Type {
 	case WSTypeAuthOK:
-		// 认证成功（重连后可能收到�?
+		// 认证成功（重连后可能收到�?
 		c.authenticated.Store(true)
-		logx.Info("[WSClient] Authentication successful (reconnected)")
+		logx.Info("[WSClient] Authentication successful (reconnected)"))
 
 	case WSTypeAuthFail:
 		// 认证失败
@@ -689,7 +689,7 @@ func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 			Reason string `json:"reason"`
 		}
 		json.Unmarshal(msg.Payload, &reason)
-		logx.Infof("[WSClient] Authentication failed: %s", reason.Reason)
+		logx.Info("[WSClient] Authentication failed: %s"), reason.Reason)
 
 	case WSTypePing:
 		// 收到服务器PING，回复PONG
@@ -749,7 +749,7 @@ func (c *WorkerWSClient) handleMessage(msg *WSMessage) {
 		c.handleTerminalResizeRequest(msg.Payload)
 
 	default:
-		logx.Infof("[WSClient] Unknown message type: %s", msg.Type)
+		logx.Info("[WSClient] Unknown message type: %s"), msg.Type)
 	}
 }
 
@@ -768,29 +768,29 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 		isWorkerControl := false
 		switch workerControl.Action {
 		case "WORKER_STOP":
-			logx.Info("[WSClient] Executing WORKER_STOP command...")
+			logx.Info("[WSClient] Executing WORKER_STOP command..."))
 			if c.workerControlHandler != nil {
 				c.workerControlHandler("stop", "")
 			} else {
-				logx.Info("[WSClient] ERROR: workerControlHandler is nil!")
+				logx.Info("[WSClient] ERROR: workerControlHandler is nil!"))
 			}
 			isWorkerControl = true
 		case "WORKER_RESTART":
-			logx.Info("[WSClient] Executing WORKER_RESTART command...")
+			logx.Info("[WSClient] Executing WORKER_RESTART command..."))
 			if c.workerControlHandler != nil {
 				c.workerControlHandler("restart", "")
 			} else {
-				logx.Info("[WSClient] ERROR: workerControlHandler is nil!")
+				logx.Info("[WSClient] ERROR: workerControlHandler is nil!"))
 			}
 			isWorkerControl = true
 		case "WORKER_RENAME":
-			logx.Infof("[WSClient] Executing WORKER_RENAME command, new name: %s", workerControl.NewName)
+			logx.Info("[WSClient] Executing WORKER_RENAME command, new name: %s"), workerControl.NewName)
 			if c.workerControlHandler != nil {
 				c.workerControlHandler("rename", workerControl.NewName)
 			}
 			isWorkerControl = true
 		case "WORKER_SET_CONCURRENCY":
-			logx.Infof("[WSClient] Executing WORKER_SET_CONCURRENCY command, concurrency: %d", workerControl.Concurrency)
+			logx.Info("[WSClient] Executing WORKER_SET_CONCURRENCY command, concurrency: %d"), workerControl.Concurrency)
 			if c.workerControlHandler != nil {
 				c.workerControlHandler("setConcurrency", fmt.Sprintf("%d", workerControl.Concurrency))
 			}
@@ -802,14 +802,15 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 		}
 	}
 
-	// 解析为任务级别控制命�?
+	// 解析为任务级别控制命�?
 	var controlPayload WSControlPayload
 	if err := json.Unmarshal(payload, &controlPayload); err != nil {
-		logx.Infof("[WSClient] Invalid control payload: %v", err)
+		logx.Info("[WSClient] Invalid control payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received task control signal: taskId=%s, action=%s", controlPayload.TaskId, controlPayload.Action)
+	logx.Info("[WSClient] Received task control signal: taskId=%s, action=%s"),
+		controlPayload.TaskId, controlPayload.Action)
 
 	if c.controlHandler != nil {
 		c.controlHandler(controlPayload.TaskId, controlPayload.Action)
@@ -818,7 +819,7 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 
 // WSWorkerInfoRequest Worker信息请求载荷
 type WSWorkerInfoRequest struct {
-	RequestId string `json:"requestId"` // 请求ID，用于关联响�?
+	RequestId string `json:"requestId"` // 请求ID，用于关联响�?
 }
 
 // WSWorkerInfoResponse Worker信息响应载荷
@@ -832,11 +833,11 @@ type WSWorkerInfoResponse struct {
 func (c *WorkerWSClient) handleWorkerInfoRequest(payload json.RawMessage) {
 	var request WSWorkerInfoRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid worker info request payload: %v", err)
+		logx.Info("[WSClient] Invalid worker info request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received worker info request: requestId=%s", request.RequestId)
+	logx.Info("[WSClient] Received worker info request: requestId=%s"), request.RequestId)
 
 	// 构建响应
 	response := WSWorkerInfoResponse{
@@ -849,7 +850,7 @@ func (c *WorkerWSClient) handleWorkerInfoRequest(payload json.RawMessage) {
 		response.Error = "worker info handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeWorkerInfo,
@@ -859,7 +860,7 @@ func (c *WorkerWSClient) handleWorkerInfoRequest(payload json.RawMessage) {
 
 // ==================== Send Methods ====================
 
-// sendMessage 发送消息（内部方法�?
+// sendMessage 发送消息（内部方法�?
 func (c *WorkerWSClient) sendMessage(msg *WSMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -876,7 +877,7 @@ func (c *WorkerWSClient) sendMessage(msg *WSMessage) error {
 	}
 }
 
-// SendLog 发送单条日�?
+// SendLog 发送单条日�?
 func (c *WorkerWSClient) SendLog(taskId, level, message string) error {
 	log := WSLogPayload{
 		TaskId:    taskId,
@@ -919,7 +920,7 @@ func (c *WorkerWSClient) SendLogImmediate(taskId, level, message string) error {
 	})
 }
 
-// flushLogs 刷新日志缓冲�?
+// flushLogs 刷新日志缓冲�?
 func (c *WorkerWSClient) flushLogs() {
 	c.logMu.Lock()
 	if len(c.logBuffer) == 0 {
@@ -944,9 +945,9 @@ func (c *WorkerWSClient) flushLogs() {
 
 	logx.Infof("[WSClient] Flushing %d logs to server", len(logs))
 
-	// 发送批量日�?
+	// 发送批量日�?
 	if len(logs) == 1 {
-		// 单条日志直接发�?
+		// 单条日志直接发�?
 		payloadData, _ := json.Marshal(logs[0])
 		if err := c.sendMessage(&WSMessage{
 			Type:    WSTypeLog,
@@ -955,7 +956,7 @@ func (c *WorkerWSClient) flushLogs() {
 			logx.Infof("[WSClient] Failed to send log: %v", err)
 		}
 	} else {
-		// 多条日志批量发�?
+		// 多条日志批量发�?
 		batchPayload := WSLogBatchPayload{Logs: logs}
 		payloadData, _ := json.Marshal(batchPayload)
 		if err := c.sendMessage(&WSMessage{
@@ -995,11 +996,11 @@ func (c *WorkerWSClient) WaitForConnection(timeout time.Duration) bool {
 func (c *WorkerWSClient) handleFileListRequest(payload json.RawMessage) {
 	var request FileListRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file list request payload: %v", err)
+		logx.Info("[WSClient] Invalid file list request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received file list request: requestId=%s, path=%s", request.RequestId, request.Path)
+	logx.Info("[WSClient] Received file list request: requestId=%s, path=%s"), request.RequestId, request.Path)
 
 	// 构建响应
 	response := FileListResponse{
@@ -1018,7 +1019,7 @@ func (c *WorkerWSClient) handleFileListRequest(payload json.RawMessage) {
 		response.Error = "file handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeFileList,
@@ -1030,11 +1031,11 @@ func (c *WorkerWSClient) handleFileListRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleFileUploadRequest(payload json.RawMessage) {
 	var request FileUploadRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file upload request payload: %v", err)
+		logx.Info("[WSClient] Invalid file upload request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received file upload request: requestId=%s, path=%s", request.RequestId, request.Path)
+	logx.Info("[WSClient] Received file upload request: requestId=%s, path=%s"), request.RequestId, request.Path)
 
 	// 构建响应
 	response := FileUploadResponse{
@@ -1059,7 +1060,7 @@ func (c *WorkerWSClient) handleFileUploadRequest(payload json.RawMessage) {
 		response.Error = "file handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeFileUpload,
@@ -1071,11 +1072,11 @@ func (c *WorkerWSClient) handleFileUploadRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleFileDownloadRequest(payload json.RawMessage) {
 	var request FileDownloadRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file download request payload: %v", err)
+		logx.Info("[WSClient] Invalid file download request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received file download request: requestId=%s, path=%s", request.RequestId, request.Path)
+	logx.Info("[WSClient] Received file download request: requestId=%s, path=%s"), request.RequestId, request.Path)
 
 	// 构建响应
 	response := FileDownloadResponse{
@@ -1095,7 +1096,7 @@ func (c *WorkerWSClient) handleFileDownloadRequest(payload json.RawMessage) {
 		response.Error = "file handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeFileDownload,
@@ -1107,11 +1108,11 @@ func (c *WorkerWSClient) handleFileDownloadRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleFileDeleteRequest(payload json.RawMessage) {
 	var request FileDeleteRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file delete request payload: %v", err)
+		logx.Info("[WSClient] Invalid file delete request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received file delete request: requestId=%s, path=%s", request.RequestId, request.Path)
+	logx.Info("[WSClient] Received file delete request: requestId=%s, path=%s"), request.RequestId, request.Path)
 
 	// 构建响应
 	response := FileDeleteResponse{
@@ -1130,7 +1131,7 @@ func (c *WorkerWSClient) handleFileDeleteRequest(payload json.RawMessage) {
 		response.Error = "file handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeFileDelete,
@@ -1142,11 +1143,11 @@ func (c *WorkerWSClient) handleFileDeleteRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleFileMkdirRequest(payload json.RawMessage) {
 	var request FileMkdirRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid file mkdir request payload: %v", err)
+		logx.Info("[WSClient] Invalid file mkdir request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received file mkdir request: requestId=%s, path=%s", request.RequestId, request.Path)
+	logx.Info("[WSClient] Received file mkdir request: requestId=%s, path=%s"), request.RequestId, request.Path)
 
 	// 构建响应
 	response := FileMkdirResponse{
@@ -1165,7 +1166,7 @@ func (c *WorkerWSClient) handleFileMkdirRequest(payload json.RawMessage) {
 		response.Error = "file handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeFileMkdir,
@@ -1180,11 +1181,11 @@ func (c *WorkerWSClient) handleFileMkdirRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleTerminalOpenRequest(payload json.RawMessage) {
 	var request TerminalOpenRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal open request payload: %v", err)
+		logx.Info("[WSClient] Invalid terminal open request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received terminal open request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
+	logx.Info("[WSClient] Received terminal open request: requestId=%s, sessionId=%s"), request.RequestId, request.SessionId)
 
 	// 构建响应
 	response := TerminalOpenResponse{
@@ -1198,7 +1199,7 @@ func (c *WorkerWSClient) handleTerminalOpenRequest(payload json.RawMessage) {
 			response.Error = err.Error()
 		} else {
 			response.Success = true
-			// 如果指定了终端大小，设置�?
+			// 如果指定了终端大小，设置�?
 			if request.Cols > 0 && request.Rows > 0 {
 				c.terminalHandler.ResizeTerminal(session.ID, request.Cols, request.Rows)
 			}
@@ -1207,7 +1208,7 @@ func (c *WorkerWSClient) handleTerminalOpenRequest(payload json.RawMessage) {
 		response.Error = "terminal handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeTerminalOpen,
@@ -1219,11 +1220,11 @@ func (c *WorkerWSClient) handleTerminalOpenRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleTerminalCloseRequest(payload json.RawMessage) {
 	var request TerminalCloseRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal close request payload: %v", err)
+		logx.Info("[WSClient] Invalid terminal close request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received terminal close request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
+	logx.Info("[WSClient] Received terminal close request: requestId=%s, sessionId=%s"), request.RequestId, request.SessionId)
 
 	// 构建响应
 	response := TerminalCloseResponse{
@@ -1242,7 +1243,7 @@ func (c *WorkerWSClient) handleTerminalCloseRequest(payload json.RawMessage) {
 		response.Error = "terminal handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeTerminalClose,
@@ -1254,11 +1255,11 @@ func (c *WorkerWSClient) handleTerminalCloseRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleTerminalInputRequest(payload json.RawMessage) {
 	var request TerminalInputRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal input request payload: %v", err)
+		logx.Info("[WSClient] Invalid terminal input request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received terminal input request: requestId=%s, sessionId=%s", request.RequestId, request.SessionId)
+	logx.Info("[WSClient] Received terminal input request: requestId=%s, sessionId=%s"), request.RequestId, request.SessionId)
 
 	// 构建响应
 	response := TerminalInputResponse{
@@ -1305,7 +1306,7 @@ func (c *WorkerWSClient) handleTerminalInputRequest(payload json.RawMessage) {
 		response.Error = "terminal handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeTerminalInput,
@@ -1317,11 +1318,12 @@ func (c *WorkerWSClient) handleTerminalInputRequest(payload json.RawMessage) {
 func (c *WorkerWSClient) handleTerminalResizeRequest(payload json.RawMessage) {
 	var request TerminalResizeRequest
 	if err := json.Unmarshal(payload, &request); err != nil {
-		logx.Infof("[WSClient] Invalid terminal resize request payload: %v", err)
+		logx.Info("[WSClient] Invalid terminal resize request payload: %v"), err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received terminal resize request: requestId=%s, sessionId=%s, cols=%d, rows=%d", request.RequestId, request.SessionId, request.Cols, request.Rows)
+	logx.Info("[WSClient] Received terminal resize request: requestId=%s, sessionId=%s, cols=%d, rows=%d"),
+		request.RequestId, request.SessionId, request.Cols, request.Rows)
 
 	// 构建响应
 	response := TerminalResizeResponse{
@@ -1340,7 +1342,7 @@ func (c *WorkerWSClient) handleTerminalResizeRequest(payload json.RawMessage) {
 		response.Error = "terminal handler not set"
 	}
 
-	// 发送响�?
+	// 发送响�?
 	payloadData, _ := json.Marshal(response)
 	c.sendMessage(&WSMessage{
 		Type:    WSTypeTerminalResize,
@@ -1348,7 +1350,7 @@ func (c *WorkerWSClient) handleTerminalResizeRequest(payload json.RawMessage) {
 	})
 }
 
-// SendTerminalOutput 发送终端输�?
+// SendTerminalOutput 发送终端输�?
 func (c *WorkerWSClient) SendTerminalOutput(sessionId string, data []byte) error {
 	if !c.IsConnected() {
 		return fmt.Errorf("not connected")

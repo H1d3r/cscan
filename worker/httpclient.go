@@ -11,7 +11,6 @@ import (
 )
 
 // WorkerHTTPClient Worker HTTP 客户端
-// 用于替代原有 RPC 客户端，通过 HTTP 调用 API 接口
 type WorkerHTTPClient struct {
 	baseURL    string
 	installKey string

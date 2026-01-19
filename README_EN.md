@@ -17,7 +17,7 @@
 | Module | Function | Tools |
 |--------|----------|-------|
 | Asset Discovery | Port Scanning, Service Detection | Naabu / Masscan / Nmap |
-| Subdomain Enum | Passive Enum + Dictionary Brute | Subfinder + Dnsx |
+| Subdomain Enum | Passive Enum + Dictionary Brute | Subfinder + KSubdomain |
 | Fingerprinting | Web Fingerprint, 3W+ Rules | Httpx + Wappalyzer + Custom Engine |
 | URL Discovery | Path Crawling | Urlfinder |
 | Vuln Detection | POC Scanning, Custom POC | Nuclei SDK |

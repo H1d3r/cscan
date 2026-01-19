@@ -501,16 +501,15 @@ type DomainScanConfig struct {
 	Concurrent         int      `json:"concurrent"`         // DNS解析并发数
 	SubdomainDictIds   []string `json:"subdomainDictIds"`   // 子域名暴力破解字典ID列表
 	// 子域名暴力破解引擎配置
-	BruteforceEngine   string   `json:"bruteforceEngine"`   // 暴力破解引擎: dnsx, ksubdomain (默认ksubdomain)
-	Bandwidth          string   `json:"bandwidth"`          // ksubdomain带宽限制，如"5M", "10M", "100M"
-	Retry              int      `json:"retry"`              // ksubdomain重试次数
-	WildcardMode       string   `json:"wildcardMode"`       // ksubdomain泛解析过滤模式: basic, advanced, none
+	BruteforceEngine     string   `json:"bruteforceEngine"`     // 暴力破解引擎: dnsx, ksubdomain (默认ksubdomain)
+	BruteforceTimeout    int      `json:"bruteforceTimeout"`    // 暴力破解超时时间(分钟)
+	Bandwidth            string   `json:"bandwidth"`            // ksubdomain带宽限制，如"5M", "10M", "100M"
+	Retry                int      `json:"retry"`                // ksubdomain重试次数
+	WildcardMode         string   `json:"wildcardMode"`         // ksubdomain泛解析过滤模式: basic, advanced, none
 	// Dnsx增强功能
 	RecursiveBrute       bool     `json:"recursiveBrute"`       // 递归爆破
 	RecursiveDictIds     []string `json:"recursiveDictIds"`     // 递归爆破字典ID列表
 	WildcardDetect       bool     `json:"wildcardDetect"`       // 泛解析检测并处理
-	SubdomainCrawl       bool     `json:"subdomainCrawl"`       // 子域爬取（从响应体和JS中发现子域）
-	TakeoverCheck        bool     `json:"takeoverCheck"`        // 子域接管检查
 }
 
 type FingerprintConfig struct {

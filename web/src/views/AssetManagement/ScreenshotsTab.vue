@@ -351,6 +351,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { debounce } from 'lodash-es'
 import {
   Search,
   Filter,
@@ -370,7 +371,7 @@ const loading = ref(false)
 const searchQuery = ref('')
 const showFilters = ref(false)
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(20)
 const total = ref(0)
 const screenshots = ref([])
 const showDetailsDialog = ref(false)
@@ -477,10 +478,10 @@ const loadData = async () => {
   }
 }
 
-const handleSearch = () => {
+const handleSearch = debounce(() => {
   currentPage.value = 1
   loadData()
-}
+}, 300)
 
 const refreshData = () => {
   loadData()

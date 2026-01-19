@@ -198,7 +198,7 @@ func (e *DomainScanExecutor) executeBruteforce(ctx *TaskContext, config *schedul
 	bruteforceOpts := &scanner.SubdomainBruteforceOptions{
 		Wordlist:       strings.Join(allWords, "\n"),
 		Threads:        w.config.Concurrency * 2,
-		Timeout:        5,
+		Timeout:        config.BruteforceTimeout * 60, // 转换为秒
 		WildcardFilter: config.RemoveWildcard,
 		ResolveDNS:     config.ResolveDNS,
 		Concurrent:     w.config.Concurrency * 10,
@@ -211,8 +211,6 @@ func (e *DomainScanExecutor) executeBruteforce(ctx *TaskContext, config *schedul
 		RecursiveBrute: config.RecursiveBrute,
 		RecursiveDepth: 2,
 		WildcardDetect: config.WildcardDetect,
-		SubdomainCrawl: config.SubdomainCrawl,
-		TakeoverCheck:  config.TakeoverCheck,
 	}
 
 	// 获取递归爆破字典

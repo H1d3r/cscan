@@ -52,7 +52,7 @@
             <template v-if="form.domainscanEnable">
               <el-form-item :label="$t('task.scanTool')">
                 <el-checkbox v-model="form.domainscanSubfinder">Subfinder ({{ $t('task.passiveEnum') }})</el-checkbox>
-                <el-checkbox v-model="form.domainscanBruteforce" :disabled="!form.subdomainDictIds || !form.subdomainDictIds.length">Dnsx ({{ $t('task.dictBrute') }})</el-checkbox>
+                <el-checkbox v-model="form.domainscanBruteforce" :disabled="!form.subdomainDictIds || !form.subdomainDictIds.length">KSubdomain ({{ $t('task.dictBrute') }})</el-checkbox>
                 <span class="form-hint">{{ $t('task.multiScanHint') }}</span>
               </el-form-item>
               
@@ -93,11 +93,11 @@
                   </div>
                 </el-col>
                 
-                <!-- 右侧：Dnsx 配置 -->
+                <!-- 右侧：KSubdomain 配置 -->
                 <el-col :span="12">
                   <div class="scan-tool-section">
                     <div class="scan-tool-header">
-                      <span class="scan-tool-title">{{ $t('task.dnsxDictBrute') }}</span>
+                      <span class="scan-tool-title">{{ $t('task.ksubdomainDictBrute') }}</span>
                       <el-tag :type="form.domainscanBruteforce ? 'success' : 'info'" size="small">
                         {{ form.domainscanBruteforce ? $t('task.started') : $t('task.notStarted') }}
                       </el-tag>
@@ -113,8 +113,14 @@
                         </span>
                         <el-button type="primary" link @click="showSubdomainDictSelectDialog">{{ $t('task.selectDict') }}</el-button>
                       </div>
-                      <span class="form-hint">{{ $t('task.dnsxBruteHint') }}</span>
+                      <span class="form-hint">{{ $t('task.ksubdomainBruteHint') }}</span>
                     </el-form-item>
+                    <template v-if="form.domainscanBruteforce">
+                      <el-form-item :label="$t('task.bruteforceTimeout') + ' (' + $t('task.minutes') + ')'">
+                        <el-input-number v-model="form.domainscanBruteforceTimeout" :min="1" :max="120" style="width:100%" />
+                        <span class="form-hint">{{ $t('task.ksubdomainTimeoutHint') }}</span>
+                      </el-form-item>
+                    </template>
                     <template v-if="form.domainscanBruteforce">
                       <el-form-item :label="$t('task.enhancedFeatures')">
                         <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -133,16 +139,14 @@
                           </span>
                           <el-checkbox v-model="form.domainscanWildcardDetect">{{ $t('task.wildcardDetect') }}</el-checkbox>
                           <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{ $t('task.wildcardDetectHint') }}</span>
-                          <el-checkbox v-model="form.domainscanSubdomainCrawl">{{ $t('task.subdomainCrawl') }}</el-checkbox>
-                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{ $t('task.subdomainCrawlHint') }}</span>
-                          <el-checkbox v-model="form.domainscanTakeoverCheck">{{ $t('task.takeoverCheck') }}</el-checkbox>
-                          <span class="form-hint" style="margin-left: 24px; margin-top: -4px;">{{ $t('task.takeoverCheckHint') }}</span>
+                          
+                          
                         </div>
                       </el-form-item>
                     </template>
                     <div v-if="!form.domainscanBruteforce && form.subdomainDictIds && form.subdomainDictIds.length" class="scan-tool-disabled-hint">
                       <el-icon><InfoFilled /></el-icon>
-                      <span>{{ $t('task.canEnableDnsx') }}</span>
+                      <span>{{ $t('task.canEnableKSubdomain') }}</span>
                     </div>
                   </div>
                 </el-col>
@@ -875,6 +879,7 @@ const form = reactive({
   domainscanEnable: false,
   domainscanSubfinder: true,
   domainscanBruteforce: false, // 字典爆破
+  domainscanBruteforceTimeout: 30, // KSubdomain 超时时间（分钟）
   domainscanTimeout: 300,
   domainscanMaxEnumTime: 10,
   domainscanThreads: 10,
@@ -884,14 +889,12 @@ const form = reactive({
   domainscanConcurrent: 50,
   subdomainDictIds: [], // 子域名暴力破解字典
   subdomainDicts: [], // 保存已选择的字典信息
-  // Dnsx增强功能
+  // KSubdomain增强功能
   domainscanRecursiveBrute: false, // 递归爆破
   recursiveDictIds: [], // 递归爆破字典ID列表
   recursiveDicts: [], // 保存已选择的递归字典信息
   domainscanWildcardDetect: true,  // 泛解析检测
-  domainscanSubdomainCrawl: false, // 子域爬取
-  domainscanTakeoverCheck: false,  // 子域接管检查
-  // 端口扫描
+      // 端口扫描
   portscanEnable: true,
   portscanTool: 'naabu',
   portscanRate: 3000, // 提高默认值从1000到3000
@@ -1050,6 +1053,7 @@ function applyConfig(config) {
     domainscanEnable: config.domainscan?.enable ?? false,
     domainscanSubfinder: config.domainscan?.subfinder ?? true,
     domainscanBruteforce: hasBruteforce,
+    domainscanBruteforceTimeout: config.domainscan?.bruteforceTimeout || 30,
     domainscanTimeout: config.domainscan?.timeout || 300,
     domainscanMaxEnumTime: config.domainscan?.maxEnumerationTime || 10,
     domainscanThreads: config.domainscan?.threads || 10,
@@ -1058,12 +1062,10 @@ function applyConfig(config) {
     domainscanResolveDNS: config.domainscan?.resolveDNS ?? true,
     domainscanConcurrent: config.domainscan?.concurrent || 50,
     subdomainDictIds: config.domainscan?.subdomainDictIds || [],
-    // Dnsx增强功能
+    // KSubdomain增强功能
     domainscanRecursiveBrute: config.domainscan?.recursiveBrute ?? false,
     recursiveDictIds: config.domainscan?.recursiveDictIds || [],
     domainscanWildcardDetect: config.domainscan?.wildcardDetect ?? true,
-    domainscanSubdomainCrawl: config.domainscan?.subdomainCrawl ?? false,
-    domainscanTakeoverCheck: config.domainscan?.takeoverCheck ?? false,
     // 端口扫描
     portscanEnable: config.portscan?.enable ?? true,
     portscanTool: config.portscan?.tool || 'naabu',
@@ -1136,6 +1138,7 @@ watch(
     domainscanEnable: form.domainscanEnable,
     domainscanSubfinder: form.domainscanSubfinder,
     domainscanBruteforce: form.domainscanBruteforce,
+    domainscanBruteforceTimeout: form.domainscanBruteforceTimeout,
     domainscanTimeout: form.domainscanTimeout,
     domainscanMaxEnumTime: form.domainscanMaxEnumTime,
     domainscanThreads: form.domainscanThreads,
@@ -1144,12 +1147,10 @@ watch(
     domainscanResolveDNS: form.domainscanResolveDNS,
     domainscanConcurrent: form.domainscanConcurrent,
     subdomainDictIds: form.subdomainDictIds,
-    // Dnsx增强功能
+    // KSubdomain增强功能
     domainscanRecursiveBrute: form.domainscanRecursiveBrute,
     recursiveDictIds: form.recursiveDictIds,
     domainscanWildcardDetect: form.domainscanWildcardDetect,
-    domainscanSubdomainCrawl: form.domainscanSubdomainCrawl,
-    domainscanTakeoverCheck: form.domainscanTakeoverCheck,
     portscanEnable: form.portscanEnable,
     portscanTool: form.portscanTool,
     portscanRate: form.portscanRate,
@@ -1214,13 +1215,12 @@ function buildConfig() {
       concurrent: form.domainscanConcurrent,
       // 只有启用字典爆破时才传递字典ID和增强功能配置
       subdomainDictIds: form.domainscanBruteforce ? (form.subdomainDictIds || []) : [],
-      // Dnsx增强功能（只有启用字典爆破时才生效）
+      bruteforceTimeout: form.domainscanBruteforce ? (form.domainscanBruteforceTimeout || 30) : 30,
+      // KSubdomain增强功能（只有启用字典爆破时才生效）
       recursiveBrute: form.domainscanBruteforce ? form.domainscanRecursiveBrute : false,
       recursiveDictIds: (form.domainscanBruteforce && form.domainscanRecursiveBrute) ? (form.recursiveDictIds || []) : [],
       wildcardDetect: form.domainscanBruteforce ? form.domainscanWildcardDetect : false,
-      subdomainCrawl: form.domainscanBruteforce ? form.domainscanSubdomainCrawl : false,
-      takeoverCheck: form.domainscanBruteforce ? form.domainscanTakeoverCheck : false
-    },
+      },
     portscan: {
       enable: form.portscanEnable,
       tool: form.portscanTool,

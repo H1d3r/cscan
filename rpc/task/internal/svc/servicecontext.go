@@ -9,6 +9,7 @@ import (
 	"cscan/rpc/task/internal/config"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -28,7 +29,7 @@ type ServiceContext struct {
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
-	fmt.Println("Connecting to MongoDB:", c.Mongo.Uri)
+	logx.Infof("Connecting to MongoDB: %s", c.Mongo.Uri)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -41,12 +42,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err := mongoClient.Ping(ctx, nil); err != nil {
 		panic(fmt.Sprintf("MongoDB ping failed: %v\nPlease ensure MongoDB is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("MongoDB connected successfully")
+	logx.Info("MongoDB connected successfully")
 
 	mongoDB := mongoClient.Database(c.Mongo.DbName)
 
 	// 使用go-zero Redis配置
-	fmt.Println("Connecting to Redis:", c.RedisConf.Host)
+	logx.Infof("Connecting to Redis: %s", c.RedisConf.Host)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     c.RedisConf.Host,
 		Password: c.RedisConf.Pass,
@@ -57,7 +58,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		panic(fmt.Sprintf("Redis ping failed: %v\nPlease ensure Redis is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("Redis connected successfully")
+	logx.Info("Redis connected successfully")
 
 	return &ServiceContext{
 		Config:                  c,

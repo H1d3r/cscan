@@ -53,7 +53,7 @@ func main() {
 	// 启动孤儿任务恢复后台任务（每 5 分钟检查一次）
 	go startOrphanedTaskRecovery(svcCtx)
 
-	fmt.Printf("Starting API server at %s:%d...\n", c.Host, c.Port)
+	logx.Infof("Starting API server at %s:%d...", c.Host, c.Port)
 	server.Start()
 }
 

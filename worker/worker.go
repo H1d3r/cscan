@@ -189,7 +189,7 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	// 创建 HTTP 客户端（替代 RPC 和 Redis）
 	httpClient := NewWorkerHTTPClient(config.ServerAddr, config.InstallKey, config.Name)
 
-	fmt.Printf("[Worker] HTTP client created, API server: %s\n", config.ServerAddr)
+	logx.Infof("[Worker] HTTP client created, API server: %s", config.ServerAddr)
 
 	// 创建可取消的Context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1147,7 +1147,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			Recursive:          config.DomainScan.Recursive,
 			RemoveWildcard:     config.DomainScan.RemoveWildcard,
 			ResolveDNS:         config.DomainScan.ResolveDNS,
-			Concurrent:         w.config.Concurrency * 10, // DNS解析并发数为Worker并发数的10倍
+			Concurrent:         w.config.Concurrency * 1, // DNS解析并发数为Worker并发数的10倍
 			ProviderConfig:     providerConfig,
 		}
 
@@ -1218,7 +1218,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					bruteforceOpts := &scanner.SubdomainBruteforceOptions{
 						Wordlist:       strings.Join(allWords, "\n"),
 						Threads:        w.config.Concurrency * 2,
-						Timeout:        5,
+						Timeout:        config.DomainScan.BruteforceTimeout * 60, // 转换为秒
 						WildcardFilter: config.DomainScan.RemoveWildcard,
 						ResolveDNS:     config.DomainScan.ResolveDNS,
 						Concurrent:     w.config.Concurrency * 10,
@@ -1231,8 +1231,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 						RecursiveBrute: config.DomainScan.RecursiveBrute,
 						RecursiveDepth: 2,
 						WildcardDetect: config.DomainScan.WildcardDetect,
-						SubdomainCrawl: config.DomainScan.SubdomainCrawl,
-						TakeoverCheck:  config.DomainScan.TakeoverCheck,
 					}
 
 					// 获取递归爆破字典（如果启用了递归爆破）
@@ -3998,15 +3996,11 @@ func (w *Worker) loadHttpServiceMappings() {
 	resp, err := w.httpClient.GetHttpServiceSettings(ctx)
 	if err != nil {
 		w.logger.Error("GetHttpServiceSettings HTTP failed: %v, using default settings", err)
-		// 回退到旧接口
-		w.loadHttpServiceMappingsLegacy()
 		return
 	}
 
 	if !resp.Success {
 		w.logger.Error("GetHttpServiceSettings failed: %s, using default settings", resp.Msg)
-		// 回退到旧接口
-		w.loadHttpServiceMappingsLegacy()
 		return
 	}
 
@@ -4038,40 +4032,6 @@ func (w *Worker) loadHttpServiceMappings() {
 	// 设置全局检查器
 	scanner.SetHttpServiceChecker(checker)
 }
-
-// loadHttpServiceMappingsLegacy 旧版本的加载方法（兼容）
-func (w *Worker) loadHttpServiceMappingsLegacy() {
-	ctx := context.Background()
-
-	// 通过 HTTP 接口获取 HTTP 服务映射
-	resp, err := w.httpClient.GetHttpServiceMappings(ctx, true)
-	if err != nil {
-		w.logger.Error("GetHttpServiceMappings HTTP failed: %v, using default mappings", err)
-		return
-	}
-
-	if !resp.Success {
-		w.logger.Error("GetHttpServiceMappings failed: %s, using default mappings", resp.Msg)
-		return
-	}
-
-	if len(resp.Mappings) == 0 {
-		w.logger.Info("No HTTP service mappings found, using default mappings")
-		return
-	}
-
-	// 创建检查器并设置映射
-	checker := NewWorkerHttpServiceChecker()
-	for _, mapping := range resp.Mappings {
-		checker.SetMapping(mapping.ServiceName, mapping.IsHttp)
-	}
-
-	// 设置全局检查器
-	scanner.SetHttpServiceChecker(checker)
-	w.logger.Info("Loaded %d HTTP service mappings from database (legacy)", len(resp.Mappings))
-}
-
-// NOTE: subscribeControlCommand 和 handleControlCommand 已移除，将在 Task 6 中通过 WebSocket 实现
 
 // getBlacklistMatcher 获取黑名单匹配器
 func (w *Worker) getBlacklistMatcher(ctx context.Context, taskId string) *utils.BlacklistMatcher {

@@ -140,6 +140,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { debounce } from 'lodash-es'
 import {
   Search,
   Filter,
@@ -328,10 +329,10 @@ const loadData = async () => {
   }
 }
 
-const handleSearch = () => {
+const handleSearch = debounce(() => {
   currentPage.value = 1
   loadData()
-}
+}, 300)
 
 const refreshData = () => {
   loadData()

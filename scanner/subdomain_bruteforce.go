@@ -1,12 +1,16 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -50,8 +54,6 @@ type SubdomainBruteforceOptions struct {
 	RecursiveDepth    int    `json:"recursiveDepth"`    // 递归深度，默认2
 	RecursiveWordlist string `json:"recursiveWordlist"` // 递归爆破字典内容
 	WildcardDetect    bool   `json:"wildcardDetect"`    // 泛解析检测并处理
-	SubdomainCrawl    bool   `json:"subdomainCrawl"`    // 子域爬取
-	TakeoverCheck     bool   `json:"takeoverCheck"`     // 子域接管检查
 }
 
 // Validate 验证 SubdomainBruteforceOptions 配置是否有效
@@ -185,9 +187,11 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 	}
 	taskLog("INFO", "Bruteforce: loaded %d words from wordlist", len(wordlist))
 
-	// 收集所有子域名
+	// 收集所有子域名和资产
 	var allSubdomains []string
+	var allAssets []*Asset
 	var mu sync.Mutex
+	useKsubdomain := (opts.Engine == "" || opts.Engine == "ksubdomain")
 
 	for _, domain := range domains {
 		select {
@@ -199,56 +203,96 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 
 		taskLog("INFO", "Bruteforce: scanning %s with engine %s", domain, opts.Engine)
 
-		var subdomains []string
-		var err error
-
 		// 根据引擎选择不同的暴力破解方法
-		switch opts.Engine {
-		case "ksubdomain":
-			subdomains, err = s.bruteforceWithKSubdomain(ctx, domain, wordlist, opts, taskLog)
-		case "dnsx":
+		if useKsubdomain {
+			// ksubdomain 直接返回带 IP 信息的资产
+			assets, err := s.bruteforceWithKSubdomainAndParseIP(ctx, domain, wordlist, opts, taskLog)
+			if err != nil {
+				taskLog("WARN", "Bruteforce ksubdomain error for %s: %v", domain, err)
+				continue
+			}
+
+			// 递归爆破（如果启用）
+			if opts.RecursiveBrute && len(assets) > 0 {
+				taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
+				// 提取子域名用于递归
+				var subdomains []string
+				for _, asset := range assets {
+					subdomains = append(subdomains, asset.Host)
+				}
+				recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
+				// 递归结果需要 DNS 解析
+				if len(recursiveSubdomains) > 0 {
+					recursiveAssets := s.resolveDomains(ctx, recursiveSubdomains, opts.Concurrent, taskLog)
+					assets = append(assets, recursiveAssets...)
+				}
+			}
+
+			mu.Lock()
+			allAssets = append(allAssets, assets...)
+			mu.Unlock()
+
+			taskLog("INFO", "Bruteforce: domain %s returned %d assets with IP information", domain, len(assets))
+		} else {
+			// dnsx 返回子域名列表，需要后续 DNS 解析
+			var subdomains []string
+			var err error
 			subdomains, err = s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
-		default:
-			// 默认使用ksubdomain
-			subdomains, err = s.bruteforceWithKSubdomain(ctx, domain, wordlist, opts, taskLog)
-		}
 
-		if err != nil {
-			taskLog("WARN", "Bruteforce %s error for %s: %v", opts.Engine, domain, err)
-			continue
-		}
+			if err != nil {
+				taskLog("WARN", "Bruteforce dnsx error for %s: %v", domain, err)
+				continue
+			}
 
-		// 递归爆破
-		if opts.RecursiveBrute && len(subdomains) > 0 {
-			taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
-			recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
-			subdomains = append(subdomains, recursiveSubdomains...)
-		}
+			// 递归爆破
+			if opts.RecursiveBrute && len(subdomains) > 0 {
+				taskLog("INFO", "Bruteforce: starting recursive bruteforce for %s", domain)
+				recursiveSubdomains := s.recursiveBruteforce(ctx, domain, subdomains, opts, taskLog)
+				subdomains = append(subdomains, recursiveSubdomains...)
+			}
 
-		mu.Lock()
-		allSubdomains = append(allSubdomains, subdomains...)
-		mu.Unlock()
+			mu.Lock()
+			allSubdomains = append(allSubdomains, subdomains...)
+			mu.Unlock()
 
-		taskLog("INFO", "Bruteforce: found %d subdomains for %s", len(subdomains), domain)
-	}
-
-	// 去重
-	allSubdomains = utils.UniqueStrings(allSubdomains)
-	taskLog("INFO", "Bruteforce: total %d unique subdomains", len(allSubdomains))
-
-	// 子域爬取（从响应体和JS中发现新子域）
-	if opts.SubdomainCrawl && len(allSubdomains) > 0 {
-		taskLog("INFO", "Bruteforce: starting subdomain crawl from %d subdomains", len(allSubdomains))
-		crawledSubdomains := s.crawlSubdomains(ctx, allSubdomains, domains, opts, taskLog)
-		if len(crawledSubdomains) > 0 {
-			taskLog("INFO", "Bruteforce: crawled %d new subdomains", len(crawledSubdomains))
-			allSubdomains = append(allSubdomains, crawledSubdomains...)
-			allSubdomains = utils.UniqueStrings(allSubdomains)
+			taskLog("INFO", "Bruteforce: domain %s returned %d subdomains (before global deduplication)", domain, len(subdomains))
 		}
 	}
 
-	// DNS解析（可选）- 使用dnsx进行DNS解析
+	// 处理 ksubdomain 的结果（已经包含 IP 信息）
+	if useKsubdomain && len(allAssets) > 0 {
+		// 去重资产（基于域名）
+		assetMap := make(map[string]*Asset)
+		for _, asset := range allAssets {
+			if existing, ok := assetMap[asset.Host]; ok {
+				// 合并 IP 信息
+				existing.IPV4 = append(existing.IPV4, asset.IPV4...)
+				existing.IPV6 = append(existing.IPV6, asset.IPV6...)
+			} else {
+				assetMap[asset.Host] = asset
+			}
+		}
+		
+		// 转换为列表
+		result.Assets = make([]*Asset, 0, len(assetMap))
+		for _, asset := range assetMap {
+			asset.Source = "bruteforce"
+			result.Assets = append(result.Assets, asset)
+		}
+		
+		taskLog("INFO", "Bruteforce: total %d unique assets with IP information from ksubdomain", len(result.Assets))
+		return result, nil
+	}
+
+	// 处理 dnsx 的结果（需要 DNS 解析）
 	if len(allSubdomains) > 0 {
+		// 去重
+		beforeDedup := len(allSubdomains)
+		allSubdomains = utils.UniqueStrings(allSubdomains)
+		afterDedup := len(allSubdomains)
+		taskLog("INFO", "Bruteforce: total subdomains before deduplication: %d, after deduplication: %d (removed %d duplicates)", beforeDedup, afterDedup, beforeDedup-afterDedup)
+
+		// DNS解析（可选）- 使用dnsx进行DNS解析
 		if opts.ResolveDNS {
 			taskLog("INFO", "Bruteforce: resolving DNS for %d subdomains using dnsx", len(allSubdomains))
 			assets := s.resolveDomains(ctx, allSubdomains, opts.Concurrent, taskLog)
@@ -266,12 +310,6 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 				})
 			}
 		}
-	}
-
-	// 子域接管检查
-	if opts.TakeoverCheck && len(result.Assets) > 0 {
-		taskLog("INFO", "Bruteforce: checking subdomain takeover for %d assets", len(result.Assets))
-		s.checkSubdomainTakeover(ctx, result.Assets, opts, taskLog)
 	}
 
 	return result, nil
@@ -355,12 +393,8 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 		} else {
 			wildcardIPs = s.detectWildcard(domain)
 			if len(wildcardIPs) > 0 {
-				taskLog("INFO", "Bruteforce: detected wildcard for %s (%d IPs)", domain, len(wildcardIPs))
-				// 如果启用了泛解析检测（WildcardDetect），检测到泛解析后直接跳过该域名
-				if opts.WildcardDetect {
-					taskLog("WARN", "Bruteforce: skipping domain %s due to wildcard detection", domain)
-					return subdomains, nil
-				}
+				taskLog("INFO", "Bruteforce: detected wildcard for %s (%d IPs), will filter wildcard results", domain, len(wildcardIPs))
+				// 注意：不再直接跳过域名，而是在结果中过滤泛解析IP
 			}
 		}
 	}
@@ -479,12 +513,8 @@ func (s *SubdomainBruteforceScanner) recursiveBruteforce(ctx context.Context, ro
 	if opts.WildcardFilter || opts.WildcardDetect {
 		rootWildcardIPs = s.detectWildcard(rootDomain)
 		if len(rootWildcardIPs) > 0 {
-			taskLog("INFO", "Bruteforce: recursive - root domain %s has wildcard (%d IPs)", rootDomain, len(rootWildcardIPs))
-			// 如果启用了泛解析检测（WildcardDetect），检测到泛解析后直接跳过递归爆破
-			if opts.WildcardDetect {
-				taskLog("WARN", "Bruteforce: skipping recursive bruteforce for %s due to wildcard detection", rootDomain)
-				return allNewSubdomains
-			}
+			taskLog("INFO", "Bruteforce: recursive - root domain %s has wildcard (%d IPs), will filter wildcard results", rootDomain, len(rootWildcardIPs))
+			// 注意：不再直接跳过递归爆破，而是在结果中过滤泛解析IP
 		}
 	}
 
@@ -1007,14 +1037,301 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 
 	return assets
 }
-// bruteforceWithKSubdomain 使用ksubdomain SDK进行暴力破解
+// bruteforceWithKSubdomain 使用ksubdomain进行暴力破解
 func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) ([]string, error) {
-	taskLog("INFO", "KSubdomain SDK integration is complex, falling back to dnsx for now")
-	taskLog("INFO", "Future versions will include full SDK integration")
+	var subdomains []string
 	
-	// 暂时回退到 dnsx，直到我们完全解决 SDK 集成问题
-	return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
+	// 创建 output 目录
+	outputDir := "output"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		taskLog("WARN", "Bruteforce: failed to create output directory: %v", err)
+		outputDir = os.TempDir() // 回退到临时目录
+	}
+	
+	// 创建字典文件（保存到 output 目录）
+	timestamp := time.Now().Format("20060102_150405")
+	dictFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_dict_%s_%s.txt", domain, timestamp))
+	
+	// 写入字典内容（从数据库获取的字典）
+	if err := os.WriteFile(dictFile, []byte(strings.Join(wordlist, "\n")), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write wordlist file: %v", err)
+	}
+	
+	taskLog("INFO", "Bruteforce: created dictionary file with %d words: %s", len(wordlist), dictFile)
+	
+	// 创建输出文件（保存到 output 目录）
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
+	
+	// 构建ksubdomain命令
+	// ksubdomain e -d example.com -f dict.txt --wild-filter-mode advanced -o output.txt
+	args := []string{
+		"e",  // 枚举模式
+		"-d", domain,
+		"-f", dictFile,  // 使用数据库中的字典文件
+		"--wild-filter-mode", "advanced",  // 泛解析过滤模式
+		"-o", outputFile,
+	}
+	
+	// 添加带宽限制
+	if opts.Bandwidth != "" {
+		args = append(args, "-b", opts.Bandwidth)
+	}
+	
+	// 添加重试次数
+	if opts.Retry > 0 {
+		args = append(args, "--retry", fmt.Sprintf("%d", opts.Retry))
+	}
+	
+	// 自定义泛解析过滤模式（如果指定）
+	if opts.WildcardMode != "" && opts.WildcardMode != "none" && opts.WildcardMode != "advanced" {
+		// 替换默认的advanced模式
+		for i, arg := range args {
+			if arg == "--wild-filter-mode" && i+1 < len(args) {
+				args[i+1] = opts.WildcardMode
+				break
+			}
+		}
+	}
+	
+	// 添加DNS服务器
+	if len(opts.Resolvers) > 0 {
+		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
+	}
+	
+	taskLog("INFO", "Bruteforce: executing ksubdomain with args: %v", args)
+	
+	// 设置超时（防止卡住）
+	// 子域名爆破需要较长时间，使用独立的超时设置
+	timeout := 3 * time.Minute // 默认30分钟超时
+	if opts.Timeout > 60 {
+		// 如果配置的超时时间大于60秒，则使用配置的值
+		timeout = time.Duration(opts.Timeout) * time.Second
+	}
+	
+	// 创建带超时的context
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	
+	// 执行ksubdomain命令
+	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
+	
+	// 捕获输出
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	// 执行命令
+	err := cmd.Run()
+	
+	// 检查是否超时
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		taskLog("WARN", "Bruteforce: ksubdomain execution timeout after %v", timeout)
+		return subdomains, fmt.Errorf("ksubdomain execution timeout after %v", timeout)
+	}
+	
+	if err != nil {
+		// 检查是否是因为ksubdomain未安装
+		if strings.Contains(err.Error(), "executable file not found") {
+			taskLog("WARN", "Bruteforce: ksubdomain not found, falling back to dnsx")
+			return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
+		}
+		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s, falling back to dnsx", err, stderr.String())
+		// 如果ksubdomain执行失败，回退到dnsx
+		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
+	}
+	
+	taskLog("INFO", "Bruteforce: ksubdomain execution completed, reading results from: %s", outputFile)
+	
+	// 读取输出文件
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		taskLog("WARN", "Bruteforce: failed to read ksubdomain output file: %v, falling back to dnsx", err)
+		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
+	}
+	
+	// 解析结果（ksubdomain格式：域名=>IP）
+	// 例如：www.qq.com=>198.18.119.65
+	lines := strings.Split(string(content), "\n")
+	totalLines := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		totalLines++
+		
+		// 解析 ksubdomain 格式：域名=>IP
+		parts := strings.Split(line, "=>")
+		if len(parts) >= 1 {
+			subdomain := strings.TrimSpace(parts[0])
+			if subdomain != "" {
+				subdomains = append(subdomains, subdomain)
+			}
+		}
+	}
+	
+	taskLog("INFO", "Bruteforce: ksubdomain output file contains %d lines, parsed %d subdomains (before deduplication)", totalLines, len(subdomains))
+	
+	return subdomains, nil
 }
 
 
 
+
+// bruteforceWithKSubdomainAndParseIP 使用ksubdomain进行暴力破解并解析IP信息
+// 返回带IP信息的资产列表
+func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) ([]*Asset, error) {
+	var assets []*Asset
+	
+	// 创建 output 目录
+	outputDir := "output"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		taskLog("WARN", "Bruteforce: failed to create output directory: %v", err)
+		outputDir = os.TempDir() // 回退到临时目录
+	}
+	
+	// 创建字典文件（保存到 output 目录）
+	timestamp := time.Now().Format("20060102_150405")
+	dictFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_dict_%s_%s.txt", domain, timestamp))
+	
+	// 写入字典内容（从数据库获取的字典）
+	if err := os.WriteFile(dictFile, []byte(strings.Join(wordlist, "\n")), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write wordlist file: %v", err)
+	}
+	
+	taskLog("INFO", "Bruteforce: created dictionary file with %d words: %s", len(wordlist), dictFile)
+	
+	// 创建输出文件（保存到 output 目录）
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
+	
+	// 构建ksubdomain命令
+	args := []string{
+		"e",  // 枚举模式
+		"-d", domain,
+		"-f", dictFile,
+		"--wild-filter-mode", "advanced",
+		"-o", outputFile,
+	}
+	
+	// 添加带宽限制
+	if opts.Bandwidth != "" {
+		args = append(args, "-b", opts.Bandwidth)
+	}
+	
+	// 添加重试次数
+	if opts.Retry > 0 {
+		args = append(args, "--retry", fmt.Sprintf("%d", opts.Retry))
+	}
+	
+	// 自定义泛解析过滤模式
+	if opts.WildcardMode != "" && opts.WildcardMode != "none" && opts.WildcardMode != "advanced" {
+		for i, arg := range args {
+			if arg == "--wild-filter-mode" && i+1 < len(args) {
+				args[i+1] = opts.WildcardMode
+				break
+			}
+		}
+	}
+	
+	// 添加DNS服务器
+	if len(opts.Resolvers) > 0 {
+		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
+	}
+	
+	taskLog("INFO", "Bruteforce: executing ksubdomain with args: %v", args)
+	
+	// 设置超时
+	timeout := 30 * time.Minute
+	if opts.Timeout > 60 {
+		timeout = time.Duration(opts.Timeout) * time.Second
+	}
+	
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	
+	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	err := cmd.Run()
+	
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		taskLog("WARN", "Bruteforce: ksubdomain execution timeout after %v", timeout)
+		return assets, fmt.Errorf("ksubdomain execution timeout after %v", timeout)
+	}
+	
+	if err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			taskLog("WARN", "Bruteforce: ksubdomain not found")
+			return assets, fmt.Errorf("ksubdomain not found")
+		}
+		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s", err, stderr.String())
+		return assets, fmt.Errorf("ksubdomain execution error: %v", err)
+	}
+	
+	taskLog("INFO", "Bruteforce: ksubdomain execution completed, parsing results with IP from: %s", outputFile)
+	
+	// 读取输出文件
+	content, err := os.ReadFile(outputFile)
+	if err != nil {
+		taskLog("WARN", "Bruteforce: failed to read ksubdomain output file: %v", err)
+		return assets, err
+	}
+	
+	// 解析结果（ksubdomain格式：域名=>IP）
+	// 例如：www.qq.com=>198.18.119.65
+	lines := strings.Split(string(content), "\n")
+	totalLines := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		totalLines++
+		
+		// 解析 ksubdomain 格式：域名=>IP
+		// 注意：分隔符是固定的 "=>"
+		if !strings.Contains(line, "=>") {
+			continue
+		}
+		
+		parts := strings.Split(line, "=>")
+		if len(parts) != 2 {
+			continue
+		}
+		
+		subdomain := strings.TrimSpace(parts[0])
+		ipStr := strings.TrimSpace(parts[1])
+		
+		if subdomain == "" {
+			continue
+		}
+		
+		asset := &Asset{
+			Authority: subdomain,
+			Host:      subdomain,
+			Category:  "domain",
+			Source:    "bruteforce",
+			Port:      0, // 子域名爆破阶段没有端口信息
+		}
+		
+		// 解析IP地址（如果有）
+		if ipStr != "" {
+			ip := net.ParseIP(ipStr)
+			if ip != nil {
+				if ip4 := ip.To4(); ip4 != nil {
+					asset.IPV4 = []IPInfo{{IP: ip4.String()}}
+				} else {
+					asset.IPV6 = []IPInfo{{IP: ip.String()}}
+				}
+			}
+		}
+		
+		assets = append(assets, asset)
+	}
+	
+	taskLog("INFO", "Bruteforce: ksubdomain output file contains %d lines, parsed %d assets with IP information", totalLines, len(assets))
+	
+	return assets, nil
+}

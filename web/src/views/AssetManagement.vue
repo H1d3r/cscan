@@ -23,43 +23,79 @@
     <!-- 标签页 -->
     <el-tabs v-model="activeTab" @tab-change="handleTabChange">
       <!-- 资产分组 -->
-      <el-tab-pane name="groups">
+      <el-tab-pane name="groups" lazy>
         <template #label>
           <span class="tab-label">
             <el-icon><FolderOpened /></el-icon>
             资产分组
           </span>
         </template>
-        <AssetGroupsTab />
+        <keep-alive>
+          <Suspense>
+            <template #default>
+              <AssetGroupsTab v-if="activeTab === 'groups'" />
+            </template>
+            <template #fallback>
+              <div class="loading-container">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>加载中...</span>
+              </div>
+            </template>
+          </Suspense>
+        </keep-alive>
       </el-tab-pane>
 
       <!-- 资产清单 -->
-      <el-tab-pane name="inventory">
+      <el-tab-pane name="inventory" lazy>
         <template #label>
           <span class="tab-label">
             <el-icon><List /></el-icon>
             资产清单
           </span>
         </template>
-        <AssetInventoryTab />
+        <keep-alive>
+          <Suspense>
+            <template #default>
+              <AssetInventoryTab v-if="activeTab === 'inventory'" />
+            </template>
+            <template #fallback>
+              <div class="loading-container">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>加载中...</span>
+              </div>
+            </template>
+          </Suspense>
+        </keep-alive>
       </el-tab-pane>
 
       <!-- 截图清单 -->
-      <el-tab-pane name="screenshots">
+      <el-tab-pane name="screenshots" lazy>
         <template #label>
           <span class="tab-label">
             <el-icon><Picture /></el-icon>
             截图清单
           </span>
         </template>
-        <ScreenshotsTab />
+        <keep-alive>
+          <Suspense>
+            <template #default>
+              <ScreenshotsTab v-if="activeTab === 'screenshots'" />
+            </template>
+            <template #fallback>
+              <div class="loading-container">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>加载中...</span>
+              </div>
+            </template>
+          </Suspense>
+        </keep-alive>
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -67,11 +103,20 @@ import {
   Search,
   FolderOpened,
   List,
-  Picture
+  Picture,
+  Loading
 } from '@element-plus/icons-vue'
-import AssetGroupsTab from './AssetManagement/AssetGroupsTab.vue'
-import AssetInventoryTab from './AssetManagement/AssetInventoryTab.vue'
-import ScreenshotsTab from './AssetManagement/ScreenshotsTab.vue'
+
+// 懒加载子组件，只在需要时才加载
+const AssetGroupsTab = defineAsyncComponent(() => 
+  import('./AssetManagement/AssetGroupsTab.vue')
+)
+const AssetInventoryTab = defineAsyncComponent(() => 
+  import('./AssetManagement/AssetInventoryTab.vue')
+)
+const ScreenshotsTab = defineAsyncComponent(() => 
+  import('./AssetManagement/ScreenshotsTab.vue')
+)
 
 const route = useRoute()
 const router = useRouter()
@@ -153,6 +198,24 @@ onMounted(() => {
   
   .el-icon {
     font-size: 16px;
+  }
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: hsl(var(--muted-foreground));
+  
+  .el-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+  }
+  
+  span {
+    font-size: 14px;
   }
 }
 </style>

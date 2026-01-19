@@ -67,7 +67,7 @@ func validateInstallKey(apiServer, key, name string) error {
 		resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
 			lastErr = err
-			fmt.Printf("[Worker] Validation attempt %d failed: %v, retrying...\n", i+1, err)
+			logx.Infof("[Worker] Validation attempt %d failed: %v, retrying...", i+1, err)
 			time.Sleep(time.Duration(i+1) * time.Second)
 			continue
 		}
@@ -88,7 +88,7 @@ func validateInstallKey(apiServer, key, name string) error {
 			return fmt.Errorf("validation failed: %s", result.Msg)
 		}
 
-		fmt.Printf("[Worker] Install key validated successfully\n")
+		logx.Info("[Worker] Install key validated successfully")
 		return nil
 	}
 
@@ -110,8 +110,8 @@ func main() {
 
 	// 强制要求安装密钥
 	if *installKey == "" {
-		fmt.Println("[Worker] Error: install key is required (-k flag)")
-		fmt.Println("[Worker] Please get the install key from the admin panel")
+		logx.Error("[Worker] Error: install key is required (-k flag)")
+		logx.Error("[Worker] Please get the install key from the admin panel")
 		os.Exit(1)
 	}
 
@@ -122,12 +122,12 @@ func main() {
 		apiServer = "http://" + apiServer
 	}
 
-	fmt.Printf("[Worker] Using API server: %s\n", apiServer)
-	fmt.Println("[Worker] Validating install key...")
+	logx.Infof("[Worker] Using API server: %s", apiServer)
+	logx.Info("[Worker] Validating install key...")
 
 	// 验证安装密钥
 	if err := validateInstallKey(apiServer, *installKey, name); err != nil {
-		fmt.Printf("[Worker] Authentication failed: %v\n", err)
+		logx.Errorf("[Worker] Authentication failed: %v", err)
 		os.Exit(1)
 	}
 
@@ -152,17 +152,17 @@ func main() {
 	// 启动Worker
 	w.Start()
 
-	fmt.Printf("Worker started:\n")
-	fmt.Printf("  Name: %s\n", name)
-	fmt.Printf("  IP: %s\n", ip)
-	fmt.Printf("  API Server: %s\n", apiServer)
-	fmt.Printf("  Concurrency: %d\n", *concurrency)
+	logx.Info("Worker started:")
+	logx.Infof("  Name: %s", name)
+	logx.Infof("  IP: %s", ip)
+	logx.Infof("  API Server: %s", apiServer)
+	logx.Infof("  Concurrency: %d", *concurrency)
 
 	// 等待退出信号
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	fmt.Println("Shutting down worker...")
+	logx.Info("Shutting down worker...")
 	w.Stop()
 }

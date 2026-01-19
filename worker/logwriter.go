@@ -3,6 +3,8 @@ package worker
 import (
 	"fmt"
 	"time"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // 日志级别常量
@@ -50,7 +52,7 @@ func (l *WorkerLogger) log(level, format string, args ...interface{}) {
 	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
 
 	// 输出到控制台
-	fmt.Printf("%s [%s] [%s] %s\n", timestamp, level, l.workerName, msg)
+	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 }
 
 func (l *WorkerLogger) Debug(format string, args ...interface{}) {
@@ -89,7 +91,7 @@ func (l *TaskLogger) log(level, format string, args ...interface{}) {
 	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
 
 	// 输出到控制台
-	fmt.Printf("%s [%s] [%s] [Task:%s] %s\n", timestamp, level, l.workerName, l.taskId, msg)
+	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
 }
 
 func (l *TaskLogger) Debug(format string, args ...interface{}) {
@@ -130,12 +132,12 @@ func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
 
 	// 输出到控制台
-	fmt.Printf("%s [%s] [%s] %s\n", timestamp, level, l.workerName, msg)
+	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
 
 	// 通过WebSocket立即发送（不缓冲）
 	if l.wsClient != nil && l.wsClient.IsConnected() {
 		if err := l.wsClient.SendLogImmediate("", level, msg); err != nil {
-			fmt.Printf("[WorkerLoggerWS] Failed to send log via WebSocket: %v\n", err)
+			logx.Infof("[WorkerLoggerWS] Failed to send log via WebSocket: %v", err)
 		}
 	}
 }
@@ -178,24 +180,23 @@ func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
 
 	// 输出到控制台
-	fmt.Printf("%s [%s] [%s] [Task:%s] %s\n", timestamp, level, l.workerName, l.taskId, msg)
+	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
 
 	// 调试：检查 wsClient 状态
 	if l.wsClient == nil {
-		fmt.Printf("[TaskLoggerWS] wsClient is nil!\n")
+		logx.Info("[TaskLoggerWS] wsClient is nil!")
 		return
 	}
 
 	connected := l.wsClient.IsConnected()
-	fmt.Printf("[TaskLoggerWS] wsClient connected: %v\n", connected)
 
 	// 通过WebSocket立即发送（不缓冲，确保日志及时到达）
 	if connected {
 		if err := l.wsClient.SendLogImmediate(l.taskId, level, msg); err != nil {
-			fmt.Printf("[TaskLoggerWS] Failed to send log via WebSocket: %v\n", err)
+			logx.Infof("[TaskLoggerWS] Failed to send log via WebSocket: %v", err)
 		}
 	} else {
-		fmt.Printf("[TaskLoggerWS] WebSocket not connected, log not sent to server\n")
+		logx.Info("[TaskLoggerWS] WebSocket not connected, log not sent to server")
 	}
 }
 

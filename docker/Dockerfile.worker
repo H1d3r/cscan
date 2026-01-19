@@ -14,15 +14,17 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
-# 编译
+# 编译 worker
 RUN CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /cscan-worker ./cmd/worker/main.go
+
+# 安装 ksubdomain
+RUN go install -v github.com/boy-hack/ksubdomain/v2/cmd/ksubdomain@latest
 
 # ============ 运行阶段 ============
 FROM alpine:3.19
 
 # 安装运行时依赖
-# 安装扫描工具和依赖（包括 libpcap 运行时库和 Chromium 用于截图）
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
@@ -34,12 +36,12 @@ RUN apk add --no-cache \
     libpcap \
     chromium \
     font-noto-cjk
-
 # 设置时区
 ENV TZ=Asia/Shanghai
 
 # 复制二进制文件
 COPY --from=builder /cscan-worker /cscan-worker
+COPY --from=builder /go/bin/ksubdomain /usr/local/bin/ksubdomain
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

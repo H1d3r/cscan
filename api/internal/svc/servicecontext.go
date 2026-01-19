@@ -55,7 +55,7 @@ type ServiceContext struct {
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	// MongoDB连接
-	fmt.Println("Connecting to MongoDB:", c.Mongo.Uri)
+	logx.Infof("Connecting to MongoDB: %s", c.Mongo.Uri)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -78,12 +78,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err := mongoClient.Ping(ctx, nil); err != nil {
 		panic(fmt.Sprintf("MongoDB ping failed: %v\nPlease ensure MongoDB is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("MongoDB connected successfully")
+	logx.Info("MongoDB connected successfully")
 
 	mongoDB := mongoClient.Database(c.Mongo.DbName)
 
 	// Redis连接 - 使用go-zero配置，增加连接池和超时设置
-	fmt.Println("Connecting to Redis:", c.Redis.Host)
+	logx.Infof("Connecting to Redis: %s", c.Redis.Host)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         c.Redis.Host,
 		Password:     c.Redis.Pass,
@@ -101,10 +101,10 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		panic(fmt.Sprintf("Redis ping failed: %v\nPlease ensure Redis is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("Redis connected successfully")
+	logx.Info("Redis connected successfully")
 
 	// 创建RPC客户端（增加消息大小限制到50MB，支持大量指纹数据传输）
-	fmt.Println("Connecting to RPC:", c.TaskRpc.Endpoints)
+	logx.Infof("Connecting to RPC: %v", c.TaskRpc.Endpoints)
 	rpcClient := zrpc.MustNewClient(c.TaskRpc, zrpc.WithDialOption(
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(50*1024*1024), // 50MB

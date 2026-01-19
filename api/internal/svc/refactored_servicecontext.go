@@ -11,6 +11,7 @@ import (
 	"cscan/scheduler"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/zrpc"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -31,7 +32,7 @@ type RefactoredServiceContext struct {
 // NewRefactoredServiceContext creates a new service context with dependency injection
 func NewRefactoredServiceContext(c config.Config) *RefactoredServiceContext {
 	// MongoDB connection
-	fmt.Println("Connecting to MongoDB:", c.Mongo.Uri)
+	logx.Infof("Connecting to MongoDB: %s", c.Mongo.Uri)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -44,12 +45,12 @@ func NewRefactoredServiceContext(c config.Config) *RefactoredServiceContext {
 	if err := mongoClient.Ping(ctx, nil); err != nil {
 		panic(fmt.Sprintf("MongoDB ping failed: %v\nPlease ensure MongoDB is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("MongoDB connected successfully")
+	logx.Info("MongoDB connected successfully")
 
 	mongoDB := mongoClient.Database(c.Mongo.DbName)
 
 	// Redis connection
-	fmt.Println("Connecting to Redis:", c.Redis.Host)
+	logx.Infof("Connecting to Redis: %s", c.Redis.Host)
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     c.Redis.Host,
 		Password: c.Redis.Pass,
@@ -60,10 +61,10 @@ func NewRefactoredServiceContext(c config.Config) *RefactoredServiceContext {
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		panic(fmt.Sprintf("Redis ping failed: %v\nPlease ensure Redis is running: docker-compose -f docker-compose.dev.yaml up -d", err))
 	}
-	fmt.Println("Redis connected successfully")
+	logx.Info("Redis connected successfully")
 
 	// Create RPC client
-	fmt.Println("Connecting to RPC:", c.TaskRpc.Endpoints)
+	logx.Infof("Connecting to RPC: %v", c.TaskRpc.Endpoints)
 	rpcClient := zrpc.MustNewClient(c.TaskRpc, zrpc.WithDialOption(
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(50*1024*1024), // 50MB

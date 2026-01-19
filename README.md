@@ -17,7 +17,7 @@
 | 模块 | 功能 | 工具 |
 |------|------|------|
 | 资产发现 | 端口扫描、服务识别 | Naabu / Masscan / Nmap |
-| 子域名枚举 | 被动枚举 + 字典爆破 | Subfinder + Dnsx |
+| 子域名枚举 | 被动枚举 + 字典爆破 | Subfinder + KSubdomain |
 | 指纹识别 | Web 指纹、3W+ 规则 | Httpx + Wappalyzer + 自定义引擎 |
 | URL 发现 | 路径爬取 | Urlfinder |
 | 漏洞检测 | POC 扫描、自定义 POC | Nuclei SDK |

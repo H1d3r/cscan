@@ -14,6 +14,9 @@ import { setupI18n, i18n } from './i18n'
 
 import './styles/index.css'
 
+// 性能监控（仅开发环境）
+import { enablePerformanceMonitoring, setupRouterPerformance } from './utils/performance'
+
 const app = createApp(App)
 const pinia = createPinia()
 
@@ -51,4 +54,11 @@ import { useWorkspaceStore } from './stores/workspace'
 const workspaceStore = useWorkspaceStore()
 workspaceStore.initialize()
 
+// 启用性能监控（仅开发环境）
+if (import.meta.env.DEV) {
+  enablePerformanceMonitoring()
+  setupRouterPerformance(router)
+}
+
 app.mount('#app')
+

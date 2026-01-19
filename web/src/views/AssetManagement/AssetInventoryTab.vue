@@ -76,7 +76,7 @@
           <!-- 主机名和端口 -->
           <div class="host-info">
             <a :href="asset.url" target="_blank" class="host-link">
-              {{ asset.host }}:{{ asset.port }}
+              {{ asset.host }}<template v-if="asset.port && asset.port !== 0">:{{ asset.port }}</template>
             </a>
             <div v-if="asset.ip" class="host-ip">{{ asset.ip }}</div>
             <div v-if="asset.iconHash" class="host-icon-info">
@@ -92,8 +92,8 @@
           
           <!-- 标签行 -->
           <div class="tags-row">
-            <!-- 状态码 -->
-            <el-tag :type="getStatusType(asset.status)" size="small" class="status-tag">
+            <!-- 状态码 (只在有HTTP状态码时显示) -->
+            <el-tag v-if="asset.status && asset.status !== '0'" :type="getStatusType(asset.status)" size="small" class="status-tag">
               {{ asset.status }}
             </el-tag>
             
@@ -281,7 +281,7 @@
     <!-- 资产详情抽屉 -->
     <el-drawer
       v-model="detailDrawerVisible"
-      :title="detailAsset?.host + ':' + detailAsset?.port"
+      :title="detailAsset?.host + (detailAsset?.port && detailAsset?.port !== 0 ? ':' + detailAsset?.port : '')"
       size="60%"
       direction="rtl"
     >
@@ -314,7 +314,7 @@
               <span class="info-label">{{ t('asset.ip') }}:</span>
               <span class="info-value">{{ detailAsset.ip || '-' }}</span>
             </div>
-            <div class="info-row">
+            <div v-if="detailAsset.status && detailAsset.status !== '0'" class="info-row">
               <span class="info-label">{{ t('asset.statusCode') }}:</span>
               <el-tag :type="getStatusType(detailAsset.status)" size="small">
                 {{ detailAsset.status }}
@@ -339,7 +339,7 @@
                     <span class="item-label">{{ t('asset.assetDetail.host') }}:</span>
                     <span class="item-value">{{ detailAsset.host }}</span>
                   </div>
-                  <div class="info-item">
+                  <div v-if="detailAsset.port && detailAsset.port !== 0" class="info-item">
                     <span class="item-label">{{ t('asset.assetDetail.port') }}:</span>
                     <span class="item-value">{{ detailAsset.port }}</span>
                   </div>
@@ -591,6 +591,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { debounce } from 'lodash-es'
 import {
   Search,
   Filter,
@@ -615,7 +616,7 @@ const loading = ref(false)
 const searchQuery = ref('')
 const showFilters = ref(false)
 const currentPage = ref(1)
-const pageSize = ref(5)
+const pageSize = ref(10)
 const total = ref(0)
 const assets = ref([])
 const filters = ref({
@@ -644,6 +645,7 @@ const newLabelInput = ref('')
 const detailDrawerVisible = ref(false)
 const detailAsset = ref(null)
 const activeDetailTab = ref('overview')
+const loadedTabs = ref(new Set()) // 追踪已加载的标签页
 
 // 图片预览
 const previewVisible = ref(false)
@@ -795,7 +797,7 @@ const loadData = async () => {
           status: String(item.status || '200'),
           asn: item.asn || '', // 空字符串，不显示默认值
           ip: item.ip || '',
-          url: `${item.port === 443 ? 'https' : 'http'}://${item.host}:${item.port}`,
+          url: item.port && item.port !== 0 ? `${item.port === 443 ? 'https' : 'http'}://${item.host}:${item.port}` : `http://${item.host}`,
           screenshot: item.screenshot || '',
           title: item.title || item.host,
           cname: item.cname || '',
@@ -823,10 +825,10 @@ const loadData = async () => {
   }
 }
 
-const handleSearch = () => {
+const handleSearch = debounce(() => {
   currentPage.value = 1
   loadData()
-}
+}, 300)
 
 const refreshData = () => {
   loadData()
@@ -955,7 +957,7 @@ const showAllTechnologies = (asset) => {
 const handleDelete = async (asset) => {
   try {
     await ElMessageBox.confirm(
-      t('asset.assetInventoryTab.confirmDelete', { name: `${asset.host}:${asset.port}` }),
+      t('asset.assetInventoryTab.confirmDelete', { name: `${asset.host}${asset.port && asset.port !== 0 ? ':' + asset.port : ''}` }),
       t('common.warning'),
       {
         confirmButtonText: t('common.confirm'),
@@ -984,7 +986,7 @@ const handleDelete = async (asset) => {
   }
 }
 
-const handleCardClick = async (asset) => {
+const handleCardClick = (asset) => {
   detailAsset.value = {
     ...asset,
     httpHeader: asset.httpHeader || '',
@@ -996,13 +998,25 @@ const handleCardClick = async (asset) => {
   }
   activeDetailTab.value = 'overview'
   detailDrawerVisible.value = true
-  
-  // 异步加载变更记录
-  loadAssetHistory(asset.id)
-  
-  // 异步加载暴露面数据（目录扫描和漏洞扫描结果）
-  loadAssetExposures(asset.id)
+  loadedTabs.value.clear() // 清空已加载标签
+  // 不立即加载数据，等待用户切换到对应标签页
 }
+
+// 监听详情标签页切换，按需加载数据
+watch(activeDetailTab, async (newTab) => {
+  if (!detailAsset.value) return
+  
+  const tabKey = `${detailAsset.value.id}-${newTab}`
+  if (loadedTabs.value.has(tabKey)) return // 已加载过
+  
+  if (newTab === 'changelogs') {
+    await loadAssetHistory(detailAsset.value.id)
+    loadedTabs.value.add(tabKey)
+  } else if (newTab === 'exposures') {
+    await loadAssetExposures(detailAsset.value.id)
+    loadedTabs.value.add(tabKey)
+  }
+})
 
 // 加载资产变更记录
 const loadAssetHistory = async (assetId) => {

@@ -20,16 +20,15 @@ type ResourceManagerConfig struct {
 }
 
 // DefaultResourceManagerConfig 默认资源管理器配置
-// 优化：降低阈值，更快响应资源压力
 func DefaultResourceManagerConfig(maxConcurrency int) ResourceManagerConfig {
 	return ResourceManagerConfig{
 		MaxConcurrency:       maxConcurrency,
-		CPUThreshold:         70.0,  // 降低CPU阈值从80到70
-		MemThreshold:         75.0,  // 降低内存阈值从85到75
-		CPURecoveryThreshold: 50.0,  // 降低恢复阈值从60到50
-		CheckInterval:        2 * time.Second, // 缩短检查间隔从5秒到2秒
-		ThrottleDuration:     60 * time.Second, // 延长限流时间从30秒到60秒
-		OverloadThreshold:    2,     // 减少过载次数阈值从3到2
+		CPUThreshold:         50.0,
+		MemThreshold:         55.0,
+		CPURecoveryThreshold: 50.0,
+		CheckInterval:        2 * time.Second,
+		ThrottleDuration:     60 * time.Second,
+		OverloadThreshold:    2,
 	}
 }
 
