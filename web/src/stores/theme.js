@@ -5,7 +5,7 @@ import request from '@/api/request'
 // 可用的颜色主题列表（支持明暗两种模式）
 export const COLOR_THEMES = [
   { value: 'default', label: 'theme.default', color: '#3b82f6', darkColor: '#60a5fa', contrastColor: '#ffffff' },
-  { value: 'pure-white', label: 'theme.pureWhite', color: '#ffffff', darkColor: '#fafafa', contrastColor: '#18181b', darkContrastColor: '#18181b' },
+  { value: 'pure-white', label: 'theme.pureWhite', color: '#64748b', darkColor: '#94a3b8', contrastColor: '#ffffff', lightBorder: true },
   { value: 'forest-green', label: 'theme.forestGreen', color: '#009100', darkColor: '#22c55e', contrastColor: '#ffffff' },
   { value: 'ocean-blue', label: 'theme.oceanBlue', color: '#0ea5e9', darkColor: '#38bdf8', contrastColor: '#ffffff' },
   { value: 'sunset-orange', label: 'theme.sunsetOrange', color: '#f97316', darkColor: '#fb923c', contrastColor: '#ffffff' },
