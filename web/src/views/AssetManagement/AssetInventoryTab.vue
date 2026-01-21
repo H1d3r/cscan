@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="asset-inventory-tab">
     <!-- 鎼滅储鍜岃繃婊ゆ爮 -->
     <div class="toolbar">
@@ -32,6 +32,16 @@
               :key="tech"
               :label="tech"
               :value="tech"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('asset.assetInventoryTab.labels')">
+          <el-select v-model="filters.labels" multiple :placeholder="t('asset.assetInventoryTab.selectLabel')" clearable filterable>
+            <el-option
+              v-for="label in filterOptions.labels"
+              :key="label"
+              :label="label"
+              :value="label"
             />
           </el-select>
         </el-form-item>
@@ -77,9 +87,9 @@
           <div class="asset-left">
             <!-- 涓绘満鍚嶅拰绔彛 -->
             <div class="host-info">
-              <a :href="asset.url" target="_blank" class="host-link">
+              <span class="host-link" @click.stop>
                 {{ asset.host }}<template v-if="asset.port && asset.port !== 0">:{{ asset.port }}</template>
-              </a>
+              </span>
               <div v-if="asset.ip" class="host-ip">{{ asset.ip }}</div>
               <div v-if="asset.iconHash" class="host-icon-info">
                 <img 
@@ -625,14 +635,15 @@ const handleAddNewLabel = async () => {
   try {
     const res = await updateAssetLabels({
       id: currentAsset.value.id,
-      labels: currentAsset.value.labels
+      labels: currentAsset.value.labels,
+      workspaceId: currentAsset.value.workspaceId // 明确传递资产所属的工作空间ID
     })
     
     if (res.code === 0) {
       ElMessage.success(t('asset.assetInventoryTab.labelAddSuccess'))
     } else {
       // 澶辫触鏃跺洖
-  const index = currentAsset.value.labels.indexOf(newLabel)
+      const index = currentAsset.value.labels.indexOf(newLabel)
       if (index > -1) {
         currentAsset.value.labels.splice(index, 1)
       }
@@ -657,14 +668,15 @@ const handleRemoveLabel = async (asset, index) => {
     try {
       const res = await updateAssetLabels({
         id: asset.id,
-        labels: asset.labels
+        labels: asset.labels,
+        workspaceId: asset.workspaceId // 明确传递资产所属的工作空间ID
       })
       
       if (res.code === 0) {
         ElMessage.success(t('asset.assetInventoryTab.labelDeleteSuccess'))
       } else {
         // 澶辫触鏃跺洖
-  asset.labels.splice(index, 0, removedLabel)
+        asset.labels.splice(index, 0, removedLabel)
         ElMessage.error(res.msg || t('asset.assetInventoryTab.labelDeleteFailed'))
       }
     } catch (error) {
@@ -858,7 +870,8 @@ const loadFilterOptions = async () => {
       filterOptions.value = {
         technologies: res.technologies || [],
         ports: res.ports || [],
-        statusCodes: res.statusCodes || []
+        statusCodes: res.statusCodes || [],
+        labels: res.labels || []
       }
     }
   } catch (error) {
@@ -968,7 +981,6 @@ onMounted(() => {
         
         &:hover {
           color: hsl(var(--primary));
-          text-decoration: underline;
         }
       }
       

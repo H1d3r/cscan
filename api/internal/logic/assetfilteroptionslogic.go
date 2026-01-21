@@ -37,6 +37,7 @@ func (l *AssetFilterOptionsLogic) AssetFilterOptions(req *types.AssetFilterOptio
 	techSet := make(map[string]bool)
 	portSet := make(map[int]bool)
 	statusSet := make(map[string]bool)
+	labelSet := make(map[string]bool)
 
 	// 遍历所有工作空间
 	for _, wsId := range wsIds {
@@ -80,6 +81,13 @@ func (l *AssetFilterOptionsLogic) AssetFilterOptions(req *types.AssetFilterOptio
 			if asset.HttpStatus != "" {
 				statusSet[asset.HttpStatus] = true
 			}
+
+			// 标签
+			for _, label := range asset.Labels {
+				if label != "" {
+					labelSet[label] = true
+				}
+			}
 		}
 	}
 
@@ -102,6 +110,12 @@ func (l *AssetFilterOptionsLogic) AssetFilterOptions(req *types.AssetFilterOptio
 	}
 	sort.Strings(statusCodes)
 
+	labels := make([]string, 0, len(labelSet))
+	for label := range labelSet {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+
 	// 构建响应
 	return &types.AssetFilterOptionsResp{
 		Code:         0,
@@ -109,5 +123,6 @@ func (l *AssetFilterOptionsLogic) AssetFilterOptions(req *types.AssetFilterOptio
 		Technologies: technologies,
 		Ports:        ports,
 		StatusCodes:  statusCodes,
+		Labels:       labels,
 	}, nil
 }

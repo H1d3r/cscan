@@ -69,6 +69,11 @@ func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, works
 			filter["status"] = bson.M{"$in": req.StatusCodes}
 		}
 
+		// 标签过滤
+		if len(req.Labels) > 0 {
+			filter["labels"] = bson.M{"$in": req.Labels}
+		}
+
 		// 技术栈过滤
 		if len(req.Technologies) > 0 {
 			// 使用正则表达式匹配技术栈（不区分大小写）
@@ -125,11 +130,17 @@ func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, works
 			} else if len(asset.Ip.IpV6) > 0 {
 				ip = asset.Ip.IpV6[0].IPName
 			}
-			
+
 			// 将 IconHashBytes 转换为 Base64 字符串
 			iconHashBytes := ""
 			if len(asset.IconHashBytes) > 0 {
 				iconHashBytes = base64.StdEncoding.EncodeToString(asset.IconHashBytes)
+			}
+
+			// 确保 Labels 不为 nil
+			labels := asset.Labels
+			if labels == nil {
+				labels = []string{}
 			}
 
 			item := types.AssetInventoryItem{
@@ -141,11 +152,11 @@ func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq, works
 				Service:         asset.Service,
 				Title:           asset.Title,
 				Technologies:    asset.App,
-				Labels:          asset.Labels,
+				Labels:          labels,
 				Status:          asset.HttpStatus,
 				LastUpdated:     formatTimeAgo(asset.UpdateTime),
-				FirstSeen:       asset.CreateTime.Format("Jan 02, 2006, 15:04 MST"),
-				LastUpdatedFull: asset.UpdateTime.Format("Jan 02, 2006, 15:04 MST"),
+				FirstSeen:       asset.CreateTime.Local().Format("2006-01-02 15:04:05"),
+				LastUpdatedFull: asset.UpdateTime.Local().Format("2006-01-02 15:04:05"),
 				Screenshot:      asset.Screenshot,
 				IconHash:        asset.IconHash,
 				IconHashBytes:   iconHashBytes,

@@ -42,16 +42,8 @@
       <el-table :data="tableData" v-loading="loading" stripe max-height="500" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="50" />
         <el-table-column prop="name" :label="$t('task.taskName')" min-width="150" />
-        <el-table-column prop="target" :label="$t('task.scanTarget')" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="tags" :label="$t('task.tags')" width="200">
-          <template #default="{ row }">
-            <div v-if="row.tags && row.tags.length" style="display: flex; flex-wrap: wrap; gap: 4px;">
-              <el-tag v-for="tag in row.tags" :key="tag" size="small" type="info">{{ tag }}</el-tag>
-            </div>
-            <span v-else style="color: #999;">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" :label="$t('task.status')" width="120">
+        <el-table-column prop="target" :label="$t('task.scanTarget')" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="status" :label="$t('task.status')" width="100">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status, row)">{{ getStatusText(row) }}</el-tag>
           </template>
@@ -77,7 +69,7 @@
             {{ row.endTime || '-' }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('common.operation')" width="320" fixed="right">
+        <el-table-column :label="$t('common.operation')" width="300" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status === 'CREATED' || !row.status" type="success" link size="small" @click="handleStart(row)">{{ $t('task.start') }}</el-button>
             <el-button v-if="row.status === 'CREATED' || !row.status" type="warning" link size="small" @click="goToEditTask(row)">{{ $t('task.edit') }}</el-button>

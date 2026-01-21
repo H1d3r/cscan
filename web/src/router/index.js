@@ -44,6 +44,18 @@ const routes = [
         meta: { title: '资产管理', icon: 'DataAnalysis' }
       },
       {
+        path: 'asset/directory',
+        name: 'DirectoryManagement',
+        component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
+        meta: { title: '目录管理', icon: 'Folder' }
+      },
+      {
+        path: 'asset/vulnerability',
+        name: 'VulnerabilityManagement',
+        component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
+        meta: { title: '漏洞管理', icon: 'Warning' }
+      },
+      {
         path: 'asset-groups',
         name: 'AssetGroups',
         component: lazyLoad(() => import('@/views/AssetGroups.vue')),

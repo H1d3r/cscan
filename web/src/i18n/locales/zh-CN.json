@@ -385,6 +385,8 @@
       "selectPort": "选择端口",
       "statusCodes": "状态码",
       "selectStatus": "选择状态码",
+      "labels": "标签",
+      "selectLabel": "选择标签",
       "apply": "应用",
       "reset": "重置",
       "addLabels": "添加标签",

@@ -445,6 +445,7 @@ type AssetInventoryReq struct {
 	Technologies []string `json:"technologies,optional"` // 技术栈过滤
 	Ports        []int    `json:"ports,optional"`        // 端口过滤
 	StatusCodes  []string `json:"statusCodes,optional"`  // 状态码过滤
+	Labels       []string `json:"labels,optional"`       // 标签过滤
 	TimeRange    string   `json:"timeRange,optional"`    // 时间范围: all/24h/7d/30d
 	SortBy       string   `json:"sortBy,optional"`       // 排序字段: time/name/port
 	GroupId      string   `json:"groupId,optional"`      // 资产分组ID
@@ -2325,18 +2326,21 @@ type ThemeConfigSaveReq struct {
 
 // ==================== 资产标签管理 ====================
 type AssetUpdateLabelsReq struct {
-	Id     string   `json:"id"`
-	Labels []string `json:"labels"`
+	Id          string   `json:"id"`
+	Labels      []string `json:"labels"`
+	WorkspaceId string   `json:"workspaceId,optional"` // 可选，指定工作空间
 }
 
 type AssetAddLabelReq struct {
-	Id    string `json:"id"`
-	Label string `json:"label"`
+	Id          string `json:"id"`
+	Label       string `json:"label"`
+	WorkspaceId string `json:"workspaceId,optional"` // 可选，指定工作空间
 }
 
 type AssetRemoveLabelReq struct {
-	Id    string `json:"id"`
-	Label string `json:"label"`
+	Id          string `json:"id"`
+	Label       string `json:"label"`
+	WorkspaceId string `json:"workspaceId,optional"` // 可选，指定工作空间
 }
 
 // ==================== 资产过滤器选项 ====================
@@ -2351,6 +2355,7 @@ type AssetFilterOptionsResp struct {
 	Technologies []string `json:"technologies"` // 所有技术栈选项
 	Ports        []int    `json:"ports"`        // 所有端口选项
 	StatusCodes  []string `json:"statusCodes"`  // 所有状态码选项
+	Labels       []string `json:"labels"`       // 所有标签选项
 }
 
 // ==================== 资产暴露面 ====================

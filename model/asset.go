@@ -27,44 +27,44 @@ type IP struct {
 }
 
 type Asset struct {
-	Id            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Authority     string             `bson:"authority" json:"authority"`
-	Host          string             `bson:"host" json:"host"`
-	Port          int                `bson:"port" json:"port"`
-	Category      string             `bson:"category" json:"category"`
-	Ip            IP                 `bson:"ip" json:"ip"`
-	Domain        string             `bson:"domain,omitempty" json:"domain"`
-	Service       string             `bson:"service,omitempty" json:"service"`
-	Server        string             `bson:"server,omitempty" json:"server"`
-	Banner        string             `bson:"banner,omitempty" json:"banner"`
-	Title         string             `bson:"title,omitempty" json:"title"`
-	App           []string           `bson:"app,omitempty" json:"app"`
-	Fingerprints  []string           `bson:"fingerprints,omitempty" json:"fingerprints,omitempty"`
-	HttpStatus    string             `bson:"status,omitempty" json:"httpStatus"`
-	HttpHeader    string             `bson:"header,omitempty" json:"httpHeader"`
-	HttpBody      string             `bson:"body,omitempty" json:"httpBody"`
-	Cert          string             `bson:"cert,omitempty" json:"cert"`
-	IconHash      string             `bson:"icon_hash,omitempty" json:"iconHash"`
-	IconHashFile  string             `bson:"icon_hash_file,omitempty" json:"iconHashFile"`
-	IconHashBytes []byte             `bson:"icon_hash_bytes,omitempty" json:"-"`
-	Screenshot    string             `bson:"screenshot,omitempty" json:"screenshot"`
-	Labels        []string           `bson:"labels,omitempty" json:"labels"` // 自定义标签
-	OrgId         string             `bson:"org_id,omitempty" json:"orgId"`
-	ColorTag      string             `bson:"color,omitempty" json:"colorTag"`
-	Memo          string             `bson:"memo,omitempty" json:"memo"`
-	IsCDN         bool               `bson:"cdn,omitempty" json:"isCdn"`
-	CName         string             `bson:"cname,omitempty" json:"cname"`
-	IsCloud       bool               `bson:"cloud,omitempty" json:"isCloud"`
-	IsHTTP        bool               `bson:"is_http" json:"isHttp"`
-	IsNewAsset    bool               `bson:"new" json:"isNew"`
-	IsUpdated     bool               `bson:"update" json:"isUpdated"`
-	TaskId        string             `bson:"taskId" json:"taskId"`
-	LastTaskId    string             `bson:"last_task_id,omitempty" json:"lastTaskId"` // 上一个发现此资产的任务ID
-	FirstSeenTaskId string           `bson:"first_seen_task_id,omitempty" json:"firstSeenTaskId"` // 首次发现此资产的任务ID
-	Source        string             `bson:"source,omitempty" json:"source"`
-	CreateTime    time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime    time.Time          `bson:"update_time" json:"updateTime"`
-	LastStatusChangeTime time.Time   `bson:"last_status_change_time,omitempty" json:"lastStatusChangeTime"` // 标签状态最后变化时间
+	Id                   primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Authority            string             `bson:"authority" json:"authority"`
+	Host                 string             `bson:"host" json:"host"`
+	Port                 int                `bson:"port" json:"port"`
+	Category             string             `bson:"category" json:"category"`
+	Ip                   IP                 `bson:"ip" json:"ip"`
+	Domain               string             `bson:"domain,omitempty" json:"domain"`
+	Service              string             `bson:"service,omitempty" json:"service"`
+	Server               string             `bson:"server,omitempty" json:"server"`
+	Banner               string             `bson:"banner,omitempty" json:"banner"`
+	Title                string             `bson:"title,omitempty" json:"title"`
+	App                  []string           `bson:"app,omitempty" json:"app"`
+	Fingerprints         []string           `bson:"fingerprints,omitempty" json:"fingerprints,omitempty"`
+	HttpStatus           string             `bson:"status,omitempty" json:"httpStatus"`
+	HttpHeader           string             `bson:"header,omitempty" json:"httpHeader"`
+	HttpBody             string             `bson:"body,omitempty" json:"httpBody"`
+	Cert                 string             `bson:"cert,omitempty" json:"cert"`
+	IconHash             string             `bson:"icon_hash,omitempty" json:"iconHash"`
+	IconHashFile         string             `bson:"icon_hash_file,omitempty" json:"iconHashFile"`
+	IconHashBytes        []byte             `bson:"icon_hash_bytes,omitempty" json:"-"`
+	Screenshot           string             `bson:"screenshot,omitempty" json:"screenshot"`
+	Labels               []string           `bson:"labels,omitempty" json:"labels"` // 自定义标签
+	OrgId                string             `bson:"org_id,omitempty" json:"orgId"`
+	ColorTag             string             `bson:"color,omitempty" json:"colorTag"`
+	Memo                 string             `bson:"memo,omitempty" json:"memo"`
+	IsCDN                bool               `bson:"cdn,omitempty" json:"isCdn"`
+	CName                string             `bson:"cname,omitempty" json:"cname"`
+	IsCloud              bool               `bson:"cloud,omitempty" json:"isCloud"`
+	IsHTTP               bool               `bson:"is_http" json:"isHttp"`
+	IsNewAsset           bool               `bson:"new" json:"isNew"`
+	IsUpdated            bool               `bson:"update" json:"isUpdated"`
+	TaskId               string             `bson:"taskId" json:"taskId"`
+	LastTaskId           string             `bson:"last_task_id,omitempty" json:"lastTaskId"`            // 上一个发现此资产的任务ID
+	FirstSeenTaskId      string             `bson:"first_seen_task_id,omitempty" json:"firstSeenTaskId"` // 首次发现此资产的任务ID
+	Source               string             `bson:"source,omitempty" json:"source"`
+	CreateTime           time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime           time.Time          `bson:"update_time" json:"updateTime"`
+	LastStatusChangeTime time.Time          `bson:"last_status_change_time,omitempty" json:"lastStatusChangeTime"` // 标签状态最后变化时间
 
 	// 新增字段 - 风险评分
 	RiskScore float64 `bson:"risk_score,omitempty" json:"riskScore,omitempty"` // 0-100
@@ -289,8 +289,7 @@ func (m *AssetModel) UpdateLabels(ctx context.Context, id string, labels []strin
 		return err
 	}
 	update := bson.M{
-		"labels":      labels,
-		"update_time": time.Now(),
+		"labels": labels,
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err
@@ -304,7 +303,6 @@ func (m *AssetModel) AddLabel(ctx context.Context, id string, label string) erro
 	}
 	update := bson.M{
 		"$addToSet": bson.M{"labels": label}, // 使用 $addToSet 避免重复
-		"$set":      bson.M{"update_time": time.Now()},
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
 	return err
@@ -318,7 +316,6 @@ func (m *AssetModel) RemoveLabel(ctx context.Context, id string, label string) e
 	}
 	update := bson.M{
 		"$pull": bson.M{"labels": label},
-		"$set":  bson.M{"update_time": time.Now()},
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, update)
 	return err
@@ -514,7 +511,7 @@ type AssetHistory struct {
 	TaskId     string             `bson:"taskId" json:"taskId"`
 	CreateTime time.Time          `bson:"create_time" json:"createTime"`
 	// 变更详情
-	Changes    []FieldChange      `bson:"changes,omitempty" json:"changes,omitempty"`
+	Changes []FieldChange `bson:"changes,omitempty" json:"changes,omitempty"`
 }
 
 // FieldChange 字段变更记录
@@ -632,7 +629,6 @@ func (m *AssetModel) Upsert(ctx context.Context, doc *Asset) error {
 	_, err := m.coll.UpdateOne(ctx, filter, update, opts)
 	return err
 }
-
 
 // BulkUpsert 批量插入或更新资产
 func (m *AssetModel) BulkUpsert(ctx context.Context, assets []*Asset) (*mongo.BulkWriteResult, error) {

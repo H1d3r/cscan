@@ -63,16 +63,16 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 			vulModel := l.svcCtx.GetVulModel(wsId)
 			wsTotal, _ := vulModel.Count(l.ctx, filter)
 			total += wsTotal
-			
+
 			wsVuls, _ := vulModel.Find(l.ctx, filter, 0, 0)
 			allVuls = append(allVuls, wsVuls...)
 		}
-		
+
 		// 按创建时间排序
 		sort.Slice(allVuls, func(i, j int) bool {
 			return allVuls[i].CreateTime.After(allVuls[j].CreateTime)
 		})
-		
+
 		// 分页
 		start := (req.Page - 1) * req.PageSize
 		end := start + req.PageSize
@@ -113,7 +113,7 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 			CreateTime: v.CreateTime.Local().Format("2006-01-02 15:04:05"),
 			ScanCount:  v.ScanCount,
 		}
-		// 新增字段 - 时间追踪 
+		// 新增字段 - 时间追踪
 		if !v.FirstSeenTime.IsZero() {
 			vul.FirstSeenTime = v.FirstSeenTime.Local().Format("2006-01-02 15:04:05")
 		}
@@ -130,7 +130,6 @@ func (l *VulListLogic) VulList(req *types.VulListReq, workspaceId string) (resp 
 		List:  list,
 	}, nil
 }
-
 
 // VulLogic 漏洞管理逻辑
 type VulLogic struct {
@@ -173,7 +172,6 @@ func (l *VulLogic) VulClear(workspaceId string) (resp *types.BaseResp, err error
 	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条漏洞"}, nil
 }
 
-
 // VulStatLogic 漏洞统计逻辑
 type VulStatLogic struct {
 	logx.Logger
@@ -190,25 +188,40 @@ func NewVulStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulStatLo
 }
 
 func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err error) {
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
+	var total, critical, high, medium, low, info, week, month int64
 
-	// 统计总数
-	total, _ := vulModel.Count(l.ctx, bson.M{})
+	// 获取需要查询的工作空间列表
+	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 
-	// 按严重级别统计
-	critical, _ := vulModel.Count(l.ctx, bson.M{"severity": "critical"})
-	high, _ := vulModel.Count(l.ctx, bson.M{"severity": "high"})
-	medium, _ := vulModel.Count(l.ctx, bson.M{"severity": "medium"})
-	low, _ := vulModel.Count(l.ctx, bson.M{"severity": "low"})
-	info, _ := vulModel.Count(l.ctx, bson.M{"severity": "info"})
+	for _, wsId := range wsIds {
+		vulModel := l.svcCtx.GetVulModel(wsId)
 
-	// 近7天和近30天统计
-	now := time.Now()
-	weekAgo := now.AddDate(0, 0, -7)
-	monthAgo := now.AddDate(0, 0, -30)
+		// 统计总数
+		c, _ := vulModel.Count(l.ctx, bson.M{})
+		total += c
 
-	week, _ := vulModel.Count(l.ctx, bson.M{"create_time": bson.M{"$gte": weekAgo}})
-	month, _ := vulModel.Count(l.ctx, bson.M{"create_time": bson.M{"$gte": monthAgo}})
+		// 按严重级别统计
+		c, _ = vulModel.Count(l.ctx, bson.M{"severity": "critical"})
+		critical += c
+		c, _ = vulModel.Count(l.ctx, bson.M{"severity": "high"})
+		high += c
+		c, _ = vulModel.Count(l.ctx, bson.M{"severity": "medium"})
+		medium += c
+		c, _ = vulModel.Count(l.ctx, bson.M{"severity": "low"})
+		low += c
+		c, _ = vulModel.Count(l.ctx, bson.M{"severity": "info"})
+		info += c
+
+		// 近7天和近30天统计
+		now := time.Now()
+		weekAgo := now.AddDate(0, 0, -7)
+		monthAgo := now.AddDate(0, 0, -30)
+
+		c, _ = vulModel.Count(l.ctx, bson.M{"create_time": bson.M{"$gte": weekAgo}})
+		week += c
+		c, _ = vulModel.Count(l.ctx, bson.M{"create_time": bson.M{"$gte": monthAgo}})
+		month += c
+	}
 
 	return &types.VulStatResp{
 		Code:     0,
@@ -224,7 +237,7 @@ func (l *VulStatLogic) VulStat(workspaceId string) (resp *types.VulStatResp, err
 	}, nil
 }
 
-// VulDetailLogic 漏洞详情逻辑 
+// VulDetailLogic 漏洞详情逻辑
 type VulDetailLogic struct {
 	logx.Logger
 	ctx    context.Context
@@ -244,9 +257,24 @@ func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) 
 		return &types.VulDetailResp{Code: 400, Msg: "漏洞ID不能为空"}, nil
 	}
 
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
-	vul, err := vulModel.FindById(l.ctx, req.Id)
-	if err != nil {
+	var vul *model.Vul
+
+	// 如果是全部空间模式，遍历所有工作空间查找
+	if workspaceId == "" || workspaceId == "all" {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
+		for _, wsId := range wsIds {
+			vulModel := l.svcCtx.GetVulModel(wsId)
+			if v, err := vulModel.FindById(l.ctx, req.Id); err == nil && v != nil {
+				vul = v
+				break
+			}
+		}
+	} else {
+		vulModel := l.svcCtx.GetVulModel(workspaceId)
+		vul, err = vulModel.FindById(l.ctx, req.Id)
+	}
+
+	if vul == nil {
 		return &types.VulDetailResp{Code: 404, Msg: "漏洞不存在"}, nil
 	}
 
@@ -262,13 +290,13 @@ func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) 
 		Severity:   vul.Severity,
 		Result:     vul.Result,
 		CreateTime: vul.CreateTime.Local().Format("2006-01-02 15:04:05"),
-		// 知识库信息 
+		// 知识库信息
 		CvssScore:   vul.CvssScore,
 		CveId:       vul.CveId,
 		CweId:       vul.CweId,
 		Remediation: vul.Remediation,
 		References:  vul.References,
-		// 时间追踪 
+		// 时间追踪
 		ScanCount: vul.ScanCount,
 	}
 
@@ -280,7 +308,7 @@ func (l *VulDetailLogic) VulDetail(req *types.VulDetailReq, workspaceId string) 
 		detail.LastSeenTime = vul.LastSeenTime.Local().Format("2006-01-02 15:04:05")
 	}
 
-	// 证据链 
+	// 证据链
 	if vul.MatcherName != "" || len(vul.ExtractedResults) > 0 || vul.CurlCommand != "" || vul.Request != "" || vul.Response != "" {
 		detail.Evidence = &types.VulEvidence{
 			MatcherName:       vul.MatcherName,

@@ -17,12 +17,22 @@
             </el-icon>
             <template #title>{{ $t('navigation.dashboard') }}</template>
           </el-menu-item>
-          <el-menu-item index="/asset-management">
-            <el-icon>
-              <Monitor />
-            </el-icon>
-            <template #title>{{ $t('navigation.assetManagement') }}</template>
-          </el-menu-item>
+          <!-- 资产管理分组 -->
+          <el-sub-menu index="asset-group">
+            <template #title>
+              <el-icon><Monitor /></el-icon>
+              <span>{{ $t('navigation.assetManagement') }}</span>
+            </template>
+            <el-menu-item index="/asset-management">
+              <template #title>{{ $t('navigation.assetManagement') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset/directory">
+              <template #title>{{ $t('asset.dirManagement') }}</template>
+            </el-menu-item>
+            <el-menu-item index="/asset/vulnerability">
+              <template #title>{{ $t('asset.vulManagement') }}</template>
+            </el-menu-item>
+          </el-sub-menu>
 
           <!-- 分割线 -->
           <div class="menu-divider"></div>

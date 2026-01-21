@@ -379,6 +379,8 @@
       "selectPort": "Select port",
       "statusCodes": "Status Codes",
       "selectStatus": "Select status code",
+      "labels": "Labels",
+      "selectLabel": "Select label",
       "apply": "Apply",
       "reset": "Reset",
       "addLabels": "Add labels",
