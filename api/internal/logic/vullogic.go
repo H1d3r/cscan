@@ -147,9 +147,30 @@ func NewVulLogic(ctx context.Context, svcCtx *svc.ServiceContext) *VulLogic {
 }
 
 func (l *VulLogic) VulDelete(req *types.VulDeleteReq, workspaceId string) (resp *types.BaseResp, err error) {
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
-	if err := vulModel.Delete(l.ctx, req.Id); err != nil {
-		return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
+	// 如果是全部空间模式，需要遍历查找并删除
+	if workspaceId == "" || workspaceId == "all" {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
+		deleted := false
+		for _, wsId := range wsIds {
+			vulModel := l.svcCtx.GetVulModel(wsId)
+			count, err := vulModel.Delete(l.ctx, req.Id)
+			if err == nil && count > 0 {
+				deleted = true
+				break
+			}
+		}
+		if !deleted {
+			return &types.BaseResp{Code: 404, Msg: "漏洞不存在或删除失败"}, nil
+		}
+	} else {
+		vulModel := l.svcCtx.GetVulModel(workspaceId)
+		count, err := vulModel.Delete(l.ctx, req.Id)
+		if err != nil {
+			return &types.BaseResp{Code: 500, Msg: "删除失败: " + err.Error()}, nil
+		}
+		if count == 0 {
+			return &types.BaseResp{Code: 404, Msg: "漏洞不存在"}, nil
+		}
 	}
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }

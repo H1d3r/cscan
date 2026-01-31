@@ -203,10 +203,10 @@ func (e *DomainScanExecutor) executeBruteforce(ctx *TaskContext, config *schedul
 		ResolveDNS:     config.ResolveDNS,
 		Concurrent:     w.config.Concurrency * 10,
 		// 引擎配置
-		Engine:         config.BruteforceEngine,
-		Bandwidth:      config.Bandwidth,
-		Retry:          config.Retry,
-		WildcardMode:   config.WildcardMode,
+		Engine:       config.BruteforceEngine,
+		Bandwidth:    config.Bandwidth,
+		Retry:        config.Retry,
+		WildcardMode: config.WildcardMode,
 		// 增强功能配置
 		RecursiveBrute: config.RecursiveBrute,
 		RecursiveDepth: 2,
@@ -318,66 +318,99 @@ func (e *PortScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	task := ctx.Task
 	config := ctx.Config.PortScan
 
-	// 创建带超时的上下文
-	portScanTimeout := 600
-	if config.Timeout > 0 {
-		portScanTimeout = config.Timeout * 100
-		if portScanTimeout < 600 {
-			portScanTimeout = 600
-		}
-	}
-	portCtx, portCancel := context.WithTimeout(ctx.Ctx, time.Duration(portScanTimeout)*time.Second)
-	defer portCancel()
-
-	// 选择端口发现工具
-	portDiscoveryTool := "naabu"
-	if config.Tool != "" {
-		portDiscoveryTool = config.Tool
-	}
-
-	// 创建任务日志回调
-	taskLogger := func(level, format string, args ...interface{}) {
-		w.taskLog(task.TaskId, level, format, args...)
-	}
-
-	// 创建进度回调
-	onProgress := func(progress int, message string) {
-		w.updateTaskProgress(ctx.Ctx, task.TaskId, progress, message)
-	}
+	// 解析目标，分离带端口和不带端口的目标
+	parseResult := scanner.ParseTargetsForPortScan(ctx.Target)
 
 	var openPorts []*scanner.Asset
 
-	switch portDiscoveryTool {
-	case "masscan":
-		w.taskLog(task.TaskId, LevelInfo, "Port scan: Masscan")
-		if s, ok := w.scanners["masscan"]; ok {
-			result, err := s.Scan(portCtx, &scanner.ScanConfig{
-				Target:     ctx.Target,
-				Options:    config,
-				TaskLogger: taskLogger,
-				OnProgress: onProgress,
-			})
-			if err != nil {
-				w.taskLog(task.TaskId, LevelError, "Masscan error: %v", err)
+	// 1. 处理带端口的目标（直接创建资产，跳过端口扫描）
+	if len(parseResult.WithPort) > 0 {
+		w.taskLog(task.TaskId, LevelInfo, "Port scan: %d targets with explicit port (skip discovery)", len(parseResult.WithPort))
+		for _, pt := range parseResult.WithPort {
+			asset := &scanner.Asset{
+				Authority: pt.Raw,
+				Host:      pt.Host,
+				Port:      pt.Port,
+				Category:  scanner.GetCategoryNew(pt.Host),
+				Source:    "user_input",
+				IsHTTP:    scanner.IsHTTPService("", pt.Port),
 			}
-			if result != nil && len(result.Assets) > 0 {
-				openPorts = result.Assets
+			// 如果有协议，设置服务类型
+			if pt.Protocol == "https" {
+				asset.Service = "https"
+				asset.IsHTTP = true
+			} else if pt.Protocol == "http" {
+				asset.Service = "http"
+				asset.IsHTTP = true
+			}
+			openPorts = append(openPorts, asset)
+		}
+	}
+
+	// 2. 处理不带端口的目标（执行端口扫描）
+	if len(parseResult.WithoutPort) > 0 {
+		// 创建带超时的上下文
+		portScanTimeout := 600
+		if config.Timeout > 0 {
+			portScanTimeout = config.Timeout * 100
+			if portScanTimeout < 600 {
+				portScanTimeout = 600
 			}
 		}
-	default:
-		w.taskLog(task.TaskId, LevelInfo, "Port scan: Naabu")
-		if s, ok := w.scanners["naabu"]; ok {
-			result, err := s.Scan(portCtx, &scanner.ScanConfig{
-				Target:     ctx.Target,
-				Options:    config,
-				TaskLogger: taskLogger,
-				OnProgress: onProgress,
-			})
-			if err != nil && err != scanner.ErrPortThresholdExceeded {
-				w.taskLog(task.TaskId, LevelError, "Naabu error: %v", err)
+		portCtx, portCancel := context.WithTimeout(ctx.Ctx, time.Duration(portScanTimeout)*time.Second)
+		defer portCancel()
+
+		// 选择端口发现工具
+		portDiscoveryTool := "naabu"
+		if config.Tool != "" {
+			portDiscoveryTool = config.Tool
+		}
+
+		// 创建任务日志回调
+		taskLogger := func(level, format string, args ...interface{}) {
+			w.taskLog(task.TaskId, level, format, args...)
+		}
+
+		// 创建进度回调
+		onProgress := func(progress int, message string) {
+			w.updateTaskProgress(ctx.Ctx, task.TaskId, progress, message)
+		}
+
+		// 将不带端口的目标重新组合为字符串
+		targetStr := strings.Join(parseResult.WithoutPort, "\n")
+
+		switch portDiscoveryTool {
+		case "masscan":
+			w.taskLog(task.TaskId, LevelInfo, "Port scan: Masscan (%d targets)", len(parseResult.WithoutPort))
+			if s, ok := w.scanners["masscan"]; ok {
+				result, err := s.Scan(portCtx, &scanner.ScanConfig{
+					Target:     targetStr,
+					Options:    config,
+					TaskLogger: taskLogger,
+					OnProgress: onProgress,
+				})
+				if err != nil {
+					w.taskLog(task.TaskId, LevelError, "Masscan error: %v", err)
+				}
+				if result != nil && len(result.Assets) > 0 {
+					openPorts = append(openPorts, result.Assets...)
+				}
 			}
-			if result != nil && len(result.Assets) > 0 {
-				openPorts = result.Assets
+		default:
+			w.taskLog(task.TaskId, LevelInfo, "Port scan: Naabu (%d targets)", len(parseResult.WithoutPort))
+			if s, ok := w.scanners["naabu"]; ok {
+				result, err := s.Scan(portCtx, &scanner.ScanConfig{
+					Target:     targetStr,
+					Options:    config,
+					TaskLogger: taskLogger,
+					OnProgress: onProgress,
+				})
+				if err != nil && err != scanner.ErrPortThresholdExceeded {
+					w.taskLog(task.TaskId, LevelError, "Naabu error: %v", err)
+				}
+				if result != nil && len(result.Assets) > 0 {
+					openPorts = append(openPorts, result.Assets...)
+				}
 			}
 		}
 	}

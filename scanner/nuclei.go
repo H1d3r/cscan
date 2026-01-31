@@ -71,23 +71,23 @@ func NewNucleiScanner() *NucleiScanner {
 
 // NucleiOptions Nuclei扫描选项
 type NucleiOptions struct {
-	Templates            []string                      `json:"templates"`            // 模板路径
-	Tags                 []string                      `json:"tags"`                 // 标签过滤
-	Severity             string                        `json:"severity"`             // 严重级别: critical,high,medium,low,info,unknown (CSV格式)
-	ExcludeTags          []string                      `json:"excludeTags"`          // 排除标签
-	ExcludeTemplates     []string                      `json:"excludeTemplates"`     // 排除模板
-	RateLimit            int                           `json:"rateLimit"`            // 速率限制
-	Concurrency          int                           `json:"concurrency"`          // 并发数
-	Timeout              int                           `json:"timeout"`              // 总超时时间(秒)，由调用方根据目标数量计算
-	TargetTimeout        int                           `json:"targetTimeout"`        // 单个目标超时时间(秒)，默认600秒
-	Retries              int                           `json:"retries"`              // 重试次数
-	AutoScan             bool                          `json:"autoScan"`             // 基于自定义标签映射自动扫描
-	AutomaticScan        bool                          `json:"automaticScan"`        // 基于Wappalyzer技术的自动扫描（nuclei -as）
-	TagMappings          map[string][]string           `json:"tagMappings"`          // 应用名称到Nuclei标签的映射
-	CustomTemplates      []string                      `json:"customTemplates"`      // 自定义模板内容(YAML)
-	CustomPocOnly        bool                          `json:"customPocOnly"`        // 只使用自定义POC
-	NucleiTemplates      []string                      `json:"nucleiTemplates"`      // 从数据库加载的Nuclei模板内容
-	OnVulnerabilityFound func(vul *Vulnerability)      `json:"-"`                    // 发现漏洞时的回调函数
+	Templates            []string                 `json:"templates"`        // 模板路径
+	Tags                 []string                 `json:"tags"`             // 标签过滤
+	Severity             string                   `json:"severity"`         // 严重级别: critical,high,medium,low,info,unknown (CSV格式)
+	ExcludeTags          []string                 `json:"excludeTags"`      // 排除标签
+	ExcludeTemplates     []string                 `json:"excludeTemplates"` // 排除模板
+	RateLimit            int                      `json:"rateLimit"`        // 速率限制
+	Concurrency          int                      `json:"concurrency"`      // 并发数
+	Timeout              int                      `json:"timeout"`          // 总超时时间(秒)，由调用方根据目标数量计算
+	TargetTimeout        int                      `json:"targetTimeout"`    // 单个目标超时时间(秒)，默认600秒
+	Retries              int                      `json:"retries"`          // 重试次数
+	AutoScan             bool                     `json:"autoScan"`         // 基于自定义标签映射自动扫描
+	AutomaticScan        bool                     `json:"automaticScan"`    // 基于Wappalyzer技术的自动扫描（nuclei -as）
+	TagMappings          map[string][]string      `json:"tagMappings"`      // 应用名称到Nuclei标签的映射
+	CustomTemplates      []string                 `json:"customTemplates"`  // 自定义模板内容(YAML)
+	CustomPocOnly        bool                     `json:"customPocOnly"`    // 只使用自定义POC
+	NucleiTemplates      []string                 `json:"nucleiTemplates"`  // 从数据库加载的Nuclei模板内容
+	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`                // 发现漏洞时的回调函数
 }
 
 // Validate 验证 NucleiOptions 配置是否有效
@@ -126,6 +126,7 @@ func (o *NucleiOptions) Validate() error {
 }
 
 // Scan 执行Nuclei扫描
+// OPTIMIZATION: Refactored to use ScanBatch for parallel target scanning.
 func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	result := &ScanResult{
 		WorkspaceId:     config.WorkspaceId,
@@ -133,13 +134,13 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		Vulnerabilities: make([]*Vulnerability, 0),
 	}
 
-	// 解析选项
+	// 1. Prepare Options
 	opts := &NucleiOptions{
 		Severity:      "critical,high,medium",
 		RateLimit:     150,
-		Concurrency:   5,   // 模板并发数（不是目标并发数），默认5
-		Timeout:       600, // 总超时默认10分钟
-		TargetTimeout: 600, // 单目标超时默认600秒
+		Concurrency:   25,  // Template Concurrency
+		Timeout:       600, // Global Timeout
+		TargetTimeout: 600, // Per-target Timeout
 		Retries:       1,
 	}
 	if config.Options != nil {
@@ -148,146 +149,47 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		}
 	}
 
-	// 设置默认值
-	if opts.TargetTimeout <= 0 {
-		opts.TargetTimeout = 600
-	}
-	
-	// 限制模板并发数最大值，避免过度并发
-	// 注意：这是模板并发数，不是目标并发数
-	// 目标是串行扫描的（for循环），并发由 Worker 控制
-	if opts.Concurrency > 25 {
-		logx.Infof("Nuclei template concurrency %d exceeds maximum 25, limiting to 25", opts.Concurrency)
-		opts.Concurrency = 25
+	// Safety cap for template concurrency
+	if opts.Concurrency > 50 {
+		opts.Concurrency = 50
 	}
 
-	// 自动扫描模式1: 基于自定义标签映射
-	if opts.AutoScan && opts.TagMappings != nil {
-		autoTags := s.generateAutoTags(config.Assets, opts.TagMappings)
-		if len(autoTags) > 0 {
-			logx.Debugf("Auto-scan (custom mapping) generated tags: %v", autoTags)
-			opts.Tags = append(opts.Tags, autoTags...)
-		}
-	}
-
-	// 自动扫描模式2: 基于Wappalyzer内置映射（类似nuclei -as）
-	if opts.AutomaticScan {
-		wappalyzerTags := s.generateWappalyzerAutoTags(config.Assets)
-		if len(wappalyzerTags) > 0 {
-			logx.Debugf("Auto-scan (Wappalyzer) generated tags: %v", wappalyzerTags)
-			opts.Tags = append(opts.Tags, wappalyzerTags...)
-		}
-	}
-
-	// 去重标签
-	if len(opts.Tags) > 0 {
-		opts.Tags = utils.UniqueStrings(opts.Tags)
-	}
-
-	// 准备目标列表
+	// 2. Prepare Targets
 	var targets []string
 	if len(config.Targets) > 0 {
-		// 直接使用配置中的目标URL（用于POC验证等场景）
 		targets = config.Targets
 	} else {
-		// 从资产列表构建目标URL
 		targets = s.prepareTargets(config.Assets)
 	}
+
 	if len(targets) == 0 {
 		logx.Info("No targets for nuclei scan")
 		return result, nil
 	}
 
-	logx.Infof("Nuclei: scanning %d targets, timeout %ds/target", len(targets), opts.TargetTimeout)
-
-	// 处理自定义POC - 写入临时文件
-	var customTemplatePaths []string
-	var tempDir string
-	var templateNames []string // 记录模板名称用于日志
-	if len(opts.CustomTemplates) > 0 {
-		var err error
-		tempDir, err = os.MkdirTemp("", "nuclei-custom-*")
-		if err != nil {
-			logx.Errorf("Failed to create temp dir for custom templates: %v", err)
-		} else {
-			for i, content := range opts.CustomTemplates {
-				templatePath := filepath.Join(tempDir, fmt.Sprintf("custom-%d.yaml", i))
-				// 调试：输出模板内容的前200个字符
-				contentPreview := content
-				if len(contentPreview) > 200 {
-					contentPreview = contentPreview[:200] + "..."
-				}
-				logx.Debugf("Custom template %d content preview: %s", i, contentPreview)
-				
-				if err := os.WriteFile(templatePath, []byte(content), 0644); err != nil {
-					logx.Errorf("Failed to write custom template %d: %v", i, err)
-					continue
-				}
-				logx.Debugf("Custom template %d written to: %s", i, templatePath)
-				customTemplatePaths = append(customTemplatePaths, templatePath)
-				// 尝试从内容中提取模板ID/名称
-				templateName := extractTemplateId(content)
-				if templateName == "" {
-					templateName = fmt.Sprintf("custom-%d", i)
-				}
-				templateNames = append(templateNames, templateName)
-			}
-		}
-		// 清理临时目录
-		defer func() {
-			if tempDir != "" {
-				os.RemoveAll(tempDir)
-			}
-		}()
-	}
-
-	// 收集结果（使用map去重）
-	var vuls []*Vulnerability
-	seen := make(map[string]bool)
-
-	// 日志辅助函数
-	taskLog := func(level, format string, args ...interface{}) {
-		if config.TaskLogger != nil {
-			config.TaskLogger(level, format, args...)
+	// 3. Auto-Tag Generation (Logic preserved)
+	if opts.AutoScan && opts.TagMappings != nil {
+		if autoTags := s.generateAutoTags(config.Assets, opts.TagMappings); len(autoTags) > 0 {
+			opts.Tags = append(opts.Tags, autoTags...)
 		}
 	}
-
-	// 输出加载的POC的数量（这是传入的模板文件数，实际加载数可能因过滤而不同）
-	taskLog("INFO", "POC templates: %d files", len(customTemplatePaths))
-
-	// 串行扫描每个目标，每个目标独立超时
-	for i, target := range targets {
-		select {
-		case <-ctx.Done():
-			logx.Info("Nuclei scan cancelled by context")
-			result.Vulnerabilities = vuls
-			return result, ctx.Err()
-		default:
+	if opts.AutomaticScan {
+		if wappTags := s.generateWappalyzerAutoTags(config.Assets); len(wappTags) > 0 {
+			opts.Tags = append(opts.Tags, wappTags...)
 		}
+	}
+	opts.Tags = utils.UniqueStrings(opts.Tags)
 
-		logx.Debugf("Nuclei [%d/%d]: %s", i+1, len(targets), target)
-		// 显示目标
-		taskLog("INFO", "POC [%d/%d]: %s", i+1, len(targets), target)
+	// 4. EXECUTION OPTIMIZATION: Use Batch Scan instead of Serial Loop
+	// This enables Nuclei's internal scheduler to handle HostConcurrency
+	logx.Infof("Nuclei: Starting batch scan for %d targets (Parallel Mode)", len(targets))
 
-		// 扫描单个目标（内部已处理超时，使用独立context避免任务间相互影响）
-		targetVuls := s.scanSingleTarget(ctx, target, opts, customTemplatePaths, templateNames, config.TaskLogger)
-
-		// 合并结果并去重
-		for _, vul := range targetVuls {
-			key := fmt.Sprintf("%s:%d:%s:%s", vul.Host, vul.Port, vul.PocFile, vul.Url)
-			if !seen[key] {
-				seen[key] = true
-				vuls = append(vuls, vul)
-				// 如果有回调函数，实时通知
-				if opts.OnVulnerabilityFound != nil {
-					opts.OnVulnerabilityFound(vul)
-				}
-			}
-		}
+	vuls, err := s.ScanBatch(ctx, targets, opts, config.TaskLogger)
+	if err != nil {
+		return result, err
 	}
 
 	result.Vulnerabilities = vuls
-	logx.Infof("Nuclei: completed, found %d vulnerabilities", len(vuls))
 	return result, nil
 }
 
@@ -920,7 +822,6 @@ func extractTemplateId(content string) string {
 	}
 	return ""
 }
-
 
 // ValidatePocTemplate 验证POC模板是否有效
 // 使用Nuclei SDK加载模板，检查是否能正确解析

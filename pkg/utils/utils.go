@@ -47,3 +47,144 @@ func RandomInt(min, max int) int {
 	rand.Seed(time.Now().UnixNano())
 	return rand.Intn(max-min+1) + min
 }
+
+// ==================== 目标解析工具函数 ====================
+
+// IsSubdomain 判断是否为子域名（非根域名）
+// 例如: api.example.com 返回 true, example.com 返回 false
+func IsSubdomain(domain string) bool {
+	// 移除可能的协议前缀
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimPrefix(domain, "https://")
+
+	// 移除端口
+	if idx := strings.Index(domain, ":"); idx > 0 {
+		domain = domain[:idx]
+	}
+
+	// 移除路径
+	if idx := strings.Index(domain, "/"); idx > 0 {
+		domain = domain[:idx]
+	}
+
+	// 如果是IP地址，不是子域名
+	if IsIPAddress(domain) {
+		return false
+	}
+
+	parts := strings.Split(domain, ".")
+	// 子域名至少有3个部分（如 sub.example.com）
+	return len(parts) > 2
+}
+
+// ParseTargetInfo 解析目标信息
+type TargetInfo struct {
+	Raw         string // 原始输入
+	Host        string // 主机（不含端口）
+	Port        int    // 端口（0表示未指定）
+	IsIP        bool   // 是否为IP地址
+	IsDomain    bool   // 是否为域名
+	IsSubdomain bool   // 是否为子域名
+	HasPort     bool   // 是否指定了端口
+	Protocol    string // 协议（http/https，空表示未指定）
+}
+
+// ParseTarget 解析单个目标，提取主机、端口、协议等信息
+func ParseTarget(target string) *TargetInfo {
+	target = strings.TrimSpace(target)
+	info := &TargetInfo{Raw: target}
+
+	// 解析协议
+	if strings.HasPrefix(target, "https://") {
+		info.Protocol = "https"
+		target = strings.TrimPrefix(target, "https://")
+	} else if strings.HasPrefix(target, "http://") {
+		info.Protocol = "http"
+		target = strings.TrimPrefix(target, "http://")
+	}
+
+	// 移除路径
+	if idx := strings.Index(target, "/"); idx > 0 {
+		target = target[:idx]
+	}
+
+	// 解析端口
+	if idx := strings.LastIndex(target, ":"); idx > 0 {
+		portStr := target[idx+1:]
+		if port := parsePort(portStr); port > 0 {
+			info.Port = port
+			info.HasPort = true
+			target = target[:idx]
+		}
+	}
+
+	info.Host = target
+
+	// 判断类型
+	if IsIPAddress(target) {
+		info.IsIP = true
+	} else if IsValidDomain(target) {
+		info.IsDomain = true
+		info.IsSubdomain = IsSubdomain(target)
+	}
+
+	return info
+}
+
+// parsePort 解析端口号
+func parsePort(s string) int {
+	port := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		port = port*10 + int(c-'0')
+	}
+	if port > 0 && port <= 65535 {
+		return port
+	}
+	return 0
+}
+
+// ParseTargetsWithPorts 解析多个目标，分离带端口和不带端口的目标
+// 返回: (带端口的目标列表, 不带端口的目标列表)
+func ParseTargetsWithPorts(targets string) (withPort []string, withoutPort []string) {
+	lines := strings.Split(targets, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		info := ParseTarget(line)
+		if info.HasPort || info.Protocol != "" {
+			// 带端口或协议的目标
+			withPort = append(withPort, line)
+		} else {
+			// 不带端口的目标
+			withoutPort = append(withoutPort, line)
+		}
+	}
+	return
+}
+
+// BuildTargetWithPort 构建带端口的目标字符串
+func BuildTargetWithPort(host string, port int) string {
+	if port > 0 {
+		return host + ":" + portToString(port)
+	}
+	return host
+}
+
+// portToString 端口转字符串
+func portToString(port int) string {
+	if port <= 0 {
+		return ""
+	}
+	result := ""
+	for port > 0 {
+		result = string(rune('0'+port%10)) + result
+		port /= 10
+	}
+	return result
+}

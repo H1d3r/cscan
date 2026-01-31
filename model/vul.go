@@ -107,13 +107,16 @@ func (m *VulModel) CountByTaskId(ctx context.Context, taskId string) (int64, err
 	return m.coll.CountDocuments(ctx, bson.M{"task_id": taskId})
 }
 
-func (m *VulModel) Delete(ctx context.Context, id string) error {
+func (m *VulModel) Delete(ctx context.Context, id string) (int64, error) {
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = m.coll.DeleteOne(ctx, bson.M{"_id": oid})
-	return err
+	res, err := m.coll.DeleteOne(ctx, bson.M{"_id": oid})
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, nil
 }
 
 func (m *VulModel) DeleteByTaskId(ctx context.Context, taskId string) error {

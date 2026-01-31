@@ -34,7 +34,7 @@
         </div>
       </div>
 
-      <div class="metric-card vulnerabilities" @click="$router.push('/asset?tab=vul')">
+      <div class="metric-card vulnerabilities" @click="$router.push('/asset/vulnerability')">
         <div class="metric-icon critical">
           <el-icon><Warning /></el-icon>
         </div>
@@ -635,7 +635,7 @@ function generateDays(count) {
 }
 
 function viewVulDetail(vul) {
-  router.push(`/asset?tab=vul&vulId=${vul.id}`)
+  router.push(`/asset/vulnerability?vulId=${vul.id}`)
 }
 
 function handleResize() {

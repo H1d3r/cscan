@@ -24,7 +24,7 @@ export function saveCustomPoc(data) {
 
 // 批量导入自定义POC
 export function batchImportCustomPoc(data) {
-  return request.post('/poc/custom/batchImport', data)
+  return request.post('/poc/custom/batchImport', data, { timeout: 600000 })
 }
 
 export function deleteCustomPoc(data) {
@@ -48,12 +48,12 @@ export function getNucleiTemplateCategories() {
 
 // 同步Nuclei模板
 export function syncNucleiTemplates(data = {}) {
-  return request.post('/poc/nuclei/sync', data)
+  return request.post('/poc/nuclei/sync', data, { timeout: 600000 })
 }
 
 // 下载Nuclei默认模板库
 export function downloadNucleiTemplates(data = {}) {
-  return request.post('/poc/nuclei/download', data)
+  return request.post('/poc/nuclei/download', data, { timeout: 600000 })
 }
 
 // 查询下载状态

@@ -2217,13 +2217,31 @@ async function handleExportPocs() {
     // 创建ZIP文件
     const zip = new JSZip()
     
+    // 统计导出情况
+    let exportedCount = 0
+    let skippedCount = 0
+    
     // 每个POC创建一个单独的文件
     for (const poc of allPocs) {
+      // 跳过没有内容的POC
+      if (!poc.content || poc.content.trim() === '') {
+        skippedCount++
+        console.warn(`Skipping POC with empty content: ${poc.templateId || poc.name}`)
+        continue
+      }
+      
       // 使用templateId作为文件名，清理非法字符
       const fileName = (poc.templateId || poc.name || 'poc')
         .replace(/[<>:"/\\|?*]/g, '-')
         .replace(/\s+/g, '-')
       zip.file(`${fileName}.yaml`, poc.content)
+      exportedCount++
+    }
+    
+    // 检查是否有有效的POC可导出
+    if (exportedCount === 0) {
+      ElMessage.warning(t('poc.noValidPocToExport'))
+      return
     }
     
     // 生成ZIP并下载
@@ -2231,7 +2249,12 @@ async function handleExportPocs() {
     const dateStr = new Date().toISOString().slice(0, 10)
     saveAs(content, `custom-pocs-${dateStr}.zip`)
     
-    ElMessage.success(t('poc.exportedPocs', { count: allPocs.length }))
+    // 显示导出结果
+    if (skippedCount > 0) {
+      ElMessage.warning(t('poc.exportedPocsWithSkipped', { exported: exportedCount, skipped: skippedCount }))
+    } else {
+      ElMessage.success(t('poc.exportedPocs', { count: exportedCount }))
+    }
   } catch (e) {
     console.error('Export error:', e)
     ElMessage.error(t('poc.exportError'))

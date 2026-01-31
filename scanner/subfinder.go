@@ -98,40 +98,52 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 		}
 	}
 
-	// 解析目标域名（只处理域名，跳过IP）
-	domains := s.parseDomains(config.Target)
-	if len(domains) == 0 {
-		logx.Info("No domains for subfinder scan")
-		return result, nil
+	// 解析目标域名，区分根域名和子域名
+	parseResult := s.parseDomainsWithType(config.Target)
+
+	// 收集所有需要处理的子域名
+	var allSubdomains []string
+
+	// 1. 子域名目标直接添加到结果（不需要枚举）
+	if len(parseResult.Subdomains) > 0 {
+		taskLog("INFO", "Subfinder: %d subdomains detected, skipping enumeration", len(parseResult.Subdomains))
+		logx.Infof("Subfinder: %d subdomain targets detected, will be used directly", len(parseResult.Subdomains))
+		allSubdomains = append(allSubdomains, parseResult.Subdomains...)
 	}
 
-	taskLog("INFO", "Subfinder: scanning %d domains", len(domains))
+	// 2. 根域名才执行子域名枚举
+	if len(parseResult.RootDomains) > 0 {
+		taskLog("INFO", "Subfinder: enumerating %d root domains", len(parseResult.RootDomains))
 
-	// 收集所有子域名
-	var allSubdomains []string
-	var mu sync.Mutex
+		var mu sync.Mutex
+		for _, domain := range parseResult.RootDomains {
+			select {
+			case <-ctx.Done():
+				logx.Info("Subfinder scan cancelled by context")
+				return result, ctx.Err()
+			default:
+			}
 
-	for _, domain := range domains {
-		select {
-		case <-ctx.Done():
-			logx.Info("Subfinder scan cancelled by context")
-			return result, ctx.Err()
-		default:
+			taskLog("INFO", "Subfinder: enumerating %s", domain)
+			subdomains, err := s.enumerateDomain(ctx, domain, opts)
+			if err != nil {
+				logx.Errorf("Subfinder error for %s: %v", domain, err)
+				taskLog("WARN", "Subfinder: %s error: %v", domain, err)
+				continue
+			}
+
+			mu.Lock()
+			allSubdomains = append(allSubdomains, subdomains...)
+			mu.Unlock()
+
+			taskLog("INFO", "Subfinder: found %d subdomains for %s", len(subdomains), domain)
 		}
+	}
 
-		taskLog("INFO", "Subfinder: enumerating %s", domain)
-		subdomains, err := s.enumerateDomain(ctx, domain, opts)
-		if err != nil {
-			logx.Errorf("Subfinder error for %s: %v", domain, err)
-			taskLog("WARN", "Subfinder: %s error: %v", domain, err)
-			continue
-		}
-
-		mu.Lock()
-		allSubdomains = append(allSubdomains, subdomains...)
-		mu.Unlock()
-
-		taskLog("INFO", "Subfinder: found %d subdomains for %s", len(subdomains), domain)
+	// 如果没有任何域名需要处理
+	if len(allSubdomains) == 0 {
+		logx.Info("No domains for subfinder scan")
+		return result, nil
 	}
 
 	// 去重
@@ -163,10 +175,29 @@ func (s *SubfinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	return result, nil
 }
 
+// DomainParseResult 域名解析结果
+type DomainParseResult struct {
+	RootDomains []string // 根域名列表（需要枚举子域名）
+	Subdomains  []string // 子域名列表（直接作为资产返回）
+}
+
 // parseDomains 解析目标中的域名（跳过IP地址）
+// 区分根域名和子域名：
+// - 根域名（如 example.com）：使用 subfinder 枚举子域名
+// - 子域名（如 api.example.com）：直接作为资产返回，不需要再枚举
 func (s *SubfinderScanner) parseDomains(target string) []string {
-	var domains []string
-	seen := make(map[string]bool)
+	result := s.parseDomainsWithType(target)
+	return result.RootDomains
+}
+
+// parseDomainsWithType 解析目标中的域名，区分根域名和子域名
+func (s *SubfinderScanner) parseDomainsWithType(target string) *DomainParseResult {
+	result := &DomainParseResult{
+		RootDomains: make([]string, 0),
+		Subdomains:  make([]string, 0),
+	}
+	seenRoot := make(map[string]bool)
+	seenSub := make(map[string]bool)
 
 	lines := strings.Split(target, "\n")
 	for _, line := range lines {
@@ -175,29 +206,38 @@ func (s *SubfinderScanner) parseDomains(target string) []string {
 			continue
 		}
 
+		// 解析目标信息
+		info := utils.ParseTarget(line)
+
 		// 跳过IP地址
-		if ip := net.ParseIP(line); ip != nil {
+		if info.IsIP {
 			continue
 		}
 
-		// 跳过带端口的格式
-		if strings.Contains(line, ":") {
+		// 跳过非域名
+		if !info.IsDomain {
 			continue
 		}
 
-		// 跳过URL格式
-		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
-			continue
-		}
+		domain := info.Host
 
-		// 去重
-		if !seen[line] {
-			seen[line] = true
-			domains = append(domains, line)
+		// 区分子域名和根域名
+		if info.IsSubdomain {
+			// 子域名：直接作为资产，不枚举
+			if !seenSub[domain] {
+				seenSub[domain] = true
+				result.Subdomains = append(result.Subdomains, domain)
+			}
+		} else {
+			// 根域名：使用 subfinder 枚举
+			if !seenRoot[domain] {
+				seenRoot[domain] = true
+				result.RootDomains = append(result.RootDomains, domain)
+			}
 		}
 	}
 
-	return domains
+	return result
 }
 
 // enumerateDomain 枚举单个域名的子域名
@@ -231,7 +271,7 @@ func (s *SubfinderScanner) enumerateDomain(ctx context.Context, domain string, o
 	// 设置Provider配置文件路径 - 必须在NewRunner之前设置
 	// NewRunner会调用loadProvidersFrom来加载配置
 	if tempConfigFile != "" {
-		logx.Debug("tempConfigFile的路径是=",tempConfigFile)
+		logx.Debug("tempConfigFile的路径是=", tempConfigFile)
 		runnerOpts.ProviderConfig = tempConfigFile
 	}
 

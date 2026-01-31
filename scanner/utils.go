@@ -4,7 +4,102 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	"cscan/pkg/utils"
 )
+
+// TargetParseResult 目标解析结果
+type TargetParseResult struct {
+	WithPort    []*ParsedTarget // 带端口的目标（直接使用，跳过端口扫描）
+	WithoutPort []string        // 不带端口的目标（需要端口扫描）
+}
+
+// ParsedTarget 解析后的目标
+type ParsedTarget struct {
+	Host     string
+	Port     int
+	Protocol string // http/https，空表示未指定
+	Raw      string
+}
+
+// ParseTargetsForPortScan 解析目标，分离带端口和不带端口的目标
+// 用于优化端口扫描：带端口的目标直接使用，不需要端口发现
+func ParseTargetsForPortScan(target string) *TargetParseResult {
+	result := &TargetParseResult{
+		WithPort:    make([]*ParsedTarget, 0),
+		WithoutPort: make([]string, 0),
+	}
+
+	lines := strings.Split(target, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// 使用工具函数解析目标
+		info := utils.ParseTarget(line)
+
+		if info.HasPort || info.Protocol != "" {
+			// 带端口或协议的目标
+			port := info.Port
+			if port == 0 {
+				// 根据协议推断端口
+				if info.Protocol == "https" {
+					port = 443
+				} else if info.Protocol == "http" {
+					port = 80
+				}
+			}
+			if port > 0 {
+				result.WithPort = append(result.WithPort, &ParsedTarget{
+					Host:     info.Host,
+					Port:     port,
+					Protocol: info.Protocol,
+					Raw:      line,
+				})
+			} else {
+				// 有协议但无法推断端口，仍需扫描
+				result.WithoutPort = append(result.WithoutPort, info.Host)
+			}
+		} else {
+			// 不带端口的目标，需要端口扫描
+			// 处理 CIDR 和 IP 范围
+			if strings.Contains(line, "/") {
+				if _, _, err := net.ParseCIDR(line); err == nil {
+					ips := expandCIDR(line)
+					result.WithoutPort = append(result.WithoutPort, ips...)
+					continue
+				}
+			}
+			if strings.Contains(line, "-") && !containsDomainTLD(line) {
+				parts := strings.Split(line, "-")
+				if len(parts) == 2 && net.ParseIP(strings.TrimSpace(parts[0])) != nil {
+					ips := expandIPRange(line)
+					if len(ips) > 0 {
+						result.WithoutPort = append(result.WithoutPort, ips...)
+						continue
+					}
+				}
+			}
+			result.WithoutPort = append(result.WithoutPort, line)
+		}
+	}
+
+	return result
+}
+
+// containsDomainTLD 检查是否包含常见域名后缀
+func containsDomainTLD(s string) bool {
+	tlds := []string{".com", ".net", ".org", ".cn", ".io", ".co", ".edu", ".gov", ".mil"}
+	lower := strings.ToLower(s)
+	for _, tld := range tlds {
+		if strings.Contains(lower, tld) {
+			return true
+		}
+	}
+	return false
+}
 
 // parseTargets 解析目标
 func parseTargets(target string) []string {
@@ -95,6 +190,7 @@ func getCategory(target string) string {
 }
 
 const MaxTargetCount = 2048
+
 // expandCIDR 展开CIDR
 func expandCIDR(cidr string) []string {
 	var ips []string
@@ -103,13 +199,13 @@ func expandCIDR(cidr string) []string {
 		return ips
 	}
 	count := 0
-    for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
-        count++
-        if count > MaxTargetCount {
-            break 
-        }
-        ips = append(ips, ip.String())
-    }
+	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
+		count++
+		if count > MaxTargetCount {
+			break
+		}
+		ips = append(ips, ip.String())
+	}
 
 	// 移除网络地址和广播地址
 	if len(ips) > 2 {
@@ -165,7 +261,6 @@ func GetTop100Ports() []int {
 		27018, 27019, 28017, 50000, 50070, 50075,
 	}
 }
-
 
 // GetTop1000Ports 获取Top1000端口
 func GetTop1000Ports() []int {
@@ -282,7 +377,6 @@ func portsToString(ports []int) string {
 	}
 	return strings.Join(strs, ",")
 }
-
 
 // IsHTTPService 判断是否为HTTP服务
 // 优先使用数据库中的HTTP服务设置（端口+服务映射），如果没有配置则使用默认规则

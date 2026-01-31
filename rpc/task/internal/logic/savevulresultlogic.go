@@ -2,12 +2,17 @@ package logic
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"cscan/model"
 	"cscan/rpc/task/internal/svc"
 	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type SaveVulResultLogic struct {
@@ -104,6 +109,62 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 			continue
 		}
 		savedCount++
+	}
+
+	// Update assets with risk scores
+	// Group vulns by asset (Host:Port) to aggregate risk score
+	assetRiskMap := make(map[string]float64) // Key: "host:port", Value: maxScore
+
+	for _, pbVul := range in.Vuls {
+		key := fmt.Sprintf("%s:%d", pbVul.Host, pbVul.Port)
+		score := 0.0
+		if pbVul.CvssScore != nil {
+			score = *pbVul.CvssScore
+		}
+		if val, ok := assetRiskMap[key]; !ok || score > val {
+			assetRiskMap[key] = score
+		}
+	}
+
+	assetModel := l.svcCtx.GetAssetModel(workspaceId)
+	for key, maxScore := range assetRiskMap {
+		parts := strings.Split(key, ":")
+		if len(parts) != 2 {
+			continue
+		}
+		host := parts[0]
+		port, _ := strconv.Atoi(parts[1])
+
+		// Find existing asset
+		asset, err := assetModel.FindByHostPort(l.ctx, host, port)
+		if err != nil || asset == nil {
+			continue
+		}
+
+		// Determine Risk Level
+		riskLevel := "info"
+		if maxScore >= 9.0 {
+			riskLevel = "critical"
+		} else if maxScore >= 7.0 {
+			riskLevel = "high"
+		} else if maxScore >= 4.0 {
+			riskLevel = "medium"
+		} else if maxScore > 0 {
+			riskLevel = "low"
+		}
+
+		// Update if new score is higher
+		update := bson.M{
+			"last_scan_time": time.Now(),
+		}
+		if maxScore > asset.RiskScore {
+			update["risk_score"] = maxScore
+			update["risk_level"] = riskLevel
+		}
+
+		if err := assetModel.Update(l.ctx, asset.Id.Hex(), update); err != nil {
+			l.Logger.Errorf("Failed to update asset risk: %v", err)
+		}
 	}
 
 	l.Logger.Infof("SaveVulResult: saved %d vulnerabilities", savedCount)
