@@ -29,14 +29,14 @@ func NewURLFinderScanner() *URLFinderScanner {
 
 // URLFinderOptions 目录扫描选项
 type URLFinderOptions struct {
-	Paths         []string `json:"paths"`         // 要扫描的路径列表
-	Threads       int      `json:"threads"`       // 并发线程数
-	Timeout       int      `json:"timeout"`       // 单个请求超时(秒)
-	StatusCodes   []int    `json:"statusCodes"`   // 有效状态码列表
-	Extensions    []string `json:"extensions"`    // 文件扩展名
-	FollowRedirect bool    `json:"followRedirect"` // 是否跟随重定向
-	UserAgent     string   `json:"userAgent"`     // User-Agent
-	Headers       map[string]string `json:"headers"` // 自定义请求头
+	Paths          []string          `json:"paths"`          // 要扫描的路径列表
+	Threads        int               `json:"threads"`        // 并发线程数
+	Timeout        int               `json:"timeout"`        // 单个请求超时(秒)
+	StatusCodes    []int             `json:"statusCodes"`    // 有效状态码列表
+	Extensions     []string          `json:"extensions"`     // 文件扩展名
+	FollowRedirect bool              `json:"followRedirect"` // 是否跟随重定向
+	UserAgent      string            `json:"userAgent"`      // User-Agent
+	Headers        map[string]string `json:"headers"`        // 自定义请求头
 }
 
 // Validate 验证 URLFinderOptions 配置是否有效
@@ -121,12 +121,21 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 				if asset.Port == 443 || strings.HasPrefix(asset.Service, "https") {
 					scheme = "https"
 				}
-				// 标准端口不需要显式指定
+				// 构建基础URL
+				var baseURL string
 				if (scheme == "http" && asset.Port == 80) || (scheme == "https" && asset.Port == 443) {
-					targets = append(targets, fmt.Sprintf("%s://%s", scheme, asset.Host))
+					baseURL = fmt.Sprintf("%s://%s", scheme, asset.Host)
 				} else {
-					targets = append(targets, fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port))
+					baseURL = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
 				}
+				// 如果资产有 Path 字段，将其作为基础路径前缀
+				// 例如：用户输入 http://example.com/admin/，目录扫描应该扫描 /admin/login、/admin/config 等
+				if asset.Path != "" && asset.Path != "/" {
+					path := strings.TrimSuffix(asset.Path, "/")
+					baseURL = baseURL + path
+					logInfo("[URLFinder] 使用带路径的目标: %s (基础路径: %s)", baseURL, asset.Path)
+				}
+				targets = append(targets, baseURL)
 			} else {
 				logDebug("[URLFinder] 跳过非HTTP资产: %s:%d (service: %s, isHttp: %v)", asset.Host, asset.Port, asset.Service, asset.IsHTTP)
 			}
@@ -146,7 +155,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 	}
 
 	logInfo("[URLFinder] 开始目录扫描，目标数: %d，路径数: %d", len(targets), len(opts.Paths))
-	
+
 	// 输出目标列表（调试用）
 	for i, t := range targets {
 		logInfo("[URLFinder] 目标 %d: %s", i+1, t)
@@ -154,7 +163,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 
 	// 创建HTTP客户端
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     30 * time.Second,
@@ -289,7 +298,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 func (s *URLFinderScanner) scanPath(client *http.Client, baseURL, path string, opts *URLFinderOptions, validStatusCodes map[int]bool, logDebug func(string, ...interface{})) *URLFinderResult {
 	// 构建完整URL
 	fullURL := baseURL
-	
+
 	// 确保 baseURL 和 path 之间有 /
 	if path == "" || path == "/" {
 		// 根路径

@@ -548,7 +548,20 @@ func (s *NucleiScanner) prepareTargets(assets []*Asset) []string {
 			scheme = "https"
 		}
 
-		target := fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
+		// 构建目标URL，如果资产有 Path 字段，包含在目标URL中
+		// 例如：用户输入 http://example.com/api/v1/，POC扫描应该针对该路径
+		var target string
+		if asset.Path != "" && asset.Path != "/" {
+			// 有路径的情况：scheme://host:port/path
+			path := asset.Path
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path
+			}
+			target = fmt.Sprintf("%s://%s:%d%s", scheme, asset.Host, asset.Port, path)
+		} else {
+			// 无路径的情况：scheme://host:port
+			target = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
+		}
 
 		if !seen[target] {
 			seen[target] = true

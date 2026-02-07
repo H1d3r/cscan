@@ -1992,7 +1992,8 @@
     "updateSuccess": "Updated successfully",
     "runSuccess": "Task started",
     "statusUpdateSuccess": "Status updated",
-    "cronValidateError": "Invalid cron expression"
+    "cronValidateError": "Invalid cron expression",
+    "reuseConfigHint": "Will reuse scan config from related task, can be adjusted after creation"
   },
   "onlineSearch": {
     "title": "Online Search",

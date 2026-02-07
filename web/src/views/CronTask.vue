@@ -192,8 +192,18 @@
           <div class="form-hint">{{ $t('cronTask.onceExecHint') }}</div>
         </el-form-item>
 
-        <!-- 扫描配置折叠面板 -->
-        <el-collapse v-model="activeCollapse" class="config-collapse">
+        <!-- 新建时提示：复用关联任务配置 -->
+        <el-alert
+          v-if="!isEdit && form.mainTaskId"
+          :title="$t('cronTask.reuseConfigHint') || '将复用关联任务的扫描配置，创建后可在编辑中调整'"
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 15px"
+        />
+
+        <!-- 扫描配置折叠面板 - 仅编辑时显示 -->
+        <el-collapse v-if="isEdit" v-model="activeCollapse" class="config-collapse">
           <!-- 子域名扫描 -->
           <el-collapse-item name="domainscan">
             <template #title>

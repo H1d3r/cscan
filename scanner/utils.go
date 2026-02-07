@@ -19,6 +19,7 @@ type ParsedTarget struct {
 	Host     string
 	Port     int
 	Protocol string // http/https，空表示未指定
+	Path     string // URL路径，如 /admin/
 	Raw      string
 }
 
@@ -56,6 +57,7 @@ func ParseTargetsForPortScan(target string) *TargetParseResult {
 					Host:     info.Host,
 					Port:     port,
 					Protocol: info.Protocol,
+					Path:     info.Path, // 保留URL路径
 					Raw:      line,
 				})
 			} else {
@@ -87,6 +89,102 @@ func ParseTargetsForPortScan(target string) *TargetParseResult {
 	}
 
 	return result
+}
+
+// ParseTargetsForFingerprint 解析目标用于指纹识别
+// 支持带路径的URL格式，如 http://example.com/admin/
+func ParseTargetsForFingerprint(target string) []*ParsedTarget {
+	var targets []*ParsedTarget
+
+	lines := strings.Split(target, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		info := utils.ParseTarget(line)
+		if info.Host == "" {
+			continue
+		}
+
+		port := info.Port
+		protocol := info.Protocol
+
+		// 如果没有端口，根据协议推断
+		if port == 0 {
+			if protocol == "https" {
+				port = 443
+			} else if protocol == "http" {
+				port = 80
+			} else {
+				// 默认使用 80 端口
+				port = 80
+				protocol = "http"
+			}
+		}
+
+		// 如果没有协议，根据端口推断
+		if protocol == "" {
+			if port == 443 || port == 8443 || port == 9443 {
+				protocol = "https"
+			} else {
+				protocol = "http"
+			}
+		}
+
+		targets = append(targets, &ParsedTarget{
+			Host:     info.Host,
+			Port:     port,
+			Protocol: protocol,
+			Path:     info.Path,
+			Raw:      line,
+		})
+	}
+
+	return targets
+}
+
+// GenerateAssetsFromTargets 从用户输入的目标生成资产列表
+// 用于当用户只勾选部分扫描模块时，直接使用输入目标进行扫描
+func GenerateAssetsFromTargets(target string) []*Asset {
+	var assets []*Asset
+	parsedTargets := ParseTargetsForFingerprint(target)
+
+	for _, pt := range parsedTargets {
+		asset := &Asset{
+			Host:     pt.Host,
+			Port:     pt.Port,
+			Category: getCategory(pt.Host),
+			Source:   "user_input",
+			IsHTTP:   true, // 用户输入的URL默认认为是HTTP服务
+		}
+
+		// 设置 Authority
+		if pt.Port == 80 || pt.Port == 443 {
+			asset.Authority = pt.Host
+		} else {
+			asset.Authority = net.JoinHostPort(pt.Host, strconv.Itoa(pt.Port))
+		}
+
+		// 设置服务类型
+		if pt.Protocol != "" {
+			asset.Service = pt.Protocol
+		} else if pt.Port == 443 || pt.Port == 8443 {
+			asset.Service = "https"
+		} else {
+			asset.Service = "http"
+		}
+
+		// 保存路径信息到 Path 字段
+		if pt.Path != "" && pt.Path != "/" {
+			asset.Path = pt.Path
+		}
+
+		assets = append(assets, asset)
+	}
+
+	return assets
 }
 
 // containsDomainTLD 检查是否包含常见域名后缀

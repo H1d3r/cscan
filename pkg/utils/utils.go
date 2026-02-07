@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // IsIPAddress 判断是否为IP地址
@@ -15,12 +17,35 @@ func IsIPAddress(s string) bool {
 }
 
 // GetRootDomain 获取根域名
+// 使用 publicsuffix 正确处理多级TLD（如 .com.cn, .co.uk 等）
+// 例如: test.com.cn -> test.com.cn, api.test.com.cn -> test.com.cn
 func GetRootDomain(domain string) string {
-	parts := strings.Split(domain, ".")
-	if len(parts) >= 2 {
-		return parts[len(parts)-2] + "." + parts[len(parts)-1]
+	// 清理域名
+	domain = strings.TrimSpace(domain)
+	domain = strings.ToLower(domain)
+
+	// 如果是IP地址，直接返回
+	if IsIPAddress(domain) {
+		return domain
 	}
-	return domain
+
+	// 使用 publicsuffix 获取有效TLD+1（即根域名）
+	// EffectiveTLDPlusOne 返回公共后缀加上一级，例如：
+	// - test.com.cn -> test.com.cn (com.cn 是公共后缀)
+	// - api.test.com.cn -> test.com.cn
+	// - example.com -> example.com (com 是公共后缀)
+	// - sub.example.com -> example.com
+	rootDomain, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err != nil {
+		// 解析失败时回退到简单逻辑
+		parts := strings.Split(domain, ".")
+		if len(parts) >= 2 {
+			return parts[len(parts)-2] + "." + parts[len(parts)-1]
+		}
+		return domain
+	}
+
+	return rootDomain
 }
 
 // IsValidDomain 检查是否是有效的域名
@@ -82,6 +107,7 @@ type TargetInfo struct {
 	Raw         string // 原始输入
 	Host        string // 主机（不含端口）
 	Port        int    // 端口（0表示未指定）
+	Path        string // URL路径（如 /admin/）
 	IsIP        bool   // 是否为IP地址
 	IsDomain    bool   // 是否为域名
 	IsSubdomain bool   // 是否为子域名
@@ -89,7 +115,8 @@ type TargetInfo struct {
 	Protocol    string // 协议（http/https，空表示未指定）
 }
 
-// ParseTarget 解析单个目标，提取主机、端口、协议等信息
+// ParseTarget 解析单个目标，提取主机、端口、协议、路径等信息
+// 支持格式：http://example.com/admin/, example.com:8080/path, example.com
 func ParseTarget(target string) *TargetInfo {
 	target = strings.TrimSpace(target)
 	info := &TargetInfo{Raw: target}
@@ -103,8 +130,9 @@ func ParseTarget(target string) *TargetInfo {
 		target = strings.TrimPrefix(target, "http://")
 	}
 
-	// 移除路径
+	// 提取路径（保留路径信息）
 	if idx := strings.Index(target, "/"); idx > 0 {
+		info.Path = target[idx:] // 保留完整路径，如 /admin/login
 		target = target[:idx]
 	}
 

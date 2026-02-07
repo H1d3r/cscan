@@ -1909,7 +1909,8 @@
     "updateSuccess": "更新成功",
     "runSuccess": "任务已启动",
     "statusUpdateSuccess": "状态已更新",
-    "cronValidateError": "Cron表达式无效"
+    "cronValidateError": "Cron表达式无效",
+    "reuseConfigHint": "将复用关联任务的扫描配置，创建后可在编辑中调整"
   },
   "onlineSearch": {
     "title": "在线搜索",

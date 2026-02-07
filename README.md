@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="image/cscan.png" alt="微信交流群" width="200">
+  <br>
+  <em>扫码加入微信交流群</em>
+</p>
+
+---
+
 # CSCAN
 
 **企业级分布式网络资产扫描平台** | Go-Zero + Vue3

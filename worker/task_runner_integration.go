@@ -448,7 +448,11 @@ func NewFingerprintExecutor(worker *Worker) *FingerprintExecutor {
 
 // CanExecute 检查是否可以执行
 func (e *FingerprintExecutor) CanExecute(ctx *TaskContext) bool {
-	return ctx.Config.Fingerprint != nil && ctx.Config.Fingerprint.Enable && len(ctx.Assets) > 0
+	// 修改：即使没有资产，如果有目标也可以执行（支持用户直接输入目标进行部分扫描）
+	if ctx.Config.Fingerprint == nil || !ctx.Config.Fingerprint.Enable {
+		return false
+	}
+	return len(ctx.Assets) > 0 || ctx.Target != ""
 }
 
 // Execute 执行指纹识别
@@ -457,7 +461,17 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	task := ctx.Task
 	config := ctx.Config.Fingerprint
 
-	if len(ctx.Assets) == 0 {
+	// 如果没有资产但有目标，从目标生成资产（支持用户直接输入目标进行部分扫描）
+	assets := ctx.Assets
+	if len(assets) == 0 && ctx.Target != "" {
+		generatedAssets := scanner.GenerateAssetsFromTargets(ctx.Target)
+		if len(generatedAssets) > 0 {
+			assets = generatedAssets
+			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: generated %d assets from user input targets", len(assets))
+		}
+	}
+
+	if len(assets) == 0 {
 		w.taskLog(task.TaskId, LevelInfo, "Fingerprint: skipped (no assets)")
 		return &PhaseResult{}, nil
 	}
@@ -483,7 +497,7 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	// 使用 Worker 并发数
 	config.Concurrency = w.config.Concurrency
 	w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d",
-		len(ctx.Assets), targetTimeout, w.config.Concurrency)
+		len(assets), targetTimeout, w.config.Concurrency)
 
 	// 加载 HTTP 服务映射配置
 	w.loadHttpServiceMappings()
@@ -507,7 +521,7 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	}
 
 	result, err := s.Scan(fpCtx, &scanner.ScanConfig{
-		Assets:     ctx.Assets,
+		Assets:     assets, // 使用可能从目标生成的资产
 		Options:    config,
 		TaskLogger: fpTaskLogger,
 	})
@@ -570,7 +584,11 @@ func NewPocScanExecutor(worker *Worker) *PocScanExecutor {
 
 // CanExecute 检查是否可以执行
 func (e *PocScanExecutor) CanExecute(ctx *TaskContext) bool {
-	return ctx.Config.PocScan != nil && ctx.Config.PocScan.Enable && len(ctx.Assets) > 0
+	// 修改：即使没有资产，如果有目标也可以执行（支持用户直接输入目标进行部分扫描）
+	if ctx.Config.PocScan == nil || !ctx.Config.PocScan.Enable {
+		return false
+	}
+	return len(ctx.Assets) > 0 || ctx.Target != ""
 }
 
 // Execute 执行POC扫描
@@ -579,7 +597,17 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	task := ctx.Task
 	config := ctx.Config.PocScan
 
-	if len(ctx.Assets) == 0 {
+	// 如果没有资产但有目标，从目标生成资产（支持用户直接输入目标进行部分扫描）
+	assets := ctx.Assets
+	if len(assets) == 0 && ctx.Target != "" {
+		generatedAssets := scanner.GenerateAssetsFromTargets(ctx.Target)
+		if len(generatedAssets) > 0 {
+			assets = generatedAssets
+			w.taskLog(task.TaskId, LevelInfo, "POC scan: generated %d assets from user input targets", len(assets))
+		}
+	}
+
+	if len(assets) == 0 {
 		w.taskLog(task.TaskId, LevelInfo, "POC scan: skipped (no assets)")
 		return &PhaseResult{}, nil
 	}
@@ -601,7 +629,7 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	if pocTargetTimeout <= 0 {
 		pocTargetTimeout = 600
 	}
-	w.taskLog(task.TaskId, LevelInfo, "POC scan: %d assets, timeout %ds/target", len(ctx.Assets), pocTargetTimeout)
+	w.taskLog(task.TaskId, LevelInfo, "POC scan: %d assets, timeout %ds/target", len(assets), pocTargetTimeout)
 
 	// 获取模板
 	var templates []string
@@ -621,7 +649,7 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	} else {
 		var matchInfos []TagMatchInfo
 		if config.AutoScan || config.AutomaticScan {
-			autoTags, matchInfos = w.generateAutoTags(ctx.Assets, config)
+			autoTags, matchInfos = w.generateAutoTags(assets, config)
 			// 输出匹配信息日志
 			for _, info := range matchInfos {
 				sourceDesc := "自定义标签映射"
@@ -656,7 +684,7 @@ func (e *PocScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	vulBuffer := NewVulnerabilityBuffer(1)
 
 	// 计算总超时
-	pocTimeout := pocTargetTimeout * len(ctx.Assets)
+	pocTimeout := pocTargetTimeout * len(assets)
 	if pocTimeout < 600 {
 		pocTimeout = 600
 	}
@@ -828,13 +856,13 @@ func (e *DirScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	task := ctx.Task
 	config := ctx.Config.DirScan
 
-	// 如果没有资产，尝试从目标生成 HTTP 资产
+	// 如果没有资产但有目标，从目标生成资产（支持用户直接输入带路径的目标）
 	assets := ctx.Assets
-	if len(assets) == 0 {
-		generatedAssets := w.generateHTTPAssetsFromTarget(ctx.Target)
+	if len(assets) == 0 && ctx.Target != "" {
+		generatedAssets := scanner.GenerateAssetsFromTargets(ctx.Target)
 		if len(generatedAssets) > 0 {
 			assets = generatedAssets
-			w.taskLog(task.TaskId, LevelInfo, "Dir scan: generated %d HTTP assets from target", len(assets))
+			w.taskLog(task.TaskId, LevelInfo, "Dir scan: generated %d assets from user input targets", len(assets))
 		}
 	}
 
