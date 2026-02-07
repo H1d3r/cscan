@@ -15,7 +15,7 @@ var defaultWorkspaceId = workspaceResult.insertedId.toString();
 // 创建用户集合并插入默认管理员，关联默认工作空间
 db.user.insertOne({
     username: "admin",
-    password: "e10adc3949ba59abbe56e057f20f883e", // 123456的MD5
+    password: "$2a$10$Y/T1J1j6tEB9KQI2FlpyNOK3DY2eT54Ml1ukG.dMrbCjMt5Ic7MwK", // 123456的bcrypt哈希
     role: "superadmin",
     status: "enable",
     workspace_ids: [defaultWorkspaceId],

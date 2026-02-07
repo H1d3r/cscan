@@ -997,7 +997,7 @@ async function loadData() {
       page: pagination.page,
       pageSize: pagination.pageSize
     })
-    console.log('定时任务列表响应:', res)
+    // 调试日志已移除
     if (res.code === 0) {
       tableData.value = res.data?.list || []
       pagination.total = res.data?.total || 0

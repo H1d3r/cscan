@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="settings-page">
     <!-- 在线API配置 -->
     <el-card v-if="activeTab === 'onlineapi'">
@@ -806,7 +806,12 @@ async function handleDeleteUser(row) {
     } else {
       ElMessage.error(res.msg || t('common.operationFailed'))
     }
-  } catch (error) {}
+  } catch (error) {
+    // 用户取消操作，无需处理
+    if (error !== 'cancel') {
+      console.error('删除用户失败:', error)
+    }
+  }
 }
 
 function showResetPasswordDialog(row) {
@@ -1119,7 +1124,12 @@ async function handleDeleteNotify(row) {
     } else {
       ElMessage.error(res.msg || t('common.operationFailed'))
     }
-  } catch (error) {}
+  } catch (error) {
+    // 用户取消操作，无需处理
+    if (error !== 'cancel') {
+      console.error('删除通知配置失败:', error)
+    }
+  }
 }
 </script>
 

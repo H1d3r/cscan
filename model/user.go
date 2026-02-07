@@ -2,14 +2,13 @@ package model
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -18,15 +17,15 @@ const (
 )
 
 type User struct {
-	Id              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Username        string             `bson:"username" json:"username"`
-	Password        string             `bson:"password" json:"-"`
-	Status          string             `bson:"status" json:"status"`
-	WorkspaceIds    []string           `bson:"workspace_ids" json:"workspaceIds"`
-	ScanConfig      string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
-	LastLoginTime   *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
-	CreateTime      time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime      time.Time          `bson:"update_time" json:"updateTime"`
+	Id            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Username      string             `bson:"username" json:"username"`
+	Password      string             `bson:"password" json:"-"`
+	Status        string             `bson:"status" json:"status"`
+	WorkspaceIds  []string           `bson:"workspace_ids" json:"workspaceIds"`
+	ScanConfig    string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
+	LastLoginTime *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
+	CreateTime    time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime    time.Time          `bson:"update_time" json:"updateTime"`
 }
 
 type UserModel struct {
@@ -124,7 +123,7 @@ func (m *UserModel) UpdatePassword(ctx context.Context, id string, newPassword s
 		return err
 	}
 	update := bson.M{
-		"password": HashPassword(newPassword),
+		"password":    HashPassword(newPassword),
 		"update_time": time.Now(),
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
@@ -183,7 +182,10 @@ func (m *UserModel) VerifyPassword(ctx context.Context, username, password strin
 	if err != nil {
 		return nil, false
 	}
-	if user.Password != HashPassword(password) {
+	if user == nil {
+		return nil, false
+	}
+	if !CheckPassword(password, user.Password) {
 		return nil, false
 	}
 	if user.Status != StatusEnable {
@@ -193,6 +195,15 @@ func (m *UserModel) VerifyPassword(ctx context.Context, username, password strin
 }
 
 func HashPassword(password string) string {
-	hash := md5.Sum([]byte(password))
-	return hex.EncodeToString(hash[:])
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return ""
+	}
+	return string(hash)
+}
+
+// CheckPassword 验证密码是否正确
+func CheckPassword(password, hashedPassword string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+	return err == nil
 }

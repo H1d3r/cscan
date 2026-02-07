@@ -661,16 +661,7 @@ async function loadData() {
       updatedWithinDays: searchForm.updatedWithinDays || 0
     })
     
-    // 添加调试信息
-    console.log('资产查询结果:', {
-      workspaceId: workspaceStore.currentWorkspaceId,
-      total: res.total,
-      listLength: res.list?.length || 0,
-      page: pagination.page,
-      pageSize: pagination.pageSize
-    })
-    
-    if (res.code === 0) { 
+    if (res.code === 0) {
       tableData.value = res.list || []
       pagination.total = res.total 
     } else {

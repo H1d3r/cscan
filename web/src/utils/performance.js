@@ -2,6 +2,14 @@
  * 前端性能监控工具
  */
 
+// 是否启用非错误日志输出（设为 false 禁用）
+const ENABLE_LOGS = false
+
+// 封装的日志函数，只在启用时输出
+const log = (...args) => ENABLE_LOGS && console.log(...args)
+const group = (...args) => ENABLE_LOGS && console.group(...args)
+const groupEnd = () => ENABLE_LOGS && console.groupEnd()
+
 /**
  * 记录页面加载性能指标
  */
@@ -22,26 +30,26 @@ export function logPagePerformance() {
       const downloadTime = perfData.responseEnd - perfData.responseStart
       const domParseTime = perfData.domInteractive - perfData.responseEnd
 
-      console.group('📊 页面性能指标')
-      console.log(`⏱️  页面完全加载时间: ${pageLoadTime}ms`)
-      console.log(`📄 DOM 就绪时间: ${domReadyTime}ms`)
-      console.log(`🌐 DNS 查询时间: ${dnsTime}ms`)
-      console.log(`🔌 TCP 连接时间: ${tcpTime}ms`)
-      console.log(`⚡ 首字节时间 (TTFB): ${ttfbTime}ms`)
-      console.log(`📥 资源下载时间: ${downloadTime}ms`)
-      console.log(`🔨 DOM 解析时间: ${domParseTime}ms`)
-      console.groupEnd()
+      group('📊 页面性能指标')
+      log(`⏱️  页面完全加载时间: ${pageLoadTime}ms`)
+      log(`📄 DOM 就绪时间: ${domReadyTime}ms`)
+      log(`🌐 DNS 查询时间: ${dnsTime}ms`)
+      log(`🔌 TCP 连接时间: ${tcpTime}ms`)
+      log(`⚡ 首字节时间 (TTFB): ${ttfbTime}ms`)
+      log(`📥 资源下载时间: ${downloadTime}ms`)
+      log(`🔨 DOM 解析时间: ${domParseTime}ms`)
+      groupEnd()
 
       // 获取资源加载信息
       const resources = window.performance.getEntriesByType('resource')
       const jsResources = resources.filter(r => r.name.endsWith('.js'))
       const cssResources = resources.filter(r => r.name.endsWith('.css'))
 
-      console.group('📦 资源加载统计')
-      console.log(`JavaScript 文件数: ${jsResources.length}`)
-      console.log(`CSS 文件数: ${cssResources.length}`)
-      console.log(`总资源数: ${resources.length}`)
-      console.groupEnd()
+      group('📦 资源加载统计')
+      log(`JavaScript 文件数: ${jsResources.length}`)
+      log(`CSS 文件数: ${cssResources.length}`)
+      log(`总资源数: ${resources.length}`)
+      groupEnd()
 
       // 显示最大的 JS 文件
       const largestJS = jsResources
@@ -49,14 +57,14 @@ export function logPagePerformance() {
         .slice(0, 5)
 
       if (largestJS.length > 0) {
-        console.group('📊 最大的 5 个 JS 文件')
+        group('📊 最大的 5 个 JS 文件')
         largestJS.forEach((resource, index) => {
           const size = (resource.transferSize / 1024).toFixed(2)
           const duration = resource.duration.toFixed(2)
           const name = resource.name.split('/').pop()
-          console.log(`${index + 1}. ${name}: ${size}KB (${duration}ms)`)
+          log(`${index + 1}. ${name}: ${size}KB (${duration}ms)`)
         })
-        console.groupEnd()
+        groupEnd()
       }
     }, 0)
   })
@@ -71,7 +79,7 @@ export function measureComponentLoad(componentName) {
   return () => {
     const endTime = performance.now()
     const loadTime = (endTime - startTime).toFixed(2)
-    console.log(`🎯 组件 [${componentName}] 加载耗时: ${loadTime}ms`)
+    log(`🎯 组件 [${componentName}] 加载耗时: ${loadTime}ms`)
   }
 }
 
@@ -89,7 +97,7 @@ export function setupRouterPerformance(router) {
     if (window.__routeStartTime) {
       const endTime = performance.now()
       const duration = (endTime - window.__routeStartTime).toFixed(2)
-      console.log(`🚀 路由切换 [${from.path} → ${to.path}] 耗时: ${duration}ms`)
+      log(`🚀 路由切换 [${from.path} → ${to.path}] 耗时: ${duration}ms`)
       delete window.__routeStartTime
     }
   })
@@ -109,7 +117,7 @@ export function getWebVitals() {
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries()
       const lastEntry = entries[entries.length - 1]
-      console.log(`🎨 LCP (最大内容绘制): ${lastEntry.renderTime || lastEntry.loadTime}ms`)
+      log(`🎨 LCP (最大内容绘制): ${lastEntry.renderTime || lastEntry.loadTime}ms`)
     })
     lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] })
   } catch (e) {
@@ -121,7 +129,7 @@ export function getWebVitals() {
     const fidObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries()
       entries.forEach((entry) => {
-        console.log(`⚡ FID (首次输入延迟): ${entry.processingStart - entry.startTime}ms`)
+        log(`⚡ FID (首次输入延迟): ${entry.processingStart - entry.startTime}ms`)
       })
     })
     fidObserver.observe({ entryTypes: ['first-input'] })
@@ -138,7 +146,7 @@ export function getWebVitals() {
           clsScore += entry.value
         }
       }
-      console.log(`📐 CLS (累积布局偏移): ${clsScore.toFixed(4)}`)
+      log(`📐 CLS (累积布局偏移): ${clsScore.toFixed(4)}`)
     })
     clsObserver.observe({ entryTypes: ['layout-shift'] })
   } catch (e) {
@@ -161,7 +169,7 @@ export function trackLazyComponent(componentName) {
     performance.measure(measureName, startMark, endMark)
     
     const measure = performance.getEntriesByName(measureName)[0]
-    console.log(`🔄 懒加载组件 [${componentName}] 耗时: ${measure.duration.toFixed(2)}ms`)
+    log(`🔄 懒加载组件 [${componentName}] 耗时: ${measure.duration.toFixed(2)}ms`)
     
     // 清理标记
     performance.clearMarks(startMark)
@@ -175,7 +183,7 @@ export function trackLazyComponent(componentName) {
  */
 export function enablePerformanceMonitoring() {
   if (import.meta.env.DEV) {
-    console.log('🔍 性能监控已启用')
+    log('🔍 性能监控已启用')
     logPagePerformance()
     getWebVitals()
   }

@@ -506,8 +506,71 @@ const viewScreenshotDetails = (screenshot) => {
   showDetailsDialog.value = true
 }
 
-const exportData = () => {
-  ElMessage.success('导出功能开发中')
+const exportData = async () => {
+  if (screenshots.value.length === 0) {
+    ElMessage.warning(t('asset.noDataToExport'))
+    return
+  }
+  
+  try {
+    ElMessage.info(t('asset.exportPreparing'))
+    
+    // 准备导出数据
+    const exportList = screenshots.value.map(item => ({
+      host: item.name || item.host,
+      port: item.port,
+      ip: item.ip,
+      title: item.title || '',
+      status: item.status,
+      technologies: (item.technologies || []).map(t => t.name || t).join('; '),
+      lastUpdated: item.lastUpdated
+    }))
+    
+    // 生成 CSV
+    const headers = [
+      t('asset.host'),
+      t('asset.port'),
+      t('asset.ip'),
+      t('asset.pageTitle'),
+      t('asset.statusCode'),
+      t('asset.technologies'),
+      t('asset.lastUpdated')
+    ]
+    
+    let csvContent = '\uFEFF' // BOM for UTF-8
+    csvContent += headers.join(',') + '\n'
+    
+    exportList.forEach(row => {
+      const values = [
+        row.host,
+        row.port,
+        row.ip,
+        `"${(row.title || '').replace(/"/g, '""')}"`,
+        row.status,
+        `"${(row.technologies || '').replace(/"/g, '""')}"`,
+        row.lastUpdated
+      ]
+      csvContent += values.join(',') + '\n'
+    })
+    
+    // 下载文件
+    const now = new Date()
+    const filename = `screenshots_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.csv`
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success(t('asset.exportSuccess'))
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error(t('asset.exportFailed'))
+  }
 }
 
 const getStatusType = (status) => {

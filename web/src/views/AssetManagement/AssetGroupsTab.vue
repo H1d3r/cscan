@@ -311,12 +311,6 @@ const loadData = async () => {
       if (res.code === 0) {
         groups.value = res.list || []
         total.value = res.total || 0
-        
-        // 调试：打印接收到的数据
-        console.log('资产分组数据:', groups.value)
-        groups.value.forEach(group => {
-          console.log(`分组: ${group.domain}, 状态: ${group.status}, 服务数: ${group.totalServices}`)
-        })
       } else {
         ElMessage.error(res.msg || '加载失败')
       }

@@ -18,8 +18,8 @@ func GetWorkspaceIds(ctx context.Context, svcCtx *svc.ServiceContext, workspaceI
 
 	var ids []string
 
-	// 查询所有工作空间
-	workspaces, err := svcCtx.WorkspaceModel.Find(ctx, bson.M{}, 1, 100)
+	// 查询所有工作空间（不分页）
+	workspaces, err := svcCtx.WorkspaceModel.Find(ctx, bson.M{}, 0, 0)
 	if err != nil {
 		// 如果查询失败，至少返回默认空间
 		return []string{"default"}

@@ -308,7 +308,62 @@ function resetFilters() {
 }
 
 function showExportMenu() {
-  ElMessage.info('导出功能待实现')
+  if (tableData.value.length === 0) {
+    ElMessage.warning('没有可导出的数据')
+    return
+  }
+  
+  try {
+    ElMessage.info('正在准备导出数据...')
+    
+    // 准备导出数据
+    const exportList = tableData.value.map(item => ({
+      host: item.host,
+      port: item.port,
+      ip: item.ip || '',
+      title: item.title || '',
+      status: item.status || '',
+      service: item.service || '',
+      technologies: getTechnologies(item).join('; ')
+    }))
+    
+    // 生成 CSV
+    const headers = ['主机', '端口', 'IP', '标题', '状态码', '服务', '技术栈']
+    
+    let csvContent = '\uFEFF' // BOM for UTF-8
+    csvContent += headers.join(',') + '\n'
+    
+    exportList.forEach(row => {
+      const values = [
+        row.host,
+        row.port,
+        row.ip,
+        `"${(row.title || '').replace(/"/g, '""')}"`,
+        row.status,
+        row.service,
+        `"${(row.technologies || '').replace(/"/g, '""')}"`
+      ]
+      csvContent += values.join(',') + '\n'
+    })
+    
+    // 下载文件
+    const now = new Date()
+    const filename = `screenshots_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.csv`
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error('导出失败')
+  }
 }
 
 function viewDetails(item) {

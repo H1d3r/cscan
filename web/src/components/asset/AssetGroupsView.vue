@@ -172,11 +172,57 @@ function handleCommand(command, row) {
       viewGroupDetails(row)
       break
     case 'export':
-      ElMessage.info('导出功能待实现')
+      exportGroupData(row)
       break
     case 'delete':
       handleDelete(row)
       break
+  }
+}
+
+function exportGroupData(row) {
+  try {
+    ElMessage.info('正在准备导出数据...')
+    
+    // 准备导出数据
+    const exportData = {
+      domain: row.domain,
+      totalServices: row.totalServices || 0,
+      status: row.status || '',
+      duration: row.duration || '',
+      lastUpdated: row.lastUpdated || ''
+    }
+    
+    // 生成 CSV
+    const headers = ['域名', '服务数', '状态', '持续时间', '最后更新']
+    
+    let csvContent = '\uFEFF' // BOM for UTF-8
+    csvContent += headers.join(',') + '\n'
+    csvContent += [
+      exportData.domain,
+      exportData.totalServices,
+      exportData.status,
+      exportData.duration,
+      exportData.lastUpdated
+    ].join(',') + '\n'
+    
+    // 下载文件
+    const now = new Date()
+    const filename = `asset_group_${row.domain}_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.csv`
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error('导出失败')
   }
 }
 

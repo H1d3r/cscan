@@ -432,11 +432,75 @@ const startVulnerabilityScan = () => {
     ElMessage.warning('请先选择要扫描的资产')
     return
   }
-  ElMessage.success(`开始扫描 ${selectedAssets.value.length} 个资产`)
+  // 跳转到新建任务页面，并传递选中的资产作为扫描目标
+  const targets = selectedAssets.value.map(a => `${a.host}:${a.port}`).join('\n')
+  // 使用 sessionStorage 临时存储目标
+  sessionStorage.setItem('scanTargets', targets)
+  ElMessage.success(`已选择 ${selectedAssets.value.length} 个资产，正在跳转到扫描任务创建页面...`)
+  setTimeout(() => {
+    window.location.href = '/task/create'
+  }, 500)
 }
 
-const exportAssets = () => {
-  ElMessage.success('导出功能开发中')
+const exportAssets = async () => {
+  if (filteredAssets.value.length === 0) {
+    ElMessage.warning('没有可导出的数据')
+    return
+  }
+  
+  try {
+    ElMessage.info('正在准备导出数据...')
+    
+    // 准备导出数据
+    const exportList = filteredAssets.value.map(item => ({
+      host: item.host,
+      port: item.port,
+      ip: item.ip,
+      service: item.service || '',
+      title: item.title || '',
+      status: item.status,
+      technologies: (item.technologies || []).join('; '),
+      lastUpdated: formatTimeAgo(item.lastUpdated)
+    }))
+    
+    // 生成 CSV
+    const headers = ['主机', '端口', 'IP', '服务', '标题', '状态码', '技术栈', '最后更新']
+    
+    let csvContent = '\uFEFF' // BOM for UTF-8
+    csvContent += headers.join(',') + '\n'
+    
+    exportList.forEach(row => {
+      const values = [
+        row.host,
+        row.port,
+        row.ip,
+        row.service,
+        `"${(row.title || '').replace(/"/g, '""')}"`,
+        row.status,
+        `"${(row.technologies || '').replace(/"/g, '""')}"`,
+        row.lastUpdated
+      ]
+      csvContent += values.join(',') + '\n'
+    })
+    
+    // 下载文件
+    const now = new Date()
+    const filename = `asset_inventory_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.csv`
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error('导出失败')
+  }
 }
 
 const handleSelectionChange = (selection) => {
@@ -446,13 +510,20 @@ const handleSelectionChange = (selection) => {
 const handleAction = async (command, row) => {
   switch (command) {
     case 'view':
-      ElMessage.info(`查看资产: ${row.host}`)
+      // 跳转到资产管理页面的资产清单标签页，并搜索该资产
+      window.location.href = `/asset-management?tab=inventory&domain=${encodeURIComponent(row.host)}`
       break
     case 'scan':
-      ElMessage.success(`开始扫描: ${row.host}`)
+      // 将资产添加到扫描目标并跳转
+      sessionStorage.setItem('scanTargets', `${row.host}:${row.port}`)
+      ElMessage.success(`正在跳转到扫描任务创建页面...`)
+      setTimeout(() => {
+        window.location.href = '/task/create'
+      }, 500)
       break
     case 'screenshot':
-      ElMessage.info(`查看截图: ${row.host}`)
+      // 跳转到截图页面并搜索该资产
+      window.location.href = `/asset-management?tab=screenshots&domain=${encodeURIComponent(row.host)}`
       break
     case 'delete':
       try {
