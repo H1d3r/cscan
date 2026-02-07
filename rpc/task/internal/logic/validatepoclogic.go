@@ -30,6 +30,33 @@ func NewValidatePocLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Valid
 
 // POC验证 - 创建验证任务并推送到队列，由Worker执行
 func (l *ValidatePocLogic) ValidatePoc(in *pb.ValidatePocReq) (*pb.ValidatePocResp, error) {
+	// 1. 检查是否有在线的Worker
+	workers, err := l.svcCtx.RedisClient.SMembers(l.ctx, "cscan:workers").Result()
+	if err != nil {
+		l.Logger.Errorf("ValidatePoc: failed to get workers, error=%v", err)
+		return &pb.ValidatePocResp{
+			Success: false,
+			Message: "获取Worker列表失败: " + err.Error(),
+		}, nil
+	}
+
+	hasActiveWorker := false
+	for _, worker := range workers {
+		// 检查Worker心跳key是否存在
+		exists, _ := l.svcCtx.RedisClient.Exists(l.ctx, "cscan:worker:"+worker).Result()
+		if exists > 0 {
+			hasActiveWorker = true
+			break
+		}
+	}
+
+	if !hasActiveWorker {
+		return &pb.ValidatePocResp{
+			Success: false,
+			Message: "当前没有在线的扫描节点(Worker)，无法执行任务。请检查Worker服务状态。",
+		}, nil
+	}
+
 	// 生成任务ID
 	taskId := uuid.New().String()
 
@@ -83,7 +110,7 @@ func (l *ValidatePocLogic) ValidatePoc(in *pb.ValidatePocReq) (*pb.ValidatePocRe
 	taskJson, _ := json.Marshal(task)
 	queueKey := "cscan:task:queue"
 	score := float64(time.Now().UnixNano())
-	err := l.svcCtx.RedisClient.ZAdd(l.ctx, queueKey, redis.Z{
+	err = l.svcCtx.RedisClient.ZAdd(l.ctx, queueKey, redis.Z{
 		Score:  score,
 		Member: taskJson,
 	}).Err()
@@ -120,7 +147,7 @@ func (l *ValidatePocLogic) ValidatePoc(in *pb.ValidatePocReq) (*pb.ValidatePocRe
 	})
 	l.svcCtx.RedisClient.Set(l.ctx, taskInfoKey, taskInfoData, 24*time.Hour)
 
-	l.Logger.Infof("ValidatePoc: task created, taskId=%s, targets=%d, pocId=%s, workspaceId=%s, batchMode=%v", 
+	l.Logger.Infof("ValidatePoc: task created, taskId=%s, targets=%d, pocId=%s, workspaceId=%s, batchMode=%v",
 		taskId, len(targetUrls), in.PocId, workspaceId, in.BatchMode)
 
 	return &pb.ValidatePocResp{

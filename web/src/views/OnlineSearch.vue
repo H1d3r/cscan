@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="online-search-page">
     <!-- 搜索区域 -->
     <el-card class="search-card">
@@ -187,7 +187,10 @@ function handleSourceChange() {
 async function handleImport() {
   await ElMessageBox.confirm(t('onlineSearch.confirmImportCurrent', { count: tableData.value.length }), t('common.tip'))
   
-  const res = await request.post('/onlineapi/import', { assets: tableData.value })
+  const res = await request.post('/onlineapi/import', { 
+    assets: tableData.value,
+    platform: store.searchForm.source 
+  })
   
   if (res.code === 0) {
     ElMessage.success(res.msg || t('onlineSearch.importSuccess'))

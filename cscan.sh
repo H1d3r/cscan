@@ -220,6 +220,12 @@ install_cscan() {
     # 等待服务启动
     wait_for_healthy
     
+    # 保存版本到本地 VERSION 文件
+    if [ "$remote_ver" != "unknown" ]; then
+        echo "$remote_ver" > VERSION
+        info "已保存版本信息: $remote_ver"
+    fi
+    
     show_install_success
 }
 
@@ -369,6 +375,12 @@ upgrade_cscan() {
         awk '{print $2}' | xargs -r docker rmi 2>/dev/null || true
     
     wait_for_healthy
+    
+    # 更新本地 VERSION 文件
+    if [ "$remote_ver" != "unknown" ]; then
+        echo "$remote_ver" > VERSION
+        info "已更新版本信息: $remote_ver"
+    fi
     
     info "升级完成！"
     show_version

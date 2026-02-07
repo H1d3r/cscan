@@ -47,7 +47,14 @@ request.interceptors.response.use(
     return res
   },
   error => {
-    ElMessage.error(error.message || '请求失败')
+    if (error.response && error.response.status === 401) {
+      const userStore = useUserStore()
+      userStore.logout()
+      router.push('/login')
+      ElMessage.error('登录已过期，请重新登录')
+    } else {
+      ElMessage.error(error.message || '请求失败')
+    }
     return Promise.reject(error)
   }
 )

@@ -13,6 +13,11 @@ export function validateSingleTarget(target) {
     return null // 空行或注释行
   }
 
+  // 检查是否是带协议的URL格式 (http:// 或 https://)
+  if (target.startsWith('http://') || target.startsWith('https://')) {
+    return validateURL(target)
+  }
+
   // 检查是否是 IPv6 格式（包含多个冒号）
   if (isIPv6Format(target)) {
     return validateIPv6Target(target)
@@ -53,7 +58,59 @@ export function validateSingleTarget(target) {
     return null
   }
 
-  return '无效的目标格式，请输入有效的IP、CIDR、IP范围或域名'
+  return '无效的目标格式，请输入有效的IP、CIDR、IP范围、域名或URL'
+}
+
+/**
+ * 校验URL格式
+ * 支持 http://domain.com 或 https://domain.com 以及带路径的URL
+ * @param {string} url - URL字符串
+ * @returns {string|null} - 错误信息，如果有效则返回 null
+ */
+function validateURL(url) {
+  try {
+    const urlObj = new URL(url)
+    
+    // 只支持 http 和 https 协议
+    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+      return '仅支持 http:// 或 https:// 协议'
+    }
+    
+    // 获取主机名
+    const hostname = urlObj.hostname
+    if (!hostname) {
+      return 'URL缺少主机名'
+    }
+    
+    // 检查主机名是否是有效的IP或域名
+    // 处理 IPv6 地址（被方括号包裹）
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      const ipv6 = hostname.slice(1, -1)
+      if (!isValidIPv6(ipv6)) {
+        return `无效的IPv6地址: ${hostname}`
+      }
+      return null
+    }
+    
+    // 检查是否是IPv4
+    if (isValidIPv4(hostname)) {
+      return null
+    }
+    
+    // 检查是否是有效域名
+    if (isValidDomain(hostname)) {
+      return null
+    }
+    
+    // 也允许 localhost
+    if (hostname === 'localhost') {
+      return null
+    }
+    
+    return `无效的主机名: ${hostname}`
+  } catch (e) {
+    return '无效的URL格式'
+  }
 }
 
 /**

@@ -20,18 +20,21 @@ if %errorlevel% neq 0 (
 )
 
 :get_versions
-REM Get local version from VERSION file if exists, or check if containers are running
+REM First check if containers are running to determine installation status
+docker inspect cscan_api >nul 2>&1
+if %errorlevel% neq 0 (
+    set "LOCAL_VERSION=Not Installed"
+    goto :get_remote_version
+)
+
+REM Get local version from VERSION file if exists
 if exist "VERSION" (
     for /f "tokens=*" %%i in (VERSION) do set "LOCAL_VERSION=%%i"
 ) else (
     set "LOCAL_VERSION=unknown"
 )
 
-REM Check if containers are running to determine installation status
-docker inspect cscan_api >nul 2>&1
-if %errorlevel% neq 0 (
-    set "LOCAL_VERSION=Not Installed"
-)
+:get_remote_version
 
 REM Get remote version from GitHub with better error handling
 set "REMOTE_VERSION=unknown"
@@ -78,9 +81,11 @@ REM Remove leading and trailing spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
 for /f "tokens=*" %%a in ("!REMOTE_VER_CLEAN!") do set "REMOTE_VER_CLEAN=%%a"
 
-REM Remove 'V' prefix for comparison if present
+REM Remove 'V' or 'v' prefix for comparison if present
 if "!LOCAL_VER_CLEAN:~0,1!"=="V" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
+if "!LOCAL_VER_CLEAN:~0,1!"=="v" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
 if "!REMOTE_VER_CLEAN:~0,1!"=="V" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
+if "!REMOTE_VER_CLEAN:~0,1!"=="v" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
 
 REM Remove any remaining spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
@@ -152,9 +157,11 @@ REM Remove leading and trailing spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
 for /f "tokens=*" %%a in ("!REMOTE_VER_CLEAN!") do set "REMOTE_VER_CLEAN=%%a"
 
-REM Remove 'V' prefix if present
+REM Remove 'V' or 'v' prefix if present
 if "!LOCAL_VER_CLEAN:~0,1!"=="V" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
+if "!LOCAL_VER_CLEAN:~0,1!"=="v" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
 if "!REMOTE_VER_CLEAN:~0,1!"=="V" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
+if "!REMOTE_VER_CLEAN:~0,1!"=="v" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
 
 REM Remove any remaining spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
@@ -234,9 +241,11 @@ REM Remove leading and trailing spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
 for /f "tokens=*" %%a in ("!REMOTE_VER_CLEAN!") do set "REMOTE_VER_CLEAN=%%a"
 
-REM Remove 'V' prefix if present
+REM Remove 'V' or 'v' prefix if present
 if "!LOCAL_VER_CLEAN:~0,1!"=="V" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
+if "!LOCAL_VER_CLEAN:~0,1!"=="v" set "LOCAL_VER_CLEAN=!LOCAL_VER_CLEAN:~1!"
 if "!REMOTE_VER_CLEAN:~0,1!"=="V" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
+if "!REMOTE_VER_CLEAN:~0,1!"=="v" set "REMOTE_VER_CLEAN=!REMOTE_VER_CLEAN:~1!"
 
 REM Remove any remaining spaces
 for /f "tokens=*" %%a in ("!LOCAL_VER_CLEAN!") do set "LOCAL_VER_CLEAN=%%a"
@@ -292,13 +301,13 @@ goto :pause_return
 echo.
 echo [CSCAN] WARNING: This will remove all CSCAN containers!
 set /p "confirm=Confirm uninstall? (Y/N): "
-if /i not "%confirm%"=="Y" (
+if /i not "!confirm!"=="Y" (
     echo [CSCAN] Uninstall cancelled
     goto :pause_return
 )
 
 set /p "del_data=Also delete data volumes? (Y/N): "
-if /i "%del_data%"=="Y" (
+if /i "!del_data!"=="Y" (
     echo [CSCAN] Stopping and removing containers with volumes...
     docker compose down -v
 ) else (
@@ -307,7 +316,7 @@ if /i "%del_data%"=="Y" (
 )
 
 set /p "del_images=Delete images? (Y/N): "
-if /i "%del_images%"=="Y" (
+if /i "!del_images!"=="Y" (
     echo [CSCAN] Removing images...
     docker rmi registry.cn-hangzhou.aliyuncs.com/txf7/cscan-api:latest 2>nul
     docker rmi registry.cn-hangzhou.aliyuncs.com/txf7/cscan-rpc:latest 2>nul

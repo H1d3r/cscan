@@ -46,6 +46,11 @@ func ValidateTargets(target string) []TargetValidationError {
 
 // validateSingleTarget 校验单个目标
 func validateSingleTarget(target string) error {
+	// 检查是否是带协议的URL格式 (http:// 或 https://)
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		return validateURL(target)
+	}
+
 	// 检查是否是 IPv6 格式
 	if isIPv6Format(target) {
 		return validateIPv6Target(target)
@@ -85,7 +90,102 @@ func validateSingleTarget(target string) error {
 		return nil
 	}
 
-	return fmt.Errorf("无效的目标格式，请输入有效的IP、CIDR、IP范围或域名")
+	return fmt.Errorf("无效的目标格式，请输入有效的IP、CIDR、IP范围、域名或URL")
+}
+
+// validateURL 校验URL格式
+// 支持 http://domain.com 或 https://domain.com 以及带路径的URL
+func validateURL(urlStr string) error {
+	// 解析URL
+	parsedURL, err := parseURL(urlStr)
+	if err != nil {
+		return fmt.Errorf("无效的URL格式: %v", err)
+	}
+
+	// 只支持 http 和 https 协议
+	if parsedURL.scheme != "http" && parsedURL.scheme != "https" {
+		return fmt.Errorf("仅支持 http:// 或 https:// 协议")
+	}
+
+	// 获取主机名
+	hostname := parsedURL.host
+	if hostname == "" {
+		return fmt.Errorf("URL缺少主机名")
+	}
+
+	// 去除端口部分
+	if idx := strings.LastIndex(hostname, ":"); idx != -1 {
+		// 检查是否是 host:port 格式
+		portStr := hostname[idx+1:]
+		if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
+			hostname = hostname[:idx]
+		}
+	}
+
+	// 处理 IPv6 地址（被方括号包裹）
+	if strings.HasPrefix(hostname, "[") && strings.HasSuffix(hostname, "]") {
+		ipv6 := hostname[1 : len(hostname)-1]
+		if ip := net.ParseIP(ipv6); ip != nil {
+			return nil
+		}
+		return fmt.Errorf("无效的IPv6地址: %s", hostname)
+	}
+
+	// 检查是否是IPv4
+	if ip := net.ParseIP(hostname); ip != nil {
+		return nil
+	}
+
+	// 检查是否是有效域名
+	if isValidDomain(hostname) {
+		return nil
+	}
+
+	// 也允许 localhost
+	if hostname == "localhost" {
+		return nil
+	}
+
+	return fmt.Errorf("无效的主机名: %s", hostname)
+}
+
+// parsedURL 简单的URL解析结果
+type parsedURL struct {
+	scheme string
+	host   string
+	path   string
+}
+
+// parseURL 简单的URL解析函数
+func parseURL(urlStr string) (*parsedURL, error) {
+	result := &parsedURL{}
+
+	// 解析协议
+	if strings.HasPrefix(urlStr, "https://") {
+		result.scheme = "https"
+		urlStr = urlStr[8:]
+	} else if strings.HasPrefix(urlStr, "http://") {
+		result.scheme = "http"
+		urlStr = urlStr[7:]
+	} else {
+		return nil, fmt.Errorf("不支持的协议")
+	}
+
+	// 解析主机和路径
+	slashIdx := strings.Index(urlStr, "/")
+	if slashIdx == -1 {
+		result.host = urlStr
+		result.path = ""
+	} else {
+		result.host = urlStr[:slashIdx]
+		result.path = urlStr[slashIdx:]
+	}
+
+	if result.host == "" {
+		return nil, fmt.Errorf("缺少主机名")
+	}
+
+	return result, nil
 }
 
 // isIPv6Format 检查是否是 IPv6 格式

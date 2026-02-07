@@ -915,7 +915,8 @@ type OnlineSearchResp struct {
 }
 
 type OnlineImportReq struct {
-	Assets []OnlineSearchResult `json:"assets"`
+	Platform string               `json:"platform"`
+	Assets   []OnlineSearchResult `json:"assets"`
 }
 
 // OnlineImportAllReq 导入全部资产请求

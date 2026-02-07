@@ -3403,10 +3403,16 @@ function startScanAssetsLogStream(taskIds) {
           scanAssetsProgress.vulnCount++
         }
         
-        // 从完成日志中提取漏洞数（格式：Batch scan completed: targets=X, vuls=Y, duration=Zs）
-        const vulMatch = displayMsg.match(/vuls[=:]\s*(\d+)/i)
+        // 从完成日志中提取漏洞数
+        // 匹配格式1: Batch scan completed: 50 targets, 2 vuls found
+        // 匹配格式2: Batch scan completed: targets=50, vuls=2
+        // 匹配格式3: Batch scan completed, duration: 27.45s, vuls: 2
+        const vulMatch = displayMsg.match(/vuls[:=]\s*(\d+)|(\d+)\s*vuls found/i)
         if (vulMatch) {
-          scanAssetsProgress.vulnCount = parseInt(vulMatch[1])
+          const count = vulMatch[1] || vulMatch[2]
+          if (count) {
+            scanAssetsProgress.vulnCount = parseInt(count)
+          }
         }
         
         // 限制日志数量
@@ -3461,7 +3467,14 @@ function startScanAssetsPoll() {
         if (res.results && res.results.length > 0) {
           vulnCount = res.results.filter(r => r.matched).length
         }
-        scanAssetsProgress.vulnCount = vulnCount
+        
+        // 如果结果中没有（可能是异步保存延迟），尝试使用进度中的计数（从日志解析的）
+        if (vulnCount === 0 && scanAssetsProgress.vulnCount > 0) {
+          vulnCount = scanAssetsProgress.vulnCount
+        } else {
+          scanAssetsProgress.vulnCount = vulnCount
+        }
+        
         scanAssetsProgress.completed = scanAssetsProgress.total
         
         scanAssetsLogs.value.push({

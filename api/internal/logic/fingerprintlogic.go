@@ -18,10 +18,10 @@ import (
 	"cscan/api/internal/types"
 	"cscan/model"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"gopkg.in/yaml.v3"
-	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // isHexString 检查字符串是否为十六进制字符串
@@ -146,7 +146,7 @@ func (l *FingerprintSaveLogic) FingerprintSave(req *types.FingerprintSaveReq) (*
 			Description: req.Description,
 			Enabled:     req.Enabled,
 		}
-		
+
 		// 检查是否已存在同名主动指纹
 		existingActive, _ := l.svcCtx.ActiveFingerprintModel.FindByName(l.ctx, req.Name)
 		if existingActive != nil {
@@ -302,7 +302,7 @@ func NewFingerprintBatchUpdateEnabledLogic(ctx context.Context, svcCtx *svc.Serv
 
 func (l *FingerprintBatchUpdateEnabledLogic) BatchUpdateEnabled(ids []string, enabled bool, all bool) (*types.BaseResp, error) {
 	var filter bson.M
-	
+
 	if all {
 		// 操作全部自定义指纹
 		filter = bson.M{"is_builtin": false}
@@ -335,7 +335,6 @@ func (l *FingerprintBatchUpdateEnabledLogic) BatchUpdateEnabled(ids []string, en
 	}
 	return &types.BaseResp{Code: 0, Msg: fmt.Sprintf("已%s %d 条指纹", action, count)}, nil
 }
-
 
 // FingerprintImportLogic 导入指纹
 type FingerprintImportLogic struct {
@@ -620,16 +619,16 @@ func (l *FingerprintImportLogic) parseARLFingerYAML(content string) ([]*model.Fi
 func parseAppRulesManually(content string) []ARLFingerprint {
 	var fingerprints []ARLFingerprint
 	lines := strings.Split(content, "\n")
-	
+
 	var currentAppName string
-	
+
 	for _, line := range lines {
 		// 跳过空行和注释
 		trimmedLine := strings.TrimSpace(line)
 		if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") {
 			continue
 		}
-		
+
 		// 检查是否是应用名称行（不以 - 开头，以 : 结尾或包含 :）
 		if !strings.HasPrefix(trimmedLine, "-") {
 			// 可能是应用名称
@@ -641,7 +640,7 @@ func parseAppRulesManually(content string) []ARLFingerprint {
 			}
 			continue
 		}
-		
+
 		// 规则行（以 - 开头）
 		if currentAppName != "" && strings.HasPrefix(trimmedLine, "-") {
 			rule := strings.TrimPrefix(trimmedLine, "-")
@@ -659,7 +658,7 @@ func parseAppRulesManually(content string) []ARLFingerprint {
 			}
 		}
 	}
-	
+
 	return fingerprints
 }
 
@@ -1811,7 +1810,6 @@ func matchRegexOrContains(text, pattern string) bool {
 	return re.MatchString(text)
 }
 
-
 // FingerprintBatchValidateLogic 批量验证指纹
 type FingerprintBatchValidateLogic struct {
 	ctx    context.Context
@@ -1969,7 +1967,15 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 				// 如果不存在，添加指纹
 				if !fpExists {
 					newApps := append(asset.App, fp.Name)
-					err := assetModel.Update(l.ctx, asset.Id.Hex(), bson.M{"app": newApps})
+
+					// 构建更新内容，同时标记资产为已更新
+					update := bson.M{
+						"app":                     newApps,
+						"update":                  true, // 标记为有更新
+						"last_status_change_time": time.Now(),
+					}
+
+					err := assetModel.Update(l.ctx, asset.Id.Hex(), update)
 					if err == nil {
 						updatedCount++
 					}
@@ -2104,10 +2110,10 @@ func (l *HttpServiceMappingDeleteLogic) HttpServiceMappingDelete(req *types.Http
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
-	
+
 	// 刷新缓存，确保删除的映射立即失效
 	l.svcCtx.HttpServiceMappingModel.RefreshCache(l.ctx)
-	
+
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }
 
@@ -2369,7 +2375,7 @@ func (l *HttpServiceImportLogic) HttpServiceImport(req *types.HttpServiceImportR
 // ParseAndImport 解析并导入HTTP服务映射配置
 func (l *HttpServiceImportLogic) ParseAndImport(content string) (*types.HttpServiceImportResp, error) {
 	lines := strings.Split(content, "\n")
-	
+
 	var httpPorts, httpsPorts, nonHttpPorts []int
 	var serviceMappings []struct {
 		ServiceName string
@@ -2383,7 +2389,7 @@ func (l *HttpServiceImportLogic) ParseAndImport(content string) (*types.HttpServ
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// 跳过空行和注释
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

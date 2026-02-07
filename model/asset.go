@@ -601,28 +601,50 @@ func (m *AssetHistoryModel) ExistsByAssetIdAndTaskId(ctx context.Context, assetI
 
 // Upsert 插入或更新资产
 func (m *AssetModel) Upsert(ctx context.Context, doc *Asset) error {
+	// 仅按 authority 匹配，忽略 taskId，确保同一资产被合并
 	filter := bson.M{"authority": doc.Authority}
-	if doc.TaskId != "" {
-		filter["taskId"] = doc.TaskId
-	}
 
 	now := time.Now()
+	setFields := bson.M{
+		"host":                    doc.Host,
+		"port":                    doc.Port,
+		"service":                 doc.Service,
+		"title":                   doc.Title,
+		"app":                     doc.App,
+		"source":                  doc.Source,
+		"is_http":                 doc.IsHTTP,
+		"update_time":             now,
+		"update":                  true, // 标记为有更新
+		"last_status_change_time": now,  // 更新状态变更时间，确保排在前面
+	}
+
+	// 如果有标签，使用 $addToSet 批量添加，避免覆盖原有标签
+	// 注意：由于 setFields 是 $set 操作，如果直接放 labels 会覆盖。
+	// 我们将 labels 拿出来单独处理，或者使用 Pipeline 更新（MongoDB 4.2+）。
+	// 为了兼容性和简便，对于 Upsert，我们分两步：
+	// 1. $setOnInsert 初始化 labels
+	// 2. $addToSet 追加新 labels
+	// 但 Upsert 一次操作无法同时 $set 和 $addToSet 同一个字段(如果 $set 包含它)。
+	// 且 doc.Labels 是 []string。
+	// 这里我们策略调整：
+	// 如果是新导入，我们希望带上标签。
+	// 如果是已存在，我们希望追加标签。
+	// MongoDB 的 $addToSet with $each 可以做到追加。
 	update := bson.M{
-		"$set": bson.M{
-			"host":        doc.Host,
-			"port":        doc.Port,
-			"service":     doc.Service,
-			"title":       doc.Title,
-			"app":         doc.App,
-			"source":      doc.Source,
-			"is_http":     doc.IsHTTP,
-			"update_time": now,
-		},
+		"$set": setFields,
 		"$setOnInsert": bson.M{
-			"_id":         primitive.NewObjectID(),
-			"create_time": now,
-			"new":         true,
+			"_id":             primitive.NewObjectID(),
+			"create_time":     now,
+			"new":             true,
+			"first_seen_time": now,
 		},
+	}
+
+	// 如果有标签需要更新
+	if len(doc.Labels) > 0 {
+		update["$addToSet"] = bson.M{
+			"labels": bson.M{"$each": doc.Labels},
+		}
 	}
 
 	opts := options.Update().SetUpsert(true)

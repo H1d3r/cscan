@@ -472,6 +472,12 @@ func (s *ScanResultService) SaveScanResultsWithHistory(ctx context.Context, req 
 			"update_time":    req.ScanTimestamp,
 		}
 
+		// 如果检测到变更，标记资产为已更新
+		if len(changes) > 0 {
+			update["update"] = true
+			update["last_status_change_time"] = req.ScanTimestamp
+		}
+
 		// Only update fields that are provided in the new scan
 		// Preserve user-modified fields like labels, memo, color_tag, etc.
 		if err := assetModel.Update(ctx, existingAsset.Id.Hex(), update); err != nil {
