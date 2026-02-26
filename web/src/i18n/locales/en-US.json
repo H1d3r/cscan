@@ -671,6 +671,8 @@
     "autoScanBuiltinMapping": "Auto Scan (Builtin Mapping)",
     "severityLevel": "Severity Level",
     "targetTimeout": "Target Timeout",
+    "forceScan": "Force Scan",
+    "forceScanHint": "Directly scan input targets with POC when no prior scan phases are enabled (skip asset discovery)",
     "specifyNucleiTemplate": "Specify Nuclei Template",
     "specifyCustomPoc": "Specify Custom POC",
     "followRedirect": "Follow Redirect",

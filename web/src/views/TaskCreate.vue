@@ -274,6 +274,11 @@
               <el-switch v-model="form.portidentifyEnable" />
             </el-form-item>
             <template v-if="form.portidentifyEnable">
+              <!-- 强制扫描：仅在端口扫描未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.portidentifyForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.identifyTool')">
                 <el-radio-group v-model="form.portidentifyTool">
                   <el-radio label="nmap">Nmap</el-radio>
@@ -308,6 +313,11 @@
               <el-switch v-model="form.fingerprintEnable" />
             </el-form-item>
             <template v-if="form.fingerprintEnable">
+              <!-- 强制扫描：仅在端口扫描和端口识别均未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable && !form.portidentifyEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.fingerprintForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.probeTool')">
                 <el-radio-group v-model="form.fingerprintTool">
                   <el-radio label="httpx">Httpx</el-radio>
@@ -358,6 +368,11 @@
               <span class="form-hint">{{ $t('task.dirScanHint') }}</span>
             </el-form-item>
             <template v-if="form.dirscanEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.dirscanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.scanDict')">
                 <div class="selected-dict-summary">
                   <el-tag type="primary" size="small" v-if="form.dirscanDictIds.length">
@@ -409,6 +424,11 @@
               <span class="form-hint">{{ $t('task.useNucleiEngine') }}</span>
             </el-form-item>
             <template v-if="form.pocscanEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.pocscanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.pocSource')">
                 <el-radio-group v-model="form.pocscanMode" @change="handlePocModeChange">
                   <el-radio label="auto">{{ $t('task.autoMatch') }}</el-radio>
@@ -933,6 +953,7 @@ const form = reactive({
   portidentifyArgs: '',
   portidentifyUDP: false,
   portidentifyFastMode: false,
+  portidentifyForceScan: false,
   // 指纹识别
   fingerprintEnable: true,
   fingerprintTool: 'httpx',
@@ -943,6 +964,7 @@ const form = reactive({
   fingerprintActiveTimeout: 10,
   fingerprintTimeout: 30,
   fingerprintFilterMode: 'http_mapping', // 过滤模式: http_mapping(HTTP映射) 或 service_mapping(服务映射)
+  fingerprintForceScan: false,
   // 漏洞扫描
   pocscanEnable: false,
   pocscanMode: 'auto',
@@ -951,6 +973,7 @@ const form = reactive({
   pocscanCustomOnly: false,
   pocscanSeverity: ['critical', 'high', 'medium'],
   pocscanTargetTimeout: 600,
+  pocscanForceScan: false,
   pocscanNucleiTemplateIds: [],
   pocscanCustomPocIds: [],
   // 保存已选择的对象信息（用于显示名称）
@@ -963,7 +986,14 @@ const form = reactive({
   dirscanThreads: 50,
   dirscanTimeout: 10,
   dirscanStatusCodes: [200, 301, 302, 401, 403],
-  dirscanFollowRedirect: false
+  dirscanFollowRedirect: false,
+  dirscanForceScan: false
+})
+
+// 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
+const hasPrePhaseEnabled = computed(() => {
+  return form.domainscanEnable || form.portscanEnable ||
+         form.portidentifyEnable || form.fingerprintEnable
 })
 
 const rules = {
@@ -1273,7 +1303,8 @@ function buildConfig() {
       concurrency: form.portidentifyConcurrency,
       args: form.portidentifyArgs,
       udp: form.portidentifyUDP,
-      fastMode: form.portidentifyFastMode
+      fastMode: form.portidentifyFastMode,
+      forceScan: form.portidentifyForceScan && !form.portscanEnable
     },
     fingerprint: {
       enable: form.fingerprintEnable,
@@ -1284,11 +1315,13 @@ function buildConfig() {
       activeScan: form.fingerprintActiveScan,
       activeTimeout: form.fingerprintActiveTimeout,
       targetTimeout: form.fingerprintTimeout,
-      filterMode: form.fingerprintFilterMode
+      filterMode: form.fingerprintFilterMode,
+      forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable
     },
     pocscan: {
       enable: form.pocscanEnable,
       useNuclei: true,
+      forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value,
       severity: form.pocscanSeverity.join(','),
       targetTimeout: form.pocscanTargetTimeout
     },
@@ -1298,7 +1331,8 @@ function buildConfig() {
       threads: form.dirscanThreads,
       timeout: form.dirscanTimeout,
       statusCodes: form.dirscanStatusCodes,
-      followRedirect: form.dirscanFollowRedirect
+      followRedirect: form.dirscanFollowRedirect,
+      forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value
     }
   }
 

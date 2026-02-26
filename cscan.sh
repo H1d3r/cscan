@@ -17,6 +17,9 @@ warning() { echo -e "\033[33m[CSCAN]\033[0m $*"; }
 error() { echo -e "\033[31m[CSCAN]\033[0m $*"; }
 abort() { error "$*"; exit 1; }
 
+# Ctrl+C 退出
+trap 'echo ""; info "已退出 CSCAN 管理工具"; exit 0' INT
+
 # 确认提示
 confirm() {
     echo -e -n "\033[36m[CSCAN] $* \033[1;36m(Y/n)\033[0m "
@@ -47,9 +50,9 @@ check_docker() {
             abort "请先安装 Docker"
         fi
     fi
-    
+
     docker version >/dev/null 2>&1 || abort "Docker 服务异常，请检查 Docker 是否正常运行"
-    
+
     # 检查 docker compose
     if docker compose version >/dev/null 2>&1; then
         COMPOSE_CMD="docker compose"
@@ -63,7 +66,7 @@ check_docker() {
             abort "请先安装 Docker Compose"
         fi
     fi
-    
+
     info "Docker 环境检查通过"
 }
 
@@ -95,7 +98,7 @@ get_local_version() {
         echo "未安装"
         return
     fi
-    
+
     # 优先从本地 VERSION 文件读取
     if [ -f "VERSION" ]; then
         local ver=$(cat VERSION | tr -d '\r\n ')
@@ -104,7 +107,7 @@ get_local_version() {
             return
         fi
     fi
-    
+
     # 尝试从容器镜像标签获取版本
     local image=$(docker inspect --format='{{.Config.Image}}' "cscan_api" 2>/dev/null)
     if [ -n "$image" ]; then
@@ -114,7 +117,7 @@ get_local_version() {
             return
         fi
     fi
-    
+
     # 如果都获取不到，显示镜像创建日期
     local created=$(docker inspect --format='{{.Created}}' "cscan_api" 2>/dev/null | cut -d'T' -f1)
     if [ -n "$created" ]; then
@@ -126,9 +129,16 @@ get_local_version() {
 
 # 获取远程最新版本
 get_remote_version() {
-    local version=$(curl -s --connect-timeout 5 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '\r\n ')
-    if [ -n "$version" ]; then
-        echo "$version"
+    # 从 GitHub 获取远程 VERSION 文件
+    local remote_ver=$(curl -s --connect-timeout 5 --max-time 10 "${GITHUB_RAW}/VERSION" 2>/dev/null | tr -d '\r\n ')
+    if [ -n "$remote_ver" ] && [[ ! "$remote_ver" =~ "Not Found" ]] && [[ ! "$remote_ver" =~ "<" ]]; then
+        echo "$remote_ver"
+        return
+    fi
+
+    # 网络不可用时回退到本地 VERSION 文件
+    if [ -f "VERSION" ]; then
+        cat VERSION | tr -d '\r\n '
     else
         echo "unknown"
     fi
@@ -138,19 +148,19 @@ get_remote_version() {
 compare_versions() {
     local local_ver=$1
     local remote_ver=$2
-    
+
     # 移除V前缀进行比较
     local_ver=${local_ver#V}
     local_ver=${local_ver#v}
     remote_ver=${remote_ver#V}
     remote_ver=${remote_ver#v}
-    
+
     # 如果包含latest或unknown，无法比较
     if [[ "$local_ver" == *"latest"* ]] || [[ "$local_ver" == "unknown" ]] || [[ "$remote_ver" == "unknown" ]]; then
         echo "unknown"
         return
     fi
-    
+
     if [ "$local_ver" = "$remote_ver" ]; then
         echo "same"
     elif [ "$(printf '%s\n' "$local_ver" "$remote_ver" | sort -V | head -n1)" = "$local_ver" ]; then
@@ -164,17 +174,17 @@ compare_versions() {
 check_update() {
     info "正在检查更新..."
     echo ""
-    
+
     local local_ver=$(get_local_version)
     local remote_ver=$(get_remote_version)
-    
+
     echo "----------------------------------------"
     printf "%-15s %s\n" "本地版本:" "$local_ver"
     printf "%-15s %s\n" "最新版本:" "$remote_ver"
     echo "----------------------------------------"
-    
+
     local result=$(compare_versions "$local_ver" "$remote_ver")
-    
+
     case $result in
         "same")
             info "当前已是最新版本"
@@ -198,34 +208,34 @@ check_update() {
 # 一键安装
 install_cscan() {
     info "开始安装 CSCAN..."
-    
+
     if [ ! -f "$COMPOSE_FILE" ]; then
         abort "未找到 $COMPOSE_FILE，请确保在 CSCAN 目录下执行"
     fi
-    
+
     # 获取最新版本号
     local remote_ver=$(get_remote_version)
     if [ "$remote_ver" != "unknown" ]; then
         info "将安装版本: $remote_ver"
     fi
-    
+
     # 拉取镜像
     info "正在拉取镜像..."
     $COMPOSE_CMD pull || abort "拉取镜像失败"
-    
+
     # 启动服务
     info "正在启动服务..."
     $COMPOSE_CMD up -d || abort "启动服务失败"
-    
+
     # 等待服务启动
     wait_for_healthy
-    
+
     # 保存版本到本地 VERSION 文件
     if [ "$remote_ver" != "unknown" ]; then
         echo "$remote_ver" > VERSION
         info "已保存版本信息: $remote_ver"
     fi
-    
+
     show_install_success
 }
 
@@ -234,12 +244,12 @@ show_version() {
     echo ""
     local local_ver=$(get_local_version)
     local remote_ver=$(get_remote_version)
-    
+
     info "版本信息："
     echo "----------------------------------------"
     printf "%-15s %-20s %-15s\n" "服务" "镜像标签" "状态"
     echo "----------------------------------------"
-    
+
     for service in "${SERVICES[@]}"; do
         local container_name=""
         case $service in
@@ -247,18 +257,18 @@ show_version() {
             "cscan-rpc") container_name="cscan_rpc" ;;
             "cscan-web") container_name="cscan_web" ;;
         esac
-        
+
         local status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null || echo "未运行")
         local image=$(docker inspect --format='{{.Config.Image}}' "$container_name" 2>/dev/null)
         local tag=$(echo "$image" | sed 's/.*://' || echo "-")
-        
+
         printf "%-15s %-20s %-15s\n" "$service" "$tag" "$status"
     done
     echo "----------------------------------------"
     printf "%-15s %s\n" "本地版本:" "$local_ver"
     printf "%-15s %s\n" "最新版本:" "$remote_ver"
     echo "----------------------------------------"
-    
+
     # 版本比较提示
     local result=$(compare_versions "$local_ver" "$remote_ver")
     if [ "$result" = "outdated" ]; then
@@ -272,7 +282,7 @@ wait_for_healthy() {
     local timeout=120
     local elapsed=0
     local interval=5
-    
+
     while [ $elapsed -lt $timeout ]; do
         local all_running=true
         for service in "cscan_api" "cscan_rpc" "cscan_web"; do
@@ -282,17 +292,17 @@ wait_for_healthy() {
                 break
             fi
         done
-        
+
         if [ "$all_running" = true ]; then
             info "所有服务已启动"
             return 0
         fi
-        
+
         sleep $interval
         elapsed=$((elapsed + interval))
         echo -n "."
     done
-    
+
     echo ""
     warning "部分服务可能未完全启动，请检查日志"
 }
@@ -318,7 +328,7 @@ show_install_success() {
 # 一键升级
 upgrade_cscan() {
     info "开始升级 CSCAN..."
-    
+
     # 检查是否有运行中的容器
     local running=false
     for service in "cscan_api" "cscan_rpc" "cscan_web"; do
@@ -327,61 +337,57 @@ upgrade_cscan() {
             break
         fi
     done
-    
+
     if [ "$running" = false ]; then
         abort "未检测到运行中的 CSCAN 服务"
     fi
-    
+
     # 显示版本信息
     local local_ver=$(get_local_version)
     local remote_ver=$(get_remote_version)
-    
+
     echo ""
     echo "----------------------------------------"
     printf "%-15s %s\n" "当前版本:" "$local_ver"
     printf "%-15s %s\n" "最新版本:" "$remote_ver"
     echo "----------------------------------------"
-    
+
     local result=$(compare_versions "$local_ver" "$remote_ver")
     if [ "$result" = "same" ]; then
-        info "当前已是最新版本"
-        if ! confirm "是否强制重新拉取镜像?"; then
-            return
-        fi
+        info "当前已是最新版本，无需升级"
+        return
     elif [ "$result" = "newer" ]; then
-        warning "本地版本较新，可能是开发版本"
-        if ! confirm "是否继续?"; then
-            return
-        fi
+        info "本地版本较新，无需升级"
+        return
     fi
-    
+
     if ! confirm "确认升级? 升级过程中服务将短暂中断"; then
         info "取消升级"
         return
     fi
-    
+
     # 拉取最新镜像
     info "正在拉取最新镜像..."
     $COMPOSE_CMD pull "${SERVICES[@]}" || abort "拉取镜像失败"
-    
+
     # 重启服务
     info "正在重启服务..."
     $COMPOSE_CMD up -d "${SERVICES[@]}" || abort "重启服务失败"
-    
+
     # 清理旧的 CSCAN 镜像（只清理 cscan 相关的悬空镜像）
     info "正在清理旧的 CSCAN 镜像..."
     docker images --filter "dangling=true" --format "{{.Repository}}:{{.Tag}} {{.ID}}" 2>/dev/null | \
         grep -E "registry.cn-hangzhou.aliyuncs.com/txf7/cscan-" | \
         awk '{print $2}' | xargs -r docker rmi 2>/dev/null || true
-    
+
     wait_for_healthy
-    
+
     # 更新本地 VERSION 文件
     if [ "$remote_ver" != "unknown" ]; then
         echo "$remote_ver" > VERSION
         info "已更新版本信息: $remote_ver"
     fi
-    
+
     info "升级完成！"
     show_version
 }
@@ -389,12 +395,12 @@ upgrade_cscan() {
 # 一键卸载
 uninstall_cscan() {
     warning "此操作将删除所有 CSCAN 容器和数据！"
-    
+
     if ! confirm "确认卸载 CSCAN?"; then
         info "取消卸载"
         return
     fi
-    
+
     if ! confirm "是否同时删除数据卷（数据库、配置等）?"; then
         # 仅删除容器
         info "正在停止并删除容器..."
@@ -404,7 +410,7 @@ uninstall_cscan() {
         info "正在停止并删除容器及数据卷..."
         $COMPOSE_CMD down -v || warning "停止容器失败"
     fi
-    
+
     if confirm "是否删除镜像?"; then
         info "正在删除镜像..."
         for service in "${SERVICES[@]}"; do
@@ -413,7 +419,7 @@ uninstall_cscan() {
         docker rmi "docker.1ms.run/redis:7-alpine" 2>/dev/null
         docker rmi "docker.1ms.run/mongo:6" 2>/dev/null
     fi
-    
+
     info "CSCAN 已卸载"
 }
 
@@ -427,7 +433,7 @@ show_logs() {
     echo "0. 返回"
     echo -n "请选择: "
     read opt
-    
+
     case $opt in
         1) docker logs -f --tail 100 cscan_api ;;
         2) docker logs -f --tail 100 cscan_rpc ;;
@@ -470,17 +476,10 @@ show_status() {
 # 主菜单
 main_menu() {
     clear
-    
-    # 获取版本信息
+
+    # 仅获取本地版本信息
     local local_ver=$(get_local_version 2>/dev/null)
-    local remote_ver=$(get_remote_version 2>/dev/null)
-    local update_hint=""
-    
-    local result=$(compare_versions "$local_ver" "$remote_ver" 2>/dev/null)
-    if [ "$result" = "outdated" ]; then
-        update_hint=" \033[33m[有新版本: $remote_ver]\033[0m"
-    fi
-    
+
     echo ""
     echo "  ██████╗███████╗ ██████╗ █████╗ ███╗   ██╗"
     echo " ██╔════╝██╔════╝██╔════╝██╔══██╗████╗  ██║"
@@ -492,7 +491,7 @@ main_menu() {
     echo -e "\033[33m===================================================="
     echo -e " CSCAN 管理工具 v${SCRIPT_VERSION}"
     echo -e " 企业级分布式网络资产扫描平台"
-    echo -e " 当前版本: ${local_ver}${update_hint}"
+    echo -e " 当前版本: ${local_ver}"
     echo -e " 当前时间: $(date +"%Y-%m-%d %H:%M:%S")"
     echo -e "====================================================\033[0m"
     echo ""
@@ -509,7 +508,7 @@ main_menu() {
     echo ""
     echo -n " 请输入选项: "
     read opt
-    
+
     case $opt in
         1) install_cscan ;;
         2) upgrade_cscan ;;
@@ -523,7 +522,7 @@ main_menu() {
         0) exit 0 ;;
         *) warning "无效选项" ;;
     esac
-    
+
     echo ""
     echo -e "\033[33m按任意键返回主菜单...\033[0m"
     read -n 1 -s

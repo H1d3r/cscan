@@ -104,24 +104,25 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 func (b *TaskBuilder) countEnabledModules(configMap map[string]interface{}) int {
 	// Simplified parsing for counting
 	// Since we are working with map[string]interface{}, we need to check keys safely
+	// Note: JSON keys from task config are lowercase (e.g. "domainscan", "portscan")
 	count := 0
 
 	// DomainScan
-	if ds, ok := configMap["domainScan"].(map[string]interface{}); ok {
+	if ds, ok := configMap["domainscan"].(map[string]interface{}); ok {
 		if enable, ok := ds["enable"].(bool); ok && enable {
 			count++
 		}
 	}
 
 	// PortScan (default enabled if missing or nil)
-	if ps, ok := configMap["portScan"].(map[string]interface{}); !ok || ps == nil {
+	if ps, ok := configMap["portscan"].(map[string]interface{}); !ok || ps == nil {
 		count++
 	} else if enable, ok := ps["enable"].(bool); ok && enable {
 		count++
 	}
 
 	// Other modules...
-	modules := []string{"portIdentify", "fingerprint", "dirScan", "pocScan"}
+	modules := []string{"portidentify", "fingerprint", "dirscan", "pocscan"}
 	for _, mod := range modules {
 		if m, ok := configMap[mod].(map[string]interface{}); ok {
 			if enable, ok := m["enable"].(bool); ok && enable {

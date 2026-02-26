@@ -676,6 +676,8 @@
     "autoScanBuiltinMapping": "自动扫描(内置映射)",
     "severityLevel": "严重级别",
     "targetTimeout": "目标超时",
+    "forceScan": "强制扫描",
+    "forceScanHint": "未启用前序扫描阶段时，直接使用输入目标进行POC扫描（跳过资产发现）",
     "specifyNucleiTemplate": "指定Nuclei模板",
     "specifyCustomPoc": "指定自定义POC",
     "followRedirect": "跟随重定向",

@@ -26,12 +26,12 @@ const (
 
 // PriorityQueueMetrics 优先级队列性能指标
 type PriorityQueueMetrics struct {
-	PushCount      int64         // 推送任务总数
-	PopCount       int64         // 弹出任务总数
-	PushLatencySum int64         // 推送延迟总和（纳秒）
-	PopLatencySum  int64         // 弹出延迟总和（纳秒）
-	LastPushTime   time.Time     // 最后推送时间
-	LastPopTime    time.Time     // 最后弹出时间
+	PushCount      int64     // 推送任务总数
+	PopCount       int64     // 弹出任务总数
+	PushLatencySum int64     // 推送延迟总和（纳秒）
+	PopLatencySum  int64     // 弹出延迟总和（纳秒）
+	LastPushTime   time.Time // 最后推送时间
+	LastPopTime    time.Time // 最后弹出时间
 	mu             sync.RWMutex
 }
 
@@ -74,12 +74,12 @@ func (m *PriorityQueueMetrics) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"pushCount":       pushCount,
-		"popCount":        popCount,
+		"pushCount":        pushCount,
+		"popCount":         popCount,
 		"avgPushLatencyMs": avgPushLatency,
 		"avgPopLatencyMs":  avgPopLatency,
-		"lastPushTime":    lastPush,
-		"lastPopTime":     lastPop,
+		"lastPushTime":     lastPush,
+		"lastPopTime":      lastPop,
 	}
 }
 
@@ -455,11 +455,12 @@ type DirScanConfig struct {
 	StatusCodes    []int    `json:"statusCodes"`    // 有效状态码列表
 	Extensions     []string `json:"extensions"`     // 文件扩展名
 	FollowRedirect bool     `json:"followRedirect"` // 是否跟随重定向
+	ForceScan      bool     `json:"forceScan"`      // 强制扫描：无资产时直接使用目标
 }
 
 type PortScanConfig struct {
 	Enable            bool   `json:"enable"`
-	Tool              string `json:"tool"`              // tcp, masscan, naabu
+	Tool              string `json:"tool"` // tcp, masscan, naabu
 	Ports             string `json:"ports"`
 	Rate              int    `json:"rate"`              // 每秒发送包数，默认3000，建议3000-7000
 	Timeout           int    `json:"timeout"`           // 端口扫描超时时间(秒)，默认5秒
@@ -483,6 +484,7 @@ type PortIdentifyConfig struct {
 	Args        string `json:"args"`        // Nmap额外参数，如 "-sV --version-intensity 5"
 	UDP         bool   `json:"udp"`         // 是否扫描UDP端口 (仅 fingerprintx)
 	FastMode    bool   `json:"fastMode"`    // 快速模式 (仅 fingerprintx)
+	ForceScan   bool   `json:"forceScan"`   // 强制扫描：无资产时直接使用目标
 }
 
 type DomainScanConfig struct {
@@ -501,24 +503,24 @@ type DomainScanConfig struct {
 	Concurrent         int      `json:"concurrent"`         // DNS解析并发数
 	SubdomainDictIds   []string `json:"subdomainDictIds"`   // 子域名暴力破解字典ID列表
 	// 子域名暴力破解引擎配置
-	BruteforceEngine     string   `json:"bruteforceEngine"`     // 暴力破解引擎: dnsx, ksubdomain (默认ksubdomain)
-	BruteforceTimeout    int      `json:"bruteforceTimeout"`    // 暴力破解超时时间(分钟)
-	Bandwidth            string   `json:"bandwidth"`            // ksubdomain带宽限制，如"5M", "10M", "100M"
-	Retry                int      `json:"retry"`                // ksubdomain重试次数
-	WildcardMode         string   `json:"wildcardMode"`         // ksubdomain泛解析过滤模式: basic, advanced, none
+	BruteforceEngine  string `json:"bruteforceEngine"`  // 暴力破解引擎: dnsx, ksubdomain (默认ksubdomain)
+	BruteforceTimeout int    `json:"bruteforceTimeout"` // 暴力破解超时时间(分钟)
+	Bandwidth         string `json:"bandwidth"`         // ksubdomain带宽限制，如"5M", "10M", "100M"
+	Retry             int    `json:"retry"`             // ksubdomain重试次数
+	WildcardMode      string `json:"wildcardMode"`      // ksubdomain泛解析过滤模式: basic, advanced, none
 	// Dnsx增强功能
-	RecursiveBrute       bool     `json:"recursiveBrute"`       // 递归爆破
-	RecursiveDictIds     []string `json:"recursiveDictIds"`     // 递归爆破字典ID列表
-	WildcardDetect       bool     `json:"wildcardDetect"`       // 泛解析检测并处理
+	RecursiveBrute   bool     `json:"recursiveBrute"`   // 递归爆破
+	RecursiveDictIds []string `json:"recursiveDictIds"` // 递归爆破字典ID列表
+	WildcardDetect   bool     `json:"wildcardDetect"`   // 泛解析检测并处理
 }
 
 type FingerprintConfig struct {
 	Enable        bool   `json:"enable"`
-	Tool          string `json:"tool"`          // 探测工具: httpx, builtin (wappalyzer)
-	Httpx         bool   `json:"httpx"`         // 已废弃，使用Tool字段
+	Tool          string `json:"tool"`  // 探测工具: httpx, builtin (wappalyzer)
+	Httpx         bool   `json:"httpx"` // 已废弃，使用Tool字段
 	IconHash      bool   `json:"iconHash"`
-	Wappalyzer    bool   `json:"wappalyzer"`    // 已废弃，builtin模式自动启用
-	CustomEngine  bool   `json:"customEngine"`  // 使用自定义指纹引擎（ARL格式）
+	Wappalyzer    bool   `json:"wappalyzer"`   // 已废弃，builtin模式自动启用
+	CustomEngine  bool   `json:"customEngine"` // 使用自定义指纹引擎（ARL格式）
 	Screenshot    bool   `json:"screenshot"`
 	ActiveScan    bool   `json:"activeScan"`    // 启用主动指纹扫描
 	ActiveTimeout int    `json:"activeTimeout"` // 主动指纹单个请求超时时间(秒)，默认10秒
@@ -526,6 +528,7 @@ type FingerprintConfig struct {
 	TargetTimeout int    `json:"targetTimeout"` // 单个目标超时时间(秒)，默认30秒
 	Concurrency   int    `json:"concurrency"`   // 指纹识别并发数，默认10
 	FilterMode    string `json:"filterMode"`    // 过滤模式: "http_mapping"(使用HTTP映射), "service_mapping"(使用服务映射过滤非HTTP)
+	ForceScan     bool   `json:"forceScan"`     // 强制扫描：无资产时直接使用目标
 }
 
 type PocScanConfig struct {
@@ -547,6 +550,7 @@ type PocScanConfig struct {
 	NucleiTemplateIds []string            `json:"nucleiTemplateIds"` // Nuclei模板ID列表（新）
 	CustomPocIds      []string            `json:"customPocIds"`      // 自定义POC ID列表（新）
 	TagMappings       map[string][]string `json:"tagMappings"`       // 应用名称到Nuclei标签的映射
+	ForceScan         bool                `json:"forceScan"`         // 强制扫描：无资产时直接使用目标进行POC扫描
 }
 
 // ParseTaskConfig 解析任务配置

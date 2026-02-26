@@ -28,25 +28,25 @@ import (
 type WorkerConfig struct {
 	Name        string `json:"name"`
 	IP          string `json:"ip"`
-	ServerAddr  string `json:"serverAddr"`  // API 服务地址 (e.g., http://server:8888)
-	InstallKey  string `json:"installKey"`  // 安装密钥
+	ServerAddr  string `json:"serverAddr"` // API 服务地址 (e.g., http://server:8888)
+	InstallKey  string `json:"installKey"` // 安装密钥
 	Concurrency int    `json:"concurrency"`
 	Timeout     int    `json:"timeout"`
 }
 
 // Worker 工作节点
 type Worker struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	config      WorkerConfig
-	httpClient  *WorkerHTTPClient // HTTP 客户端（替代 RPC 和 Redis）
-	wsClient    *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
-	scanners    map[string]scanner.Scanner
-	taskChan    chan *scheduler.TaskInfo
-	resultChan  chan *scanner.ScanResult
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
-	mu          sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	config     WorkerConfig
+	httpClient *WorkerHTTPClient // HTTP 客户端（替代 RPC 和 Redis）
+	wsClient   *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
+	scanners   map[string]scanner.Scanner
+	taskChan   chan *scheduler.TaskInfo
+	resultChan chan *scanner.ScanResult
+	stopChan   chan struct{}
+	wg         sync.WaitGroup
+	mu         sync.Mutex
 
 	taskStarted  int
 	taskExecuted int
@@ -257,6 +257,11 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 
 	// 注册扫描器
 	w.registerScanners()
+
+	// 初始化自适应扫描配置（根据系统硬件自动调整扫描器参数）
+	adaptiveCfg := scanner.GetGlobalAdaptiveConfig()
+	logx.Infof("[Worker] Adaptive scan config initialized: profile=%s, CPU=%d cores, Mem=%d MB",
+		adaptiveCfg.Profile, adaptiveCfg.CPUCores, adaptiveCfg.TotalMemoryMB)
 
 	// 创建任务执行器集成（在扫描器注册后）
 	w.taskRunnerIntegration = NewTaskRunnerIntegration(w)
@@ -477,7 +482,7 @@ func (w *Worker) processTaskWithRecovery(workerId int) {
 			return
 		default:
 		}
-		
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -486,7 +491,7 @@ func (w *Worker) processTaskWithRecovery(workerId int) {
 			}()
 			w.processTaskLoop()
 		}()
-		
+
 		// 如果 processTaskLoop 正常返回（stopChan 关闭），退出
 		select {
 		case <-w.stopChan:
@@ -530,7 +535,7 @@ func (w *Worker) fetchTasksWithRecovery() {
 			return
 		default:
 		}
-		
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -539,7 +544,7 @@ func (w *Worker) fetchTasksWithRecovery() {
 			}()
 			w.fetchTasksLoop()
 		}()
-		
+
 		select {
 		case <-w.stopChan:
 			return
@@ -559,7 +564,7 @@ func (w *Worker) fetchTasksLoop() {
 			return
 		default:
 			hasTask := w.pullTask()
-			
+
 			// 使用自适应调度器获取动态拉取间隔
 			var interval time.Duration
 			if w.adaptiveScheduler != nil {
@@ -579,7 +584,7 @@ func (w *Worker) fetchTasksLoop() {
 					interval = 500 * time.Millisecond
 				}
 			}
-			
+
 			time.Sleep(interval)
 		}
 	}
@@ -594,7 +599,7 @@ func (w *Worker) reportResultWithRecovery() {
 			return
 		default:
 		}
-		
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -603,7 +608,7 @@ func (w *Worker) reportResultWithRecovery() {
 			}()
 			w.reportResultLoop()
 		}()
-		
+
 		select {
 		case <-w.stopChan:
 			return
@@ -623,7 +628,7 @@ func (w *Worker) keepAliveWithRecovery() {
 			return
 		default:
 		}
-		
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -632,7 +637,7 @@ func (w *Worker) keepAliveWithRecovery() {
 			}()
 			w.keepAliveLoop()
 		}()
-		
+
 		select {
 		case <-w.stopChan:
 			return
@@ -652,7 +657,7 @@ func (w *Worker) controlPollingWithRecovery() {
 			return
 		default:
 		}
-		
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -661,7 +666,7 @@ func (w *Worker) controlPollingWithRecovery() {
 			}()
 			w.controlPollingLoop()
 		}()
-		
+
 		select {
 		case <-w.stopChan:
 			return
@@ -923,7 +928,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	baseCtx := context.Background()
 	startTime := time.Now()
-	
+
 	// 添加函数入口日志
 	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s", task.TaskId, task.MainTaskId)
 
@@ -1045,7 +1050,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 输出任务开始日志（包含关键配置信息）
 	var enabledPhases []string
 	var configDetails []string
-	
+
 	if config.DomainScan != nil {
 		configDetails = append(configDetails, fmt.Sprintf("DomainScan.Enable=%v", config.DomainScan.Enable))
 		if config.DomainScan.Enable {
@@ -1054,7 +1059,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	} else {
 		configDetails = append(configDetails, "DomainScan=nil")
 	}
-	
+
 	if config.PortScan != nil {
 		configDetails = append(configDetails, fmt.Sprintf("PortScan.Enable=%v", config.PortScan.Enable))
 		if config.PortScan.Enable {
@@ -1063,7 +1068,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	} else {
 		configDetails = append(configDetails, "PortScan=nil")
 	}
-	
+
 	if config.PortIdentify != nil {
 		configDetails = append(configDetails, fmt.Sprintf("PortIdentify.Enable=%v", config.PortIdentify.Enable))
 		if config.PortIdentify.Enable {
@@ -1072,7 +1077,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	} else {
 		configDetails = append(configDetails, "PortIdentify=nil")
 	}
-	
+
 	if config.Fingerprint != nil {
 		configDetails = append(configDetails, fmt.Sprintf("Fingerprint.Enable=%v", config.Fingerprint.Enable))
 		if config.Fingerprint.Enable {
@@ -1081,7 +1086,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	} else {
 		configDetails = append(configDetails, "Fingerprint=nil")
 	}
-	
+
 	if config.DirScan != nil {
 		configDetails = append(configDetails, fmt.Sprintf("DirScan.Enable=%v", config.DirScan.Enable))
 		if config.DirScan.Enable {
@@ -1090,7 +1095,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	} else {
 		configDetails = append(configDetails, "DirScan=nil")
 	}
-	
+
 	if config.PocScan != nil {
 		configDetails = append(configDetails, fmt.Sprintf("PocScan.Enable=%v", config.PocScan.Enable))
 		if config.PocScan.Enable {
@@ -1310,10 +1315,10 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 						ResolveDNS:     config.DomainScan.ResolveDNS,
 						Concurrent:     w.config.Concurrency * 10,
 						// 引擎配置
-						Engine:         config.DomainScan.BruteforceEngine,
-						Bandwidth:      config.DomainScan.Bandwidth,
-						Retry:          config.DomainScan.Retry,
-						WildcardMode:   config.DomainScan.WildcardMode,
+						Engine:       config.DomainScan.BruteforceEngine,
+						Bandwidth:    config.DomainScan.Bandwidth,
+						Retry:        config.DomainScan.Retry,
+						WildcardMode: config.DomainScan.WildcardMode,
 						// 增强功能配置
 						RecursiveBrute: config.DomainScan.RecursiveBrute,
 						RecursiveDepth: 2,
@@ -1598,6 +1603,15 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	// 执行端口识别（Nmap服务识别）- 独立阶段
 	if config.PortIdentify != nil && config.PortIdentify.Enable && !completedPhases["portidentify"] {
+		// 强制扫描模式：没有资产时从用户输入目标生成资产
+		if len(allAssets) == 0 && target != "" && config.PortIdentify.ForceScan {
+			generatedAssets := scanner.GenerateAssetsFromTargets(target)
+			if len(generatedAssets) > 0 {
+				allAssets = append(allAssets, generatedAssets...)
+				w.taskLog(task.TaskId, LevelInfo, "Port identify: generated %d assets from target (force scan)", len(generatedAssets))
+			}
+		}
+
 		// 没有资产时跳过实际扫描，但仍需递增进度
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Port identify: skipped (no assets)")
@@ -1641,6 +1655,15 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	// 执行指纹识别
 	if config.Fingerprint != nil && config.Fingerprint.Enable && !completedPhases["fingerprint"] {
+		// 强制扫描模式：没有资产时从用户输入目标生成资产
+		if len(allAssets) == 0 && target != "" && config.Fingerprint.ForceScan {
+			generatedAssets := scanner.GenerateAssetsFromTargets(target)
+			if len(generatedAssets) > 0 {
+				allAssets = append(allAssets, generatedAssets...)
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: generated %d assets from target (force scan)", len(generatedAssets))
+			}
+		}
+
 		// 没有资产时跳过实际扫描，但仍需递增进度
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: skipped (no assets)")
@@ -1652,131 +1675,131 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
 				return
 			} else if ctrl == "PAUSE" {
-			w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")
-			w.saveTaskProgress(ctx, task, completedPhases, allAssets)
-			return
-		}
-
-		// 更新当前阶段
-		w.updateTaskProgressWithPhase(ctx, task.TaskId, 60, "指纹识别中", "指纹识别")
-
-		if s, ok := w.scanners["fingerprint"]; ok {
-			// 根据过滤模式处理资产
-			assetsToScan := allAssets
-			filterMode := config.Fingerprint.FilterMode
-			if filterMode == "" {
-				filterMode = "http_mapping" // 默认使用HTTP映射模式
-			}
-
-			if filterMode == "service_mapping" {
-				// 模式B：使用服务映射过滤非HTTP服务
-				var httpAssets []*scanner.Asset
-				nonHttpCount := 0
-				
-				for _, asset := range allAssets {
-					// 通过全局HTTP服务检查器判断服务是否为HTTP
-					// 如果服务映射中明确标识为非HTTP，则排除
-					if globalHttpServiceChecker := scanner.GetHttpServiceChecker(); globalHttpServiceChecker != nil {
-						serviceLower := strings.ToLower(asset.Service)
-						if isHttp, found := globalHttpServiceChecker.IsHttpService(serviceLower); found {
-							if !isHttp {
-								// 服务映射中明确标识为非HTTP，排除
-								nonHttpCount++
-								continue
-							}
-						}
-						// 未在服务映射中找到或标识为HTTP，保留
-					}
-					httpAssets = append(httpAssets, asset)
-				}
-				
-				assetsToScan = httpAssets
-				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=service_mapping, filtered %d assets (excluded %d non-HTTP services), remaining %d assets", 
-					len(allAssets), nonHttpCount, len(httpAssets))
-			} else {
-				// 模式A：使用HTTP映射（默认行为，不做额外过滤）
-				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=http_mapping, using all %d assets", len(allAssets))
-			}
-
-			// 获取单目标超时配置
-			targetTimeout := config.Fingerprint.TargetTimeout
-			if targetTimeout <= 0 {
-				targetTimeout = 30 // 默认30秒
-			}
-			// 使用Worker并发数覆盖配置中的并发数
-			config.Fingerprint.Concurrency = w.config.Concurrency
-			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v, filterMode=%s", 
-				len(assetsToScan), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan, filterMode)
-
-			// 每次扫描前实时加载HTTP服务映射配置
-			w.loadHttpServiceMappings()
-
-			// 如果启用自定义指纹引擎，加载自定义指纹（包括主动指纹）
-			if config.Fingerprint.CustomEngine {
-				w.loadCustomFingerprints(ctx, s.(*scanner.FingerprintScanner), config.Fingerprint.ActiveScan)
-			}
-
-			// 创建带超时的上下文，防止指纹识别卡死
-			fingerprintTimeout := config.Fingerprint.Timeout
-			if fingerprintTimeout <= 0 {
-				fingerprintTimeout = 300 // 默认5分钟总超时
-			}
-			fpCtx, fpCancel := context.WithTimeout(ctx, time.Duration(fingerprintTimeout)*time.Second)
-
-			// 创建任务日志回调
-			fpTaskLogger := func(level, format string, args ...interface{}) {
-				w.taskLog(task.TaskId, level, format, args...)
-			}
-
-			result, err := s.Scan(fpCtx, &scanner.ScanConfig{
-				Assets:     assetsToScan,
-				Options:    config.Fingerprint,
-				TaskLogger: fpTaskLogger,
-			})
-			fpCancel()
-
-			// 检查是否超时
-			if fpCtx.Err() == context.DeadlineExceeded {
-				w.taskLog(task.TaskId, LevelWarn, "Fingerprint scan timeout after %ds, continuing with partial results", fingerprintTimeout)
-			}
-
-			// 检查是否被取消
-			if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+				w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")
+				w.saveTaskProgress(ctx, task, completedPhases, allAssets)
 				return
 			}
 
-			if err == nil && result != nil {
-				// 构建 Host:Port -> Asset 的映射，用于匹配指纹结果
-				assetMap := make(map[string]*scanner.Asset)
-				for _, asset := range allAssets {
-					key := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
-					assetMap[key] = asset
+			// 更新当前阶段
+			w.updateTaskProgressWithPhase(ctx, task.TaskId, 60, "指纹识别中", "指纹识别")
+
+			if s, ok := w.scanners["fingerprint"]; ok {
+				// 根据过滤模式处理资产
+				assetsToScan := allAssets
+				filterMode := config.Fingerprint.FilterMode
+				if filterMode == "" {
+					filterMode = "http_mapping" // 默认使用HTTP映射模式
 				}
 
-				// 通过 Host:Port 匹配来更新资产信息，而不是按索引
-				for _, fpAsset := range result.Assets {
-					key := fmt.Sprintf("%s:%d", fpAsset.Host, fpAsset.Port)
-					if originalAsset, ok := assetMap[key]; ok {
-						originalAsset.Service = fpAsset.Service
-						originalAsset.Title = fpAsset.Title
-						originalAsset.App = fpAsset.App
-						originalAsset.HttpStatus = fpAsset.HttpStatus
-						originalAsset.HttpHeader = fpAsset.HttpHeader
-						originalAsset.HttpBody = fpAsset.HttpBody
-						originalAsset.Server = fpAsset.Server
-						originalAsset.IconHash = fpAsset.IconHash
-						originalAsset.Screenshot = fpAsset.Screenshot
+				if filterMode == "service_mapping" {
+					// 模式B：使用服务映射过滤非HTTP服务
+					var httpAssets []*scanner.Asset
+					nonHttpCount := 0
+
+					for _, asset := range allAssets {
+						// 通过全局HTTP服务检查器判断服务是否为HTTP
+						// 如果服务映射中明确标识为非HTTP，则排除
+						if globalHttpServiceChecker := scanner.GetHttpServiceChecker(); globalHttpServiceChecker != nil {
+							serviceLower := strings.ToLower(asset.Service)
+							if isHttp, found := globalHttpServiceChecker.IsHttpService(serviceLower); found {
+								if !isHttp {
+									// 服务映射中明确标识为非HTTP，排除
+									nonHttpCount++
+									continue
+								}
+							}
+							// 未在服务映射中找到或标识为HTTP，保留
+						}
+						httpAssets = append(httpAssets, asset)
 					}
+
+					assetsToScan = httpAssets
+					w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=service_mapping, filtered %d assets (excluded %d non-HTTP services), remaining %d assets",
+						len(allAssets), nonHttpCount, len(httpAssets))
+				} else {
+					// 模式A：使用HTTP映射（默认行为，不做额外过滤）
+					w.taskLog(task.TaskId, LevelInfo, "Fingerprint: FilterMode=http_mapping, using all %d assets", len(allAssets))
 				}
 
-				// 指纹识别完成后保存更新结果
-				w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, allAssets)
+				// 获取单目标超时配置
+				targetTimeout := config.Fingerprint.TargetTimeout
+				if targetTimeout <= 0 {
+					targetTimeout = 30 // 默认30秒
+				}
+				// 使用Worker并发数覆盖配置中的并发数
+				config.Fingerprint.Concurrency = w.config.Concurrency
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v, filterMode=%s",
+					len(assetsToScan), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan, filterMode)
+
+				// 每次扫描前实时加载HTTP服务映射配置
+				w.loadHttpServiceMappings()
+
+				// 如果启用自定义指纹引擎，加载自定义指纹（包括主动指纹）
+				if config.Fingerprint.CustomEngine {
+					w.loadCustomFingerprints(ctx, s.(*scanner.FingerprintScanner), config.Fingerprint.ActiveScan)
+				}
+
+				// 创建带超时的上下文，防止指纹识别卡死
+				fingerprintTimeout := config.Fingerprint.Timeout
+				if fingerprintTimeout <= 0 {
+					fingerprintTimeout = 300 // 默认5分钟总超时
+				}
+				fpCtx, fpCancel := context.WithTimeout(ctx, time.Duration(fingerprintTimeout)*time.Second)
+
+				// 创建任务日志回调
+				fpTaskLogger := func(level, format string, args ...interface{}) {
+					w.taskLog(task.TaskId, level, format, args...)
+				}
+
+				result, err := s.Scan(fpCtx, &scanner.ScanConfig{
+					Assets:     assetsToScan,
+					Options:    config.Fingerprint,
+					TaskLogger: fpTaskLogger,
+				})
+				fpCancel()
+
+				// 检查是否超时
+				if fpCtx.Err() == context.DeadlineExceeded {
+					w.taskLog(task.TaskId, LevelWarn, "Fingerprint scan timeout after %ds, continuing with partial results", fingerprintTimeout)
+				}
+
+				// 检查是否被取消
+				if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+					w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+					return
+				}
+
+				if err == nil && result != nil {
+					// 构建 Host:Port -> Asset 的映射，用于匹配指纹结果
+					assetMap := make(map[string]*scanner.Asset)
+					for _, asset := range allAssets {
+						key := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
+						assetMap[key] = asset
+					}
+
+					// 通过 Host:Port 匹配来更新资产信息，而不是按索引
+					for _, fpAsset := range result.Assets {
+						key := fmt.Sprintf("%s:%d", fpAsset.Host, fpAsset.Port)
+						if originalAsset, ok := assetMap[key]; ok {
+							originalAsset.Service = fpAsset.Service
+							originalAsset.Title = fpAsset.Title
+							originalAsset.App = fpAsset.App
+							originalAsset.HttpStatus = fpAsset.HttpStatus
+							originalAsset.HttpHeader = fpAsset.HttpHeader
+							originalAsset.HttpBody = fpAsset.HttpBody
+							originalAsset.Server = fpAsset.Server
+							originalAsset.IconHash = fpAsset.IconHash
+							originalAsset.Screenshot = fpAsset.Screenshot
+						}
+					}
+
+					// 指纹识别完成后保存更新结果
+					w.saveAssetResult(ctx, task.WorkspaceId, task.MainTaskId, orgId, allAssets)
+				}
 			}
-		}
-		completedPhases["fingerprint"] = true
-		// 指纹识别模块完成，递增子任务进度
-		w.incrSubTaskDone(ctx, task, "指纹识别")
+			completedPhases["fingerprint"] = true
+			// 指纹识别模块完成，递增子任务进度
+			w.incrSubTaskDone(ctx, task, "指纹识别")
 		} // 结束 len(allAssets) > 0 的 else 分支
 	}
 
@@ -1792,12 +1815,12 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	// 执行目录扫描（在指纹识别之后、POC扫描之前）
 	if config.DirScan != nil && config.DirScan.Enable && !completedPhases["dirscan"] {
-		// 如果没有资产，尝试从目标生成 HTTP 资产（用于只启用目录扫描的场景）
-		if len(allAssets) == 0 {
-			generatedAssets := w.generateHTTPAssetsFromTarget(target)
+		// 强制扫描模式：没有资产时从用户输入目标生成资产
+		if len(allAssets) == 0 && target != "" && config.DirScan.ForceScan {
+			generatedAssets := scanner.GenerateAssetsFromTargets(target)
 			if len(generatedAssets) > 0 {
-				allAssets = generatedAssets
-				w.taskLog(task.TaskId, LevelInfo, "Dir scan: generated %d HTTP assets from target", len(allAssets))
+				allAssets = append(allAssets, generatedAssets...)
+				w.taskLog(task.TaskId, LevelInfo, "Dir scan: generated %d assets from target (force scan)", len(generatedAssets))
 			}
 		}
 
@@ -1845,6 +1868,15 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 	// 执行POC扫描 (使用Nuclei引擎)
 	if config.PocScan != nil && config.PocScan.Enable && !completedPhases["pocscan"] {
+		// 强制扫描模式：没有资产时从用户输入目标生成资产
+		if len(allAssets) == 0 && target != "" && config.PocScan.ForceScan {
+			generatedAssets := scanner.GenerateAssetsFromTargets(target)
+			if len(generatedAssets) > 0 {
+				allAssets = append(allAssets, generatedAssets...)
+				w.taskLog(task.TaskId, LevelInfo, "POC scan: generated %d assets from target (force scan)", len(generatedAssets))
+			}
+		}
+
 		// 没有资产时跳过实际扫描，但仍需递增进度
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "POC scan: skipped (no assets)")
@@ -1854,194 +1886,194 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			// 在POC扫描开始前检查停止信号
 			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
 				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
-			return
-		} else if ctrl == "PAUSE" {
-			w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")
-			w.saveTaskProgress(ctx, task, completedPhases, allAssets)
-			return
-		}
-
-		// 更新当前阶段
-		w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "漏洞扫描中", "漏洞扫描")
-
-		if s, ok := w.scanners["nuclei"]; ok {
-			// 获取单目标超时配置
-			pocTargetTimeout := config.PocScan.TargetTimeout
-			if pocTargetTimeout <= 0 {
-				pocTargetTimeout = 600 // 默认600秒
+				return
+			} else if ctrl == "PAUSE" {
+				w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")
+				w.saveTaskProgress(ctx, task, completedPhases, allAssets)
+				return
 			}
-			w.taskLog(task.TaskId, LevelInfo, "POC scan: %d assets, timeout %ds/target", len(allAssets), pocTargetTimeout)
 
-			// 从数据库获取模板（所有模板都存储在数据库中）
-			var templates []string
-			var autoTags []string
+			// 更新当前阶段
+			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "漏洞扫描中", "漏洞扫描")
 
-			// 检查是否有模板ID列表（任务创建时已筛选好的模板）
-			if len(config.PocScan.NucleiTemplateIds) > 0 || len(config.PocScan.CustomPocIds) > 0 {
-				// 通过RPC根据ID获取模板内容（包括默认模板和自定义POC)
-				templates = w.getTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
-				w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
-			} else if config.PocScan.CustomPocOnly {
-				// 只使用自定义POC模式，但没有指定具体ID，获取所有自定义POC
-				severities := []string{}
-				if config.PocScan.Severity != "" {
-					severities = strings.Split(config.PocScan.Severity, ",")
+			if s, ok := w.scanners["nuclei"]; ok {
+				// 获取单目标超时配置
+				pocTargetTimeout := config.PocScan.TargetTimeout
+				if pocTargetTimeout <= 0 {
+					pocTargetTimeout = 600 // 默认600秒
 				}
-				templates = w.getAllCustomPocs(ctx, severities)
-				w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
-			} else {
-				// 没有预设的模板ID，根据自动扫描配置生成标签并获取模板
-				var matchInfos []TagMatchInfo
-				if config.PocScan.AutoScan || config.PocScan.AutomaticScan {
-					autoTags, matchInfos = w.generateAutoTags(allAssets, config.PocScan)
-					// 输出匹配信息日志
-					for _, info := range matchInfos {
-						sourceDesc := "自定义标签映射"
-						if info.Source == "builtin" {
-							sourceDesc = "内置映射"
-						}
-						w.taskLog(task.TaskId, LevelInfo, "Auto-scan matched: fingerprint [%s] -> tags %v (source: %s)", info.Fingerprint, info.Tags, sourceDesc)
-					}
-				}
+				w.taskLog(task.TaskId, LevelInfo, "POC scan: %d assets, timeout %ds/target", len(allAssets), pocTargetTimeout)
 
-				if len(autoTags) > 0 {
-					// 有自动生成的标签，通过RPC获取符合标签的模板
+				// 从数据库获取模板（所有模板都存储在数据库中）
+				var templates []string
+				var autoTags []string
+
+				// 检查是否有模板ID列表（任务创建时已筛选好的模板）
+				if len(config.PocScan.NucleiTemplateIds) > 0 || len(config.PocScan.CustomPocIds) > 0 {
+					// 通过RPC根据ID获取模板内容（包括默认模板和自定义POC)
+					templates = w.getTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
+					w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+				} else if config.PocScan.CustomPocOnly {
+					// 只使用自定义POC模式，但没有指定具体ID，获取所有自定义POC
 					severities := []string{}
 					if config.PocScan.Severity != "" {
 						severities = strings.Split(config.PocScan.Severity, ",")
 					}
-					templates = w.getTemplatesByTags(ctx, autoTags, severities)
-					w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+					templates = w.getAllCustomPocs(ctx, severities)
+					w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
 				} else {
-					// 没有模板ID也没有自动标签，记录警告
-					w.taskLog(task.TaskId, LevelWarn, "No POC templates configured, skipping POC scan")
-				}
-			}
-
-			// 只有在有模板时才执行扫描
-			if len(templates) > 0 {
-				// 用于统计漏洞数量
-				var vulCount int
-
-				// 创建漏洞缓冲区，发现漏洞立即保存
-				vulBuffer := NewVulnerabilityBuffer(1)
-
-				// 获取单目标超时配置
-				targetTimeout := config.PocScan.TargetTimeout
-				if targetTimeout <= 0 {
-					targetTimeout = 600 // 默认600秒
-				}
-
-				// 总超时基于目标数量和单目标超时计算，至少10分钟
-				pocTimeout := targetTimeout * len(allAssets)
-				if pocTimeout < 600 {
-					pocTimeout = 600
-				}
-				pocCtx, pocCancel := context.WithTimeout(ctx, time.Duration(pocTimeout)*time.Second)
-
-				// 启动后台刷新协程
-				flushDone := make(chan struct{})
-				go func() {
-					defer close(flushDone)
-					ticker := time.NewTicker(5 * time.Second) // 5秒也刷新一次
-					defer ticker.Stop()
-					for {
-						select {
-						case <-pocCtx.Done():
-							return
-						case <-flushDone:
-							return
-						case <-vulBuffer.flushChan:
-							vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-								w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
-							})
-						case <-ticker.C:
-							vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
-								w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
-							})
+					// 没有预设的模板ID，根据自动扫描配置生成标签并获取模板
+					var matchInfos []TagMatchInfo
+					if config.PocScan.AutoScan || config.PocScan.AutomaticScan {
+						autoTags, matchInfos = w.generateAutoTags(allAssets, config.PocScan)
+						// 输出匹配信息日志
+						for _, info := range matchInfos {
+							sourceDesc := "自定义标签映射"
+							if info.Source == "builtin" {
+								sourceDesc = "内置映射"
+							}
+							w.taskLog(task.TaskId, LevelInfo, "Auto-scan matched: fingerprint [%s] -> tags %v (source: %s)", info.Fingerprint, info.Tags, sourceDesc)
 						}
 					}
-				}()
 
-				// 构建Nuclei扫描选项，设置回调函数批量保存漏洞
-				taskIdForCallback := task.TaskId // 捕获taskId用于回调
-
-				nucleiOpts := &scanner.NucleiOptions{
-					Severity:        config.PocScan.Severity,
-					Tags:            autoTags,
-					ExcludeTags:     config.PocScan.ExcludeTags,
-					RateLimit:       config.PocScan.RateLimit,
-					Concurrency:     config.PocScan.Concurrency,
-					Timeout:         pocTimeout,
-					TargetTimeout:   targetTimeout,
-					AutoScan:        false, // 标签已在Worker端生成
-					AutomaticScan:   false,
-					CustomPocOnly:   config.PocScan.CustomPocOnly,
-					CustomTemplates: templates,
-					TagMappings:     config.PocScan.TagMappings,
-					// 设置回调函数，发现漏洞时添加到缓冲区
-					OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
-						vulCount++
-						w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
-						vulBuffer.Add(vul)
-					},
-				}
-				// 设置默认
-				if nucleiOpts.RateLimit == 0 {
-					nucleiOpts.RateLimit = 150
-				}
-				if nucleiOpts.Concurrency == 0 {
-					nucleiOpts.Concurrency = 25
+					if len(autoTags) > 0 {
+						// 有自动生成的标签，通过RPC获取符合标签的模板
+						severities := []string{}
+						if config.PocScan.Severity != "" {
+							severities = strings.Split(config.PocScan.Severity, ",")
+						}
+						templates = w.getTemplatesByTags(ctx, autoTags, severities)
+						w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+					} else {
+						// 没有模板ID也没有自动标签，记录警告
+						w.taskLog(task.TaskId, LevelWarn, "No POC templates configured, skipping POC scan")
+					}
 				}
 
-				// 创建任务日志回调
-				pocTaskLogger := func(level, format string, args ...interface{}) {
-					w.taskLog(task.TaskId, level, format, args...)
-				}
+				// 只有在有模板时才执行扫描
+				if len(templates) > 0 {
+					// 用于统计漏洞数量
+					var vulCount int
 
-				result, err := s.Scan(pocCtx, &scanner.ScanConfig{
-					Assets:     allAssets,
-					Options:    nucleiOpts,
-					TaskLogger: pocTaskLogger,
-				})
-				pocCancel()
+					// 创建漏洞缓冲区，发现漏洞立即保存
+					vulBuffer := NewVulnerabilityBuffer(1)
 
-				// 扫描完成后，刷新剩余的漏洞
-				vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
-					w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
-				})
+					// 获取单目标超时配置
+					targetTimeout := config.PocScan.TargetTimeout
+					if targetTimeout <= 0 {
+						targetTimeout = 600 // 默认600秒
+					}
 
-				// 检查是否超时
-				if pocCtx.Err() == context.DeadlineExceeded {
-					w.taskLog(task.TaskId, LevelWarn, "POC scan timeout after %ds, continuing with partial results", pocTimeout)
-				}
+					// 总超时基于目标数量和单目标超时计算，至少10分钟
+					pocTimeout := targetTimeout * len(allAssets)
+					if pocTimeout < 600 {
+						pocTimeout = 600
+					}
+					pocCtx, pocCancel := context.WithTimeout(ctx, time.Duration(pocTimeout)*time.Second)
 
-				// 检查是否被停止
-				if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-					w.taskLog(task.TaskId, LevelInfo, "Task stopped")
-					return
-				}
+					// 启动后台刷新协程
+					flushDone := make(chan struct{})
+					go func() {
+						defer close(flushDone)
+						ticker := time.NewTicker(5 * time.Second) // 5秒也刷新一次
+						defer ticker.Stop()
+						for {
+							select {
+							case <-pocCtx.Done():
+								return
+							case <-flushDone:
+								return
+							case <-vulBuffer.flushChan:
+								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
+									w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+								})
+							case <-ticker.C:
+								vulBuffer.Flush(pocCtx, func(vuls []*scanner.Vulnerability) {
+									w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+								})
+							}
+						}
+					}()
 
-				if err != nil {
-					w.taskLog(task.TaskId, LevelError, "POC scan error: %v", err)
-				}
-				if result != nil {
-					allVuls = append(allVuls, result.Vulnerabilities...)
-					if vulCount > 0 {
-						w.taskLog(task.TaskId, LevelInfo, "POC scan completed: found %d vulnerabilities", vulCount)
+					// 构建Nuclei扫描选项，设置回调函数批量保存漏洞
+					taskIdForCallback := task.TaskId // 捕获taskId用于回调
+
+					nucleiOpts := &scanner.NucleiOptions{
+						Severity:        config.PocScan.Severity,
+						Tags:            autoTags,
+						ExcludeTags:     config.PocScan.ExcludeTags,
+						RateLimit:       config.PocScan.RateLimit,
+						Concurrency:     config.PocScan.Concurrency,
+						Timeout:         pocTimeout,
+						TargetTimeout:   targetTimeout,
+						AutoScan:        false, // 标签已在Worker端生成
+						AutomaticScan:   false,
+						CustomPocOnly:   config.PocScan.CustomPocOnly,
+						CustomTemplates: templates,
+						TagMappings:     config.PocScan.TagMappings,
+						// 设置回调函数，发现漏洞时添加到缓冲区
+						OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
+							vulCount++
+							w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
+							vulBuffer.Add(vul)
+						},
+					}
+					// 设置默认
+					if nucleiOpts.RateLimit == 0 {
+						nucleiOpts.RateLimit = 150
+					}
+					if nucleiOpts.Concurrency == 0 {
+						nucleiOpts.Concurrency = 25
+					}
+
+					// 创建任务日志回调
+					pocTaskLogger := func(level, format string, args ...interface{}) {
+						w.taskLog(task.TaskId, level, format, args...)
+					}
+
+					result, err := s.Scan(pocCtx, &scanner.ScanConfig{
+						Assets:     allAssets,
+						Options:    nucleiOpts,
+						TaskLogger: pocTaskLogger,
+					})
+					pocCancel()
+
+					// 扫描完成后，刷新剩余的漏洞
+					vulBuffer.Flush(ctx, func(vuls []*scanner.Vulnerability) {
+						w.saveVulResult(ctx, task.WorkspaceId, task.MainTaskId, vuls)
+					})
+
+					// 检查是否超时
+					if pocCtx.Err() == context.DeadlineExceeded {
+						w.taskLog(task.TaskId, LevelWarn, "POC scan timeout after %ds, continuing with partial results", pocTimeout)
+					}
+
+					// 检查是否被停止
+					if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+						w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+						return
+					}
+
+					if err != nil {
+						w.taskLog(task.TaskId, LevelError, "POC scan error: %v", err)
+					}
+					if result != nil {
+						allVuls = append(allVuls, result.Vulnerabilities...)
+						if vulCount > 0 {
+							w.taskLog(task.TaskId, LevelInfo, "POC scan completed: found %d vulnerabilities", vulCount)
+						}
 					}
 				}
 			}
-		}
-		// POC扫描模块完成，递增子任务进度
-		w.incrSubTaskDone(ctx, task, "漏洞扫描")
+			// POC扫描模块完成，递增子任务进度
+			w.incrSubTaskDone(ctx, task, "漏洞扫描")
 		} // 结束 len(allAssets) > 0 的 else 分支
 	}
 
 	// 更新任务状态为完成
 	duration := time.Since(startTime).Seconds()
 	result := fmt.Sprintf("Assets:%d Vuls:%d Duration:%.0fs", len(allAssets), len(allVuls), duration)
-	
+
 	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, result)
 	w.taskLog(task.TaskId, LevelInfo, "Completed: %s", result)
 	// 注意：taskExecuted 由 defer 递增，无需在此处理
@@ -2356,7 +2388,7 @@ func (w *Worker) keepAliveLoop() {
 			if err := w.sendHeartbeatWithRetry(); err != nil {
 				consecutiveFailures++
 				w.logger.Warn("Heartbeat failed (%d/%d): %v", consecutiveFailures, maxFailures, err)
-				
+
 				if consecutiveFailures >= maxFailures {
 					w.logger.Error("Heartbeat failed %d times consecutively, worker may be marked offline", maxFailures)
 					// 不主动退出，继续尝试，让服务端决定是否标记离线
@@ -2378,11 +2410,11 @@ func (w *Worker) sendHeartbeatWithRetry() error {
 		if i > 0 {
 			time.Sleep(2 * time.Second)
 		}
-		
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := w.doSendHeartbeat(ctx)
 		cancel()
-		
+
 		if err == nil {
 			return nil
 		}
@@ -2468,7 +2500,7 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 			os.Exit(0)
 		}()
 	}
-	
+
 	return nil
 }
 
@@ -2829,7 +2861,7 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 	// 通过 HTTP 接口获取被动指纹配置
 	var passiveFingerprints []*model.Fingerprint
 	passiveFpMap := make(map[string]*model.Fingerprint)
-	
+
 	resp, err := w.httpClient.GetFingerprints(ctx, &FingerprintsReq{
 		EnabledOnly: true,
 	})
@@ -2895,7 +2927,7 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 					CSS:       afp.Css,
 					URL:       afp.Url,
 				}
-				
+
 				// 如果API没有返回规则，尝试从本地被动指纹映射获取
 				if mfp.Rule == "" && len(mfp.HTML) == 0 && len(mfp.Headers) == 0 {
 					if passiveFp := passiveFpMap[strings.ToLower(afp.Name)]; passiveFp != nil {
@@ -2916,7 +2948,7 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 				} else if mfp.Rule != "" {
 					w.logger.Debug("Active fingerprint '%s' loaded with rule from API: %s", afp.Name, mfp.Rule)
 				}
-				
+
 				// 解析ID
 				if afp.Id != "" {
 					if oid, err := primitive.ObjectIDFromHex(afp.Id); err == nil {
@@ -3187,12 +3219,14 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		w.taskLog(task.TaskId, LevelInfo, "[%s] No vulnerability found", task.TaskId)
 	}
 
-	// 保存结果到Redis
-	w.savePocValidationResult(ctx, task.TaskId, batchId, validationResults, "")
-
-	// 更新任务状态
+	// 先更新任务状态和进度
 	resultMsg := fmt.Sprintf("Validation completed: matched=%v, vuls=%d, duration=%.2fs", matched, vulCount, duration)
 	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, resultMsg)
+
+	// 最后保存验证结果到Redis（包含详细的results JSON数据）
+	// 注意：必须在updateTaskStatus之后调用，否则result字段会被纯文本覆盖，
+	// 导致RPC层解析results失败，前端误判为"未发现漏洞"
+	w.savePocValidationResult(ctx, task.TaskId, batchId, validationResults, "")
 	// 注意：taskExecuted 由 executeTask 的 defer 递增，无需在此处理
 }
 
@@ -3336,12 +3370,14 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		}
 	}
 
-	// 保存结果到Redis
-	w.savePocValidationResult(ctx, task.TaskId, "", validationResults, "")
-
-	// 更新任务状态
+	// 先更新任务状态和进度
 	resultMsg := fmt.Sprintf("Batch scan completed: targets=%d, vuls=%d, duration=%.2fs", len(urls), vulCount, duration)
 	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, resultMsg)
+
+	// 最后保存验证结果到Redis（包含详细的results JSON数据）
+	// 注意：必须在updateTaskStatus之后调用，否则result字段会被纯文本覆盖，
+	// 导致RPC层解析results失败，前端误判为"未发现漏洞"
+	w.savePocValidationResult(ctx, task.TaskId, "", validationResults, "")
 	// 注意：taskExecuted 由 executeTask 的 defer 递增，无需在此处理
 }
 

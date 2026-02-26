@@ -30,8 +30,8 @@ import (
 // FingerprintScanner 指纹扫描器
 type FingerprintScanner struct {
 	BaseScanner
-	client               *http.Client
-	wappalyzerClient     *wappalyzer.Wappalyze
+	client                  *http.Client
+	wappalyzerClient        *wappalyzer.Wappalyze
 	customFingerprintEngine *CustomFingerprintEngine
 }
 
@@ -72,8 +72,8 @@ func (s *FingerprintScanner) SetCustomFingerprintEngine(engine *CustomFingerprin
 // FingerprintOptions 指纹识别选项
 type FingerprintOptions struct {
 	Enable        bool   `json:"enable"`
-	Tool          string `json:"tool"`          // 探测工具: httpx, builtin (默认httpx)
-	Httpx         bool   `json:"httpx"`         // 已废弃，兼容旧配置
+	Tool          string `json:"tool"`  // 探测工具: httpx, builtin (默认httpx)
+	Httpx         bool   `json:"httpx"` // 已废弃，兼容旧配置
 	Screenshot    bool   `json:"screenshot"`
 	IconHash      bool   `json:"iconHash"`
 	Wappalyzer    bool   `json:"wappalyzer"`
@@ -106,20 +106,20 @@ func (o *FingerprintOptions) Validate() error {
 	return nil
 }
 
-
 // Scan 执行指纹识别
 func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 解析配置
+	// 解析配置 - 使用自适应参数
+	adaptive := GetGlobalAdaptiveConfig()
 	opts := &FingerprintOptions{
 		Enable:        true,
 		Tool:          "httpx", // 默认使用httpx
 		IconHash:      true,
 		Wappalyzer:    true,
-		CustomEngine:  true,  // 默认启用自定义指纹引擎
+		CustomEngine:  true, // 默认启用自定义指纹引擎
 		Screenshot:    false,
-		Timeout:       300,   // 总超时默认5分钟
-		TargetTimeout: 30,    // 单目标超时默认30秒
-		Concurrency:   1,     // 默认串行扫描，由 Worker 并发控制
+		Timeout:       adaptive.FingerprintTimeout,     // 自适应: 低配600s, 中配300s, 高配300s
+		TargetTimeout: adaptive.FingerprintTargetTmout, // 自适应: 低配20s, 中配30s, 高配30s
+		Concurrency:   adaptive.FingerprintConcurrency, // 自适应: 低配3, 中配5, 高配5
 	}
 	if config.Options != nil {
 		switch v := config.Options.(type) {
@@ -151,7 +151,7 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if opts.TargetTimeout <= 0 {
 		opts.TargetTimeout = 30
 	}
-	
+
 	// 限制最大并发数，避免过度并发
 	if opts.Concurrency > 5 {
 		logx.Infof("Fingerprint concurrency %d exceeds maximum 5, limiting to 5", opts.Concurrency)
@@ -179,7 +179,7 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		result.Assets = config.Assets
 		return result, nil
 	}
-	
+
 	logx.Infof("Fingerprint: scanning %d HTTP assets, tool=%s, timeout %ds/target", len(httpAssets), opts.Tool, opts.TargetTimeout)
 	taskLog("INFO", "Fingerprint: scanning %d HTTP assets, tool=%s, timeout %ds/target", len(httpAssets), opts.Tool, opts.TargetTimeout)
 
@@ -299,7 +299,7 @@ func isHttpAsset(asset *Asset) bool {
 	checks := []func(*Asset) (isHttp bool, decided bool){
 		checkByIsHTTPFlag,
 		checkByGlobalChecker,
-		checkByNonHttpPorts,      // 新增：检查非HTTP端口（优先排除）
+		checkByNonHttpPorts, // 新增：检查非HTTP端口（优先排除）
 		checkByDefaultServices,
 		checkByNonHttpServices,
 		checkByCommonPorts,
@@ -472,7 +472,7 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	if opts.Wappalyzer && s.wappalyzerClient != nil {
 		apps := s.wappalyzerClient.Fingerprint(headers, []byte(asset.HttpBody))
 		logx.Debugf("Wappalyzer detected apps for %s:%d: %v", asset.Host, asset.Port, apps)
-		
+
 		for app := range apps {
 			appNameLower := strings.ToLower(app)
 			if result, exists := appResults[appNameLower]; exists {
@@ -700,7 +700,6 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 			customApps := s.customFingerprintEngine.MatchWithId(fpData)
 			logx.Debugf("Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
 
-			
 			for _, customApp := range customApps {
 				appNameLower := strings.ToLower(customApp.Name)
 				// 查找是否已有相同应用（使用小写key匹配）
@@ -748,12 +747,12 @@ func isValidHttpResponse(resp *http.Response) bool {
 	if resp == nil {
 		return false
 	}
-	
+
 	// 检查状态码是否在有效范围内
 	if resp.StatusCode < 100 || resp.StatusCode >= 600 {
 		return false
 	}
-	
+
 	// 检查是否有HTTP特征的响应头
 	// 有效的HTTP服务通常会返回以下头之一
 	httpHeaders := []string{
@@ -766,23 +765,22 @@ func isValidHttpResponse(resp *http.Response) bool {
 		"Set-Cookie",
 		"X-Powered-By",
 	}
-	
+
 	for _, header := range httpHeaders {
 		if resp.Header.Get(header) != "" {
 			return true
 		}
 	}
-	
+
 	// 如果状态码是常见的HTTP状态码，也认为是有效的
 	validStatusCodes := map[int]bool{
 		200: true, 201: true, 204: true, 206: true,
 		301: true, 302: true, 303: true, 304: true, 307: true, 308: true,
 		400: true, 401: true, 403: true, 404: true, 405: true, 500: true, 502: true, 503: true,
 	}
-	
+
 	return validStatusCodes[resp.StatusCode]
 }
-
 
 // runHttpx 使用httpx进行批量探测
 func (s *FingerprintScanner) runHttpx(ctx context.Context, assets []*Asset, opts *FingerprintOptions) {
@@ -809,9 +807,9 @@ func (s *FingerprintScanner) runHttpx(ctx context.Context, assets []*Asset, opts
 		"-favicon",
 		"-server",
 		"-content-type",
-		"-irh",              // include response header
-		"-irr",              // include request/response (包含body)
-		"-follow-redirects", // 跟随重定向
+		"-irh",                // include response header
+		"-irr",                // include request/response (包含body)
+		"-follow-redirects",   // 跟随重定向
 		"-max-redirects", "5", // 最大重定向次数
 	}
 	if opts.Screenshot {
@@ -848,13 +846,13 @@ func (s *FingerprintScanner) runHttpx(ctx context.Context, assets []*Asset, opts
 		// 优先使用input字段匹配原始目标，避免重定向导致的匹配问题
 		var asset *Asset
 		var key string
-		
+
 		// 首先尝试使用input字段匹配
 		if result.Input != "" {
 			key = result.Input
 			asset = targetMap[key]
 		}
-		
+
 		// 如果input匹配失败，尝试从URL解析
 		if asset == nil {
 			if u, err := url.Parse(result.URL); err == nil {
@@ -871,7 +869,7 @@ func (s *FingerprintScanner) runHttpx(ctx context.Context, assets []*Asset, opts
 				asset = targetMap[key]
 			}
 		}
-		
+
 		if asset != nil {
 			// 从URL获取scheme
 			scheme := "http"
@@ -943,7 +941,6 @@ func checkHttpxInstalled() bool {
 	output, _ := cmd.CombinedOutput()
 	return strings.Contains(string(output), "Version")
 }
-
 
 // identifyWithWappalyzer 使用wappalyzergo识别应用
 func (s *FingerprintScanner) identifyWithWappalyzer(headers http.Header, body []byte) []string {
@@ -1046,7 +1043,7 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 
 	var buf []byte
 	var pageHeight int64
-	
+
 	err := chromedp.Run(taskCtx,
 		// 导航到目标URL
 		chromedp.Navigate(targetUrl),
@@ -1082,7 +1079,7 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 			return ""
 		}
 	}
-	
+
 	logx.Infof("完成使用chromedp截图: %s", targetUrl)
 	// 返回base64编码的截图
 	if len(buf) > 0 {
@@ -1090,7 +1087,6 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 	}
 	return ""
 }
-
 
 // extractTitle 提取网页标题
 func extractTitle(body string) string {
@@ -1302,7 +1298,7 @@ func formatAppWithSources(result *AppDetectionResult) string {
 
 	// 去重并排序来源
 	sources := utils.UniqueStrings(result.Sources)
-	
+
 	// 构建来源标识
 	var sourceStr string
 	if len(sources) == 1 {
@@ -1327,7 +1323,7 @@ func formatAppWithSources(result *AppDetectionResult) string {
 				}
 			}
 		}
-		
+
 		// 构建合并的来源标识
 		if containsString(orderedSources, "custom") && len(result.CustomIDs) > 0 {
 			// 包含自定义指纹，需要特殊处理
@@ -1364,12 +1360,12 @@ func containsString(slice []string, str string) bool {
 
 // ActiveFingerprintResult 主动指纹扫描结果
 type ActiveFingerprintResult struct {
-	URL         string   // 完整URL（包含路径）
-	Path        string   // 探测路径
-	Fingerprint string   // 匹配到的指纹名称
+	URL           string // 完整URL（包含路径）
+	Path          string // 探测路径
+	Fingerprint   string // 匹配到的指纹名称
 	FingerprintID string // 指纹ID
-	StatusCode  int      // HTTP状态码
-	Title       string   // 页面标题
+	StatusCode    int    // HTTP状态码
+	Title         string // 页面标题
 }
 
 // RunActiveFingerprint 执行主动指纹扫描
@@ -1486,7 +1482,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 				// 构建完整URL
 				fullURL := baseURL + path
-				
+
 				// 去重检查
 				visitedMu.Lock()
 				if visited[fullURL] {
@@ -1548,7 +1544,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 					}
 
 					// 调试：记录请求结果
-					logx.Debugf("Active fingerprint request: %s, status=%d, bodyLen=%d, title=%s", 
+					logx.Debugf("Active fingerprint request: %s, status=%d, bodyLen=%d, title=%s",
 						fullURL, resp.StatusCode, len(body), fpData.Title)
 
 					// 匹配指纹
@@ -1566,7 +1562,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 						// 添加到资产的App列表
 						appName := fmt.Sprintf("%s[active(%s)]", fp.Name, fp.Id.Hex())
-						
+
 						// 检查是否已存在
 						exists := false
 						for _, app := range asset.App {

@@ -134,14 +134,15 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		Vulnerabilities: make([]*Vulnerability, 0),
 	}
 
-	// 1. Prepare Options
+	// 1. Prepare Options - 使用自适应参数
+	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NucleiOptions{
 		Severity:      "critical,high,medium",
-		RateLimit:     150,
-		Concurrency:   25,  // Template Concurrency
-		Timeout:       600, // Global Timeout
-		TargetTimeout: 600, // Per-target Timeout
-		Retries:       1,
+		RateLimit:     adaptive.NucleiRateLimit,   // 自适应: 低配50, 中配100, 高配150
+		Concurrency:   adaptive.NucleiConcurrency, // 自适应: 低配5, 中配15, 高配25
+		Timeout:       600,                        // Global Timeout
+		TargetTimeout: 600,                        // Per-target Timeout
+		Retries:       adaptive.NucleiRetries,     // 自适应: 低配1, 中配1, 高配1
 	}
 	if config.Options != nil {
 		if o, ok := config.Options.(*NucleiOptions); ok {

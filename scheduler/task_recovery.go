@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -26,18 +27,22 @@ type TaskRecoveryManager struct {
 
 // TaskExecutionInfo 任务执行信息
 type TaskExecutionInfo struct {
-	TaskId      string    `json:"taskId"`
-	WorkerName  string    `json:"workerName"`
-	StartTime   time.Time `json:"startTime"`
-	LastUpdate  time.Time `json:"lastUpdate"`
-	Phase       string    `json:"phase"`
-	Progress    int       `json:"progress"`
-	RetryCount  int       `json:"retryCount"`
-	MaxRetries  int       `json:"maxRetries"`
+	TaskId     string    `json:"taskId"`
+	WorkerName string    `json:"workerName"`
+	StartTime  time.Time `json:"startTime"`
+	LastUpdate time.Time `json:"lastUpdate"`
+	Phase      string    `json:"phase"`
+	Progress   int       `json:"progress"`
+	RetryCount int       `json:"retryCount"`
+	MaxRetries int       `json:"maxRetries"`
 }
 
 // NewTaskRecoveryManager 创建任务恢复管理器
 func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context) *TaskRecoveryManager {
+	// 根据系统配置自适应调整任务超时时间
+	// 低配机器扫描速度慢，需要更长的超时时间避免误判超时
+	taskTimeout := adaptiveTaskTimeout()
+
 	return &TaskRecoveryManager{
 		rdb:                rdb,
 		ctx:                ctx,
@@ -46,10 +51,22 @@ func NewTaskRecoveryManager(rdb *redis.Client, ctx context.Context) *TaskRecover
 		taskTimeoutKey:     "cscan:task:execution",
 		taskWorkerKey:      "cscan:task:worker",
 		workerHeartbeatKey: "cscan:worker:",
-		checkInterval:      30 * time.Second,  // 每30秒检查一次
-		taskTimeout:        10 * time.Minute,  // 任务超时时间10分钟
+		checkInterval:      30 * time.Second, // 每30秒检查一次
+		taskTimeout:        taskTimeout,      // 自适应超时
 		logger:             logx.WithContext(ctx),
 	}
+}
+
+// adaptiveTaskTimeout 根据系统硬件配置计算任务超时时间
+func adaptiveTaskTimeout() time.Duration {
+	cpuCores := runtime.NumCPU()
+	if cpuCores <= 4 {
+		return 20 * time.Minute // 低配：20分钟
+	}
+	if cpuCores <= 8 {
+		return 15 * time.Minute // 中配：15分钟
+	}
+	return 10 * time.Minute // 高配：10分钟（原始值）
 }
 
 // Start 启动任务恢复监控
@@ -111,7 +128,7 @@ func (m *TaskRecoveryManager) checkTask(taskId string) {
 
 	// 检查 Worker 是否在线
 	workerOnline := m.isWorkerOnline(execInfo.WorkerName)
-	
+
 	// 检查任务是否超时
 	taskTimedOut := time.Since(execInfo.LastUpdate) > m.taskTimeout
 
@@ -144,7 +161,7 @@ func (m *TaskRecoveryManager) recoverTask(taskId string, execInfo *TaskExecution
 
 	// 增加重试次数
 	execInfo.RetryCount++
-	
+
 	// 获取原始任务信息
 	taskInfo, err := m.getTaskInfo(taskId)
 	if err != nil {
@@ -159,7 +176,7 @@ func (m *TaskRecoveryManager) recoverTask(taskId string, execInfo *TaskExecution
 	// 重新放回队列
 	score := float64(time.Now().Unix())
 	taskData, _ := json.Marshal(taskInfo)
-	
+
 	// 根据任务类型选择队列
 	var queueKey string
 	if len(taskInfo.Workers) > 0 {
@@ -184,7 +201,7 @@ func (m *TaskRecoveryManager) recoverTask(taskId string, execInfo *TaskExecution
 	execInfo.LastUpdate = time.Now()
 	m.saveTaskExecutionInfo(taskId, execInfo)
 
-	m.logger.Infof("Task %s recovered and requeued (retry %d/%d), reason: %s", 
+	m.logger.Infof("Task %s recovered and requeued (retry %d/%d), reason: %s",
 		taskId, execInfo.RetryCount, execInfo.MaxRetries, reason)
 }
 
@@ -310,7 +327,7 @@ func (m *TaskRecoveryManager) markTaskFailed(taskId, reason string) {
 // GetRecoveryStats 获取恢复统计信息
 func (m *TaskRecoveryManager) GetRecoveryStats() map[string]interface{} {
 	processingCount, _ := m.rdb.SCard(m.ctx, m.processingKey).Result()
-	
+
 	return map[string]interface{}{
 		"processingTasks": processingCount,
 		"checkInterval":   m.checkInterval.String(),

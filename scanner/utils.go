@@ -149,42 +149,108 @@ func ParseTargetsForFingerprint(target string) []*ParsedTarget {
 // 用于当用户只勾选部分扫描模块时，直接使用输入目标进行扫描
 func GenerateAssetsFromTargets(target string) []*Asset {
 	var assets []*Asset
-	parsedTargets := ParseTargetsForFingerprint(target)
 
-	for _, pt := range parsedTargets {
-		asset := &Asset{
-			Host:     pt.Host,
-			Port:     pt.Port,
-			Category: getCategory(pt.Host),
-			Source:   "user_input",
-			IsHTTP:   true, // 用户输入的URL默认认为是HTTP服务
+	lines := strings.Split(target, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
 
-		// 设置 Authority
-		if pt.Port == 80 || pt.Port == 443 {
-			asset.Authority = pt.Host
+		info := utils.ParseTarget(line)
+		if info.Host == "" {
+			continue
+		}
+
+		category := getCategory(info.Host)
+
+		// 用户明确指定了协议或端口时，只生成对应的单个资产
+		if info.Protocol != "" || info.HasPort {
+			pt := parseSingleTarget(info)
+			assets = append(assets, buildAssetFromParsed(pt, category))
 		} else {
-			asset.Authority = net.JoinHostPort(pt.Host, strconv.Itoa(pt.Port))
+			// 用户输入纯域名/IP（无协议无端口），同时生成 HTTP:80 和 HTTPS:443
+			// 确保覆盖：无法预知目标是 HTTP 还是 HTTPS，交由 Nuclei 引擎处理
+			httpAsset := &Asset{
+				Host:      info.Host,
+				Port:      80,
+				Category:  category,
+				Source:    "user_input",
+				IsHTTP:    true,
+				Authority: info.Host,
+				Service:   "http",
+			}
+			httpsAsset := &Asset{
+				Host:      info.Host,
+				Port:      443,
+				Category:  category,
+				Source:    "user_input",
+				IsHTTP:    true,
+				Authority: info.Host,
+				Service:   "https",
+			}
+			assets = append(assets, httpAsset, httpsAsset)
 		}
-
-		// 设置服务类型
-		if pt.Protocol != "" {
-			asset.Service = pt.Protocol
-		} else if pt.Port == 443 || pt.Port == 8443 {
-			asset.Service = "https"
-		} else {
-			asset.Service = "http"
-		}
-
-		// 保存路径信息到 Path 字段
-		if pt.Path != "" && pt.Path != "/" {
-			asset.Path = pt.Path
-		}
-
-		assets = append(assets, asset)
 	}
 
 	return assets
+}
+
+// parseSingleTarget 将 TargetInfo 转换为 ParsedTarget（用于有明确协议或端口的情况）
+func parseSingleTarget(info *utils.TargetInfo) *ParsedTarget {
+	port := info.Port
+	protocol := info.Protocol
+
+	if port == 0 {
+		if protocol == "https" {
+			port = 443
+		} else {
+			port = 80
+			if protocol == "" {
+				protocol = "http"
+			}
+		}
+	}
+	if protocol == "" {
+		if port == 443 || port == 8443 || port == 9443 {
+			protocol = "https"
+		} else {
+			protocol = "http"
+		}
+	}
+
+	return &ParsedTarget{
+		Host:     info.Host,
+		Port:     port,
+		Protocol: protocol,
+		Path:     info.Path,
+		Raw:      info.Raw,
+	}
+}
+
+// buildAssetFromParsed 从 ParsedTarget 构建 Asset
+func buildAssetFromParsed(pt *ParsedTarget, category string) *Asset {
+	asset := &Asset{
+		Host:     pt.Host,
+		Port:     pt.Port,
+		Category: category,
+		Source:   "user_input",
+		IsHTTP:   true,
+	}
+
+	if pt.Port == 80 || pt.Port == 443 {
+		asset.Authority = pt.Host
+	} else {
+		asset.Authority = net.JoinHostPort(pt.Host, strconv.Itoa(pt.Port))
+	}
+
+	asset.Service = pt.Protocol
+
+	if pt.Path != "" && pt.Path != "/" {
+		asset.Path = pt.Path
+	}
+
+	return asset
 }
 
 // containsDomainTLD 检查是否包含常见域名后缀

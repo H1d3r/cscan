@@ -16,10 +16,10 @@ import (
 type ScheduleMode int
 
 const (
-	ModeAggressive  ScheduleMode = iota // 激进模式：最大化吞吐量
-	ModeNormal                          // 正常模式：平衡性能和资源
-	ModeConservative                    // 保守模式：优先保护系统稳定
-	ModeCritical                        // 危急模式：最小化资源使用
+	ModeAggressive   ScheduleMode = iota // 激进模式：最大化吞吐量
+	ModeNormal                           // 正常模式：平衡性能和资源
+	ModeConservative                     // 保守模式：优先保护系统稳定
+	ModeCritical                         // 危急模式：最小化资源使用
 )
 
 func (m ScheduleMode) String() string {
@@ -80,20 +80,55 @@ type AdaptiveSchedulerConfig struct {
 }
 
 // DefaultAdaptiveSchedulerConfig 默认配置
+// 根据系统硬件自适应调整阈值，低配机器使用更宽松的阈值
 func DefaultAdaptiveSchedulerConfig(baseConcurrency int) *AdaptiveSchedulerConfig {
 	if baseConcurrency <= 0 {
 		baseConcurrency = runtime.NumCPU()
 	}
+
+	cpuCores := runtime.NumCPU()
+	totalMemMB := getAdaptiveSchedulerTotalMemMB()
+
+	// 根据硬件配置分级
+	var cpuLow, cpuHigh, cpuCritical float64
+	var memLow, memHigh, memCritical float64
+
+	if cpuCores <= 4 || totalMemMB <= 4096 {
+		// 低配：放宽所有阈值，避免频繁限流
+		cpuLow = 50.0
+		cpuHigh = 80.0
+		cpuCritical = 92.0
+		memLow = 60.0
+		memHigh = 82.0
+		memCritical = 93.0
+	} else if cpuCores <= 8 && totalMemMB <= 16384 {
+		// 中配：适度放宽
+		cpuLow = 45.0
+		cpuHigh = 75.0
+		cpuCritical = 88.0
+		memLow = 55.0
+		memHigh = 78.0
+		memCritical = 92.0
+	} else {
+		// 高配：使用原始阈值
+		cpuLow = 40.0
+		cpuHigh = 70.0
+		cpuCritical = 85.0
+		memLow = 50.0
+		memHigh = 75.0
+		memCritical = 90.0
+	}
+
 	return &AdaptiveSchedulerConfig{
 		BaseConcurrency:      baseConcurrency,
 		MinConcurrency:       1,
 		MaxConcurrency:       baseConcurrency,
-		CPULowThreshold:      40.0,
-		CPUHighThreshold:     70.0,
-		CPUCriticalThreshold: 85.0,
-		MemLowThreshold:      50.0,
-		MemHighThreshold:     75.0,
-		MemCriticalThreshold: 90.0,
+		CPULowThreshold:      cpuLow,
+		CPUHighThreshold:     cpuHigh,
+		CPUCriticalThreshold: cpuCritical,
+		MemLowThreshold:      memLow,
+		MemHighThreshold:     memHigh,
+		MemCriticalThreshold: memCritical,
 		SampleInterval:       time.Second,
 		AdjustInterval:       5 * time.Second,
 		HistorySize:          60,
@@ -104,6 +139,15 @@ func DefaultAdaptiveSchedulerConfig(baseConcurrency int) *AdaptiveSchedulerConfi
 		MaxPullInterval:      10 * time.Second,
 		IdleMultiplier:       2.0,
 	}
+}
+
+// getAdaptiveSchedulerTotalMemMB 获取系统总内存(MB)
+func getAdaptiveSchedulerTotalMemMB() uint64 {
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		return 0
+	}
+	return memInfo.Total / 1024 / 1024
 }
 
 // AdaptiveScheduler 自适应调度器
@@ -140,19 +184,19 @@ type AdaptiveScheduler struct {
 
 // SchedulerStats 调度器统计
 type SchedulerStats struct {
-	TotalTasksAccepted  int64     // 接受的任务总数
-	TotalTasksRejected  int64     // 拒绝的任务总数
-	TotalScaleUps       int64     // 扩容次数
-	TotalScaleDowns     int64     // 缩容次数
-	TotalThrottles      int64     // 限流次数
-	CurrentMode         string    // 当前模式
-	CurrentConcurrency  int       // 当前并发数
-	AvgCPU              float64   // 平均CPU
-	AvgMem              float64   // 平均内存
-	LastAdjustTime      time.Time // 上次调整时间
-	LastThrottleTime    time.Time // 上次限流时间
-	ThrottledUntil      time.Time // 限流结束时间
-	PullInterval        int64     // 当前拉取间隔(ms)
+	TotalTasksAccepted int64     // 接受的任务总数
+	TotalTasksRejected int64     // 拒绝的任务总数
+	TotalScaleUps      int64     // 扩容次数
+	TotalScaleDowns    int64     // 缩容次数
+	TotalThrottles     int64     // 限流次数
+	CurrentMode        string    // 当前模式
+	CurrentConcurrency int       // 当前并发数
+	AvgCPU             float64   // 平均CPU
+	AvgMem             float64   // 平均内存
+	LastAdjustTime     time.Time // 上次调整时间
+	LastThrottleTime   time.Time // 上次限流时间
+	ThrottledUntil     time.Time // 限流结束时间
+	PullInterval       int64     // 当前拉取间隔(ms)
 }
 
 // NewAdaptiveScheduler 创建自适应调度器
@@ -387,7 +431,6 @@ func (s *AdaptiveScheduler) calculateTargetConcurrency(mode ScheduleMode) int {
 		return base
 	}
 }
-
 
 // CanAcceptTask 检查是否可以接受新任务
 func (s *AdaptiveScheduler) CanAcceptTask() bool {

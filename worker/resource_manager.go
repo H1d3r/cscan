@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"runtime"
 	"sync"
 	"time"
 
@@ -20,16 +21,59 @@ type ResourceManagerConfig struct {
 }
 
 // DefaultResourceManagerConfig 默认资源管理器配置
+// 根据系统 CPU 核心数和内存大小自适应调整阈值
+// 低配机器（<=4核 或 <=4GB）使用更宽松的阈值，避免频繁限流导致扫描跑不出来
 func DefaultResourceManagerConfig(maxConcurrency int) ResourceManagerConfig {
+	cpuCores := runtime.NumCPU()
+	totalMemMB := getTotalMemoryMB()
+
+	// 根据硬件配置分级调整
+	// 低配: <=4核 或 <=4GB  中配: <=8核 且 <=16GB  高配: >8核 或 >16GB
+	var cpuThreshold, memThreshold, cpuRecovery float64
+	var throttleDuration time.Duration
+	var overloadThreshold int
+
+	if cpuCores <= 4 || totalMemMB <= 4096 {
+		// 低配机器：放宽阈值，减少限流
+		cpuThreshold = 85.0
+		memThreshold = 80.0
+		cpuRecovery = 70.0
+		throttleDuration = 15 * time.Second
+		overloadThreshold = 5
+	} else if cpuCores <= 8 && totalMemMB <= 16384 {
+		// 中配机器：适度放宽
+		cpuThreshold = 75.0
+		memThreshold = 70.0
+		cpuRecovery = 60.0
+		throttleDuration = 30 * time.Second
+		overloadThreshold = 3
+	} else {
+		// 高配机器：使用原始阈值
+		cpuThreshold = 65.0
+		memThreshold = 60.0
+		cpuRecovery = 55.0
+		throttleDuration = 60 * time.Second
+		overloadThreshold = 2
+	}
+
 	return ResourceManagerConfig{
 		MaxConcurrency:       maxConcurrency,
-		CPUThreshold:         65.0,
-		MemThreshold:         60.0,
-		CPURecoveryThreshold: 55.0,
+		CPUThreshold:         cpuThreshold,
+		MemThreshold:         memThreshold,
+		CPURecoveryThreshold: cpuRecovery,
 		CheckInterval:        5 * time.Second,
-		ThrottleDuration:     60 * time.Second,
-		OverloadThreshold:    2,
+		ThrottleDuration:     throttleDuration,
+		OverloadThreshold:    overloadThreshold,
 	}
+}
+
+// getTotalMemoryMB 获取系统总内存（MB）
+func getTotalMemoryMB() uint64 {
+	memInfo, err := mem.VirtualMemory()
+	if err != nil {
+		return 0
+	}
+	return memInfo.Total / 1024 / 1024
 }
 
 // ResourceManager 资源管理器
@@ -37,14 +81,14 @@ func DefaultResourceManagerConfig(maxConcurrency int) ResourceManagerConfig {
 type ResourceManager struct {
 	config ResourceManagerConfig
 
-	mu           sync.Mutex
-	currentTasks int       // 当前正在执行的任务数
-	throttled    bool      // 是否处于限流状态
+	mu            sync.Mutex
+	currentTasks  int       // 当前正在执行的任务数
+	throttled     bool      // 是否处于限流状态
 	throttleUntil time.Time // 限流结束时间
 
 	// 资源监控状态
-	lastCheck      time.Time // 上次资源检查时间
-	overloadCount  int       // 连续过载计数
+	lastCheck     time.Time // 上次资源检查时间
+	overloadCount int       // 连续过载计数
 }
 
 // NewResourceManager 创建资源管理器
@@ -58,7 +102,6 @@ func NewResourceManagerWithConfig(config ResourceManagerConfig) *ResourceManager
 		config: config,
 	}
 }
-
 
 // CanAcceptTask 检查是否可以接受新任务
 // 综合考虑并发槽位和系统资源状态
@@ -179,7 +222,6 @@ type ResourceStatus struct {
 	IsThrottled    bool    `json:"isThrottled"`
 	OverloadCount  int     `json:"overloadCount"`
 }
-
 
 // isOverloadedLocked 检查系统是否过载（内部方法，需要持有锁）
 func (m *ResourceManager) isOverloadedLocked() bool {

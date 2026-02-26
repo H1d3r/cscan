@@ -750,6 +750,11 @@
               <el-switch v-model="form.portidentifyEnable" />
             </el-form-item>
             <template v-if="form.portidentifyEnable">
+              <!-- 强制扫描：仅在端口扫描未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.portidentifyForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.identifyTool')">
                 <el-radio-group v-model="form.portidentifyTool">
                   <el-radio label="nmap">Nmap</el-radio>
@@ -789,6 +794,11 @@
               <el-switch v-model="form.fingerprintEnable" />
             </el-form-item>
             <template v-if="form.fingerprintEnable">
+              <!-- 强制扫描：仅在端口扫描和端口识别均未启用时显示 -->
+              <el-form-item v-if="!form.portscanEnable && !form.portidentifyEnable" :label="$t('task.forceScan')">
+                <el-switch v-model="form.fingerprintForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.probeTool')">
                 <el-radio-group v-model="form.fingerprintTool">
                   <el-radio label="httpx">Httpx ({{ $t('task.recommended') }})</el-radio>
@@ -823,6 +833,11 @@
               <span class="form-hint">{{ $t('task.useNucleiEngine') }}</span>
             </el-form-item>
             <template v-if="form.pocscanEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.pocscanForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-form-item :label="$t('task.autoScan')">
                 <el-checkbox v-model="form.pocscanAutoScan" :disabled="form.pocscanCustomOnly">{{ $t('task.customTagMapping') }}</el-checkbox>
                 <el-checkbox v-model="form.pocscanAutomaticScan" :disabled="form.pocscanCustomOnly">{{ $t('task.webFingerprintAutoMatch') }}</el-checkbox>
@@ -992,6 +1007,7 @@ const form = reactive({
   portidentifyArgs: '',
   portidentifyUDP: false,
   portidentifyFastMode: false,
+  portidentifyForceScan: false,
   portidentifyTimeout: 30,
   portidentifyArgs: '',
   fingerprintEnable: true,
@@ -999,13 +1015,15 @@ const form = reactive({
   fingerprintIconHash: true,
   fingerprintCustomEngine: false,
   fingerprintScreenshot: false,
+  fingerprintForceScan: false,
   fingerprintTimeout: 30,
   pocscanEnable: false,
   pocscanAutoScan: true,
   pocscanAutomaticScan: true,
   pocscanCustomOnly: false,
   pocscanSeverity: ['critical', 'high', 'medium'],
-  pocscanTargetTimeout: 600
+  pocscanTargetTimeout: 600,
+  pocscanForceScan: false
 })
 
 const targetValidator = (rule, value, callback) => {
@@ -1018,6 +1036,12 @@ const rules = {
   name: [{ required: true, message: t('task.pleaseEnterTaskName'), trigger: 'blur' }],
   target: [{ required: true, message: t('task.pleaseEnterTarget'), trigger: 'blur' }, { validator: targetValidator, trigger: 'blur' }]
 }
+
+// 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
+const hasPrePhaseEnabled = computed(() => {
+  return form.domainscanEnable || form.portscanEnable ||
+         form.portidentifyEnable || form.fingerprintEnable
+})
 
 const logWorkers = computed(() => {
   const set = new Set()
@@ -1356,9 +1380,9 @@ function buildConfig() {
     batchSize: form.batchSize,
     domainscan: { enable: form.domainscanEnable, subfinder: form.domainscanSubfinder, timeout: form.domainscanTimeout, maxEnumerationTime: form.domainscanMaxEnumTime, threads: form.domainscanThreads, rateLimit: form.domainscanRateLimit, all: form.domainscanAll, recursive: form.domainscanRecursive, removeWildcard: form.domainscanRemoveWildcard, resolveDNS: form.domainscanResolveDNS, concurrent: form.domainscanConcurrent },
     portscan: { enable: form.portscanEnable, tool: form.portscanTool, rate: form.portscanRate, ports: form.ports, portThreshold: form.portThreshold, scanType: form.scanType, timeout: form.portscanTimeout, skipHostDiscovery: form.skipHostDiscovery, excludeCDN: form.excludeCDN, excludeHosts: form.excludeHosts },
-    portidentify: { enable: form.portidentifyEnable, tool: form.portidentifyTool, timeout: form.portidentifyTimeout, concurrency: form.portidentifyConcurrency, args: form.portidentifyArgs, udp: form.portidentifyUDP, fastMode: form.portidentifyFastMode },
-    fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, targetTimeout: form.fingerprintTimeout },
-    pocscan: { enable: form.pocscanEnable, useNuclei: true, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout }
+    portidentify: { enable: form.portidentifyEnable, tool: form.portidentifyTool, timeout: form.portidentifyTimeout, concurrency: form.portidentifyConcurrency, args: form.portidentifyArgs, udp: form.portidentifyUDP, fastMode: form.portidentifyFastMode, forceScan: form.portidentifyForceScan && !form.portscanEnable },
+    fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, targetTimeout: form.fingerprintTimeout, forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable },
+    pocscan: { enable: form.pocscanEnable, useNuclei: true, forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout }
   }
 }
 
@@ -1367,9 +1391,9 @@ const scanConfigFields = [
   'batchSize',
   'domainscanEnable', 'domainscanSubfinder', 'domainscanTimeout', 'domainscanMaxEnumTime', 'domainscanThreads', 'domainscanRateLimit', 'domainscanAll', 'domainscanRecursive', 'domainscanRemoveWildcard', 'domainscanResolveDNS', 'domainscanConcurrent',
   'portscanEnable', 'portscanTool', 'portscanRate', 'ports', 'portThreshold', 'scanType', 'portscanTimeout', 'skipHostDiscovery', 'excludeCDN', 'excludeHosts',
-  'portidentifyEnable', 'portidentifyTool', 'portidentifyTimeout', 'portidentifyConcurrency', 'portidentifyArgs', 'portidentifyUDP', 'portidentifyFastMode',
-  'fingerprintEnable', 'fingerprintTool', 'fingerprintIconHash', 'fingerprintCustomEngine', 'fingerprintScreenshot', 'fingerprintTimeout',
-  'pocscanEnable', 'pocscanAutoScan', 'pocscanAutomaticScan', 'pocscanCustomOnly', 'pocscanSeverity', 'pocscanTargetTimeout'
+  'portidentifyEnable', 'portidentifyTool', 'portidentifyTimeout', 'portidentifyConcurrency', 'portidentifyArgs', 'portidentifyUDP', 'portidentifyFastMode', 'portidentifyForceScan',
+  'fingerprintEnable', 'fingerprintTool', 'fingerprintIconHash', 'fingerprintCustomEngine', 'fingerprintScreenshot', 'fingerprintTimeout', 'fingerprintForceScan',
+  'pocscanEnable', 'pocscanAutoScan', 'pocscanAutomaticScan', 'pocscanCustomOnly', 'pocscanSeverity', 'pocscanTargetTimeout', 'pocscanForceScan'
 ]
 
 // 防抖保存配置

@@ -67,17 +67,18 @@ func (o *NaabuOptions) Validate() error {
 
 // Scan 执行Naabu扫描
 func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
-	// 默认配置
+	// 默认配置 - 使用自适应参数，根据系统硬件自动调整
+	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NaabuOptions{
 		Ports:         "80,443,8080",
-		Rate:          3000,  // 提高默认速率从1000到3000
-		Timeout:       60,    // 单个目标扫描超时，默认60秒
-		ScanType:      "c",   // 默认 CONNECT 扫描（无需 root 权限）
-		PortThreshold: 0,     // 默认不限制
-		Retries:       2,     // 降低重试次数从3到2
-		WarmUpTime:    1,     // 降低预热时间从2到1秒
-		Workers:       50,    // 提高工作线程从25到50
-		Verify:        false, // 禁用TCP验证以提速
+		Rate:          adaptive.NaabuRate,    // 自适应: 低配500, 中配1500, 高配3000
+		Timeout:       60,                    // 单个目标扫描超时，默认60秒
+		ScanType:      "c",                   // 默认 CONNECT 扫描（无需 root 权限）
+		PortThreshold: 0,                     // 默认不限制
+		Retries:       adaptive.NaabuRetries, // 自适应: 低配1, 中配2, 高配2
+		WarmUpTime:    1,                     // 降低预热时间从2到1秒
+		Workers:       adaptive.NaabuWorkers, // 自适应: 低配10, 中配25, 高配50
+		Verify:        false,                 // 禁用TCP验证以提速
 	}
 
 	// 日志函数，优先使用任务日志回调
@@ -93,7 +94,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		}
 		logx.Infof(format, args...)
 	}
-	
+
 	// 进度回调
 	onProgress := config.OnProgress
 
@@ -162,7 +163,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					opts.ExcludeHosts = portConfig.ExcludeHosts
 					opts.Verify = portConfig.Verify
 				}
-				
+
 			}
 		}
 	}
@@ -251,14 +252,14 @@ func (s *NaabuScanner) runNaabuWithLogger(ctx context.Context, targets []string,
 		}
 
 		assets, thresholdExceeded := s.scanSingleTargetWithLogger(ctx, target, portsStr, topPorts, opts, logInfo, logWarn)
-		
+
 		if thresholdExceeded {
 			// 单个目标超过阈值，记录并跳过该目标，继续扫描其他目标
 			anyThresholdExceeded = true
 			logWarn("Naabu: %s skipped due to port threshold, continuing with next target", target)
 			continue
 		}
-		
+
 		allAssets = append(allAssets, assets...)
 	}
 
