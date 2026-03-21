@@ -498,11 +498,11 @@ func BuildProviderConfig(configs map[string][]string) string {
 		"alienvault", "bevigil", "bufferover", "builtwith", "c99",
 		"censys", "certspotter", "chaos", "chinaz", "digitalyama",
 		"dnsdb", "dnsdumpster", "dnsrepo", "domainsproject", "driftnet",
-		"facebook", "fofa", "fullhunt", "github", "intelx",
-		"leakix", "merklemap", "netlas", "onyphe", "profundis",
-		"pugrecon", "quake", "redhuntlabs", "robtex", "rsecloud",
-		"securitytrails", "shodan", "threatbook", "virustotal",
-		"whoisxmlapi", "windvane", "zoomeyeapi",
+		"facebook", "fofa", "fullhunt", "github", "hackertarget",
+		"intelx", "leakix", "merklemap", "netlas", "onyphe",
+		"profundis", "pugrecon", "quake", "reconeer", "redhuntlabs",
+		"robtex", "rsecloud", "securitytrails", "shodan", "threatbook",
+		"urlscan", "virustotal", "whoisxmlapi", "windvane", "zoomeyeapi",
 	}
 
 	var sb strings.Builder

@@ -71,7 +71,10 @@ var subfinderProviders = [
     { provider: "shodan", keys: [], status: "disable", description: "Shodan搜索引擎", create_time: now, update_time: now },
     { provider: "threatbook", keys: [], status: "disable", description: "微步在线", create_time: now, update_time: now },
     { provider: "virustotal", keys: [], status: "disable", description: "VirusTotal", create_time: now, update_time: now },
-    { provider: "zoomeye", keys: [], status: "disable", description: "ZoomEye网络空间搜索 (格式: username:password 或 API Key)", create_time: now, update_time: now }
+    { provider: "zoomeye", keys: [], status: "disable", description: "ZoomEye网络空间搜索 (格式: username:password 或 API Key)", create_time: now, update_time: now },
+    { provider: "hackertarget", keys: [], status: "disable", description: "HackerTarget在线扫描(可选Key)", create_time: now, update_time: now },
+    { provider: "reconeer", keys: [], status: "disable", description: "Reconeer子域名侦察", create_time: now, update_time: now },
+    { provider: "urlscan", keys: [], status: "disable", description: "URLScan.io网页扫描", create_time: now, update_time: now }
 ];
 
 db.subfinder_provider.insertMany(subfinderProviders);

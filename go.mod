@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/chromedp/chromedp v0.14.2
+	github.com/ffuf/ffuf/v2 v2.1.0
 	github.com/gobwas/ws v1.4.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
@@ -14,7 +15,7 @@ require (
 	github.com/projectdiscovery/httpx v1.7.4
 	github.com/projectdiscovery/naabu/v2 v2.3.7
 	github.com/projectdiscovery/nuclei/v3 v3.6.1
-	github.com/projectdiscovery/subfinder/v2 v2.11.0
+	github.com/projectdiscovery/subfinder/v2 v2.13.0
 	github.com/projectdiscovery/wappalyzergo v0.2.59
 	github.com/redis/go-redis/v9 v9.11.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -154,7 +155,6 @@ require (
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/felixge/fgprof v0.9.5 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/ffuf/ffuf/v2 v2.1.0 // indirect
 	github.com/ffuf/pencode v0.0.0-20230421231718-2cea7e60a693 // indirect
 	github.com/free5gc/util v1.0.5-0.20230511064842-2e120956883b // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect

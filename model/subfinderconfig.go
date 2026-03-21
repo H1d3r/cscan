@@ -190,5 +190,7 @@ var SubfinderProviderInfo = []struct {
 	{"dnsrepo", "DNSRepo", "DNSRepo DNS记录", "API Key", "https://dnsrepo.noc.org/"},
 	{"facebook", "Facebook", "Facebook证书透明度", "App ID|App Secret", "https://developers.facebook.com/"},
 	{"redhuntlabs", "RedHunt Labs", "RedHunt Labs攻击面侦察", "API Key", "https://devportal.redhuntlabs.com/"},
+	{"hackertarget", "HackerTarget", "HackerTarget在线扫描(可选Key)", "API Key", "https://hackertarget.com/scan-membership/"},
+	{"reconeer", "Reconeer", "Reconeer子域名侦察", "API Key", "https://www.reconeer.com/"},
 	{"urlscan", "URLScan", "URLScan.io网页扫描", "API Key", "https://urlscan.io/user/profile/"},
 }
