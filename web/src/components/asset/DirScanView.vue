@@ -150,35 +150,37 @@
                 />
                 <el-button size="small" @click="clearTargetFilter(authority)">{{ $t('common.reset') }}</el-button>
               </div>
-              <el-table :data="getFilteredItems(authority)" stripe size="small" @sort-change="(e) => handleTargetSortChange(authority, e)">
-                <el-table-column prop="url" label="URL" min-width="300" show-overflow-tooltip>
+              <el-table :data="getFilteredItems(authority)" stripe size="small" table-layout="fixed" @sort-change="(e) => handleTargetSortChange(authority, e)">
+                <el-table-column prop="url" label="URL" min-width="200" show-overflow-tooltip>
                   <template #default="{ row }">
                     <a :href="row.url" target="_blank" rel="noopener" class="url-link">{{ row.url }}</a>
                   </template>
                 </el-table-column>
-                <el-table-column prop="path" :label="$t('dirscan.path')" min-width="120" show-overflow-tooltip />
-                <el-table-column prop="statusCode" :label="$t('dirscan.statusCode')" width="100" sortable="custom">
+                <el-table-column prop="path" :label="$t('dirscan.path')" width="120" show-overflow-tooltip />
+                <el-table-column prop="statusCode" :label="$t('dirscan.statusCode')" width="80" sortable="custom" align="center">
                   <template #default="{ row }">
                     <el-tag :type="getStatusType(row.statusCode)" size="small">{{ row.statusCode }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="contentLength" :label="$t('dirscan.size')" width="100" sortable="custom">
+                <el-table-column prop="contentLength" :label="$t('dirscan.size')" width="80" sortable="custom" align="right">
                   <template #default="{ row }">{{ formatSize(row.contentLength) }}</template>
                 </el-table-column>
-                <el-table-column prop="contentWords" :label="$t('task.contentWords')" width="90" sortable="custom">
+                <el-table-column prop="contentWords" :label="$t('task.contentWords')" width="70" sortable="custom" align="right">
                   <template #default="{ row }">{{ row.contentWords || 0 }}</template>
                 </el-table-column>
-                <el-table-column prop="contentLines" :label="$t('task.contentLines')" width="80" sortable="custom">
+                <el-table-column prop="contentLines" :label="$t('task.contentLines')" width="70" sortable="custom" align="right">
                   <template #default="{ row }">{{ row.contentLines || 0 }}</template>
                 </el-table-column>
-                <el-table-column prop="duration" :label="$t('task.duration')" width="90" sortable="custom">
+                <el-table-column prop="duration" :label="$t('task.duration')" width="80" sortable="custom" align="right">
                   <template #default="{ row }">{{ row.duration ? row.duration + 'ms' : '-' }}</template>
                 </el-table-column>
-                <el-table-column prop="title" :label="$t('dirscan.title')" min-width="120" show-overflow-tooltip />
-                <el-table-column prop="contentType" :label="$t('dirscan.contentType')" min-width="120" show-overflow-tooltip />
-                <el-table-column prop="redirectUrl" :label="$t('dirscan.redirectUrl')" min-width="150" show-overflow-tooltip />
-                <el-table-column prop="createTime" :label="$t('dirscan.discoveryTime')" width="150" />
-                <el-table-column :label="$t('common.operation')" width="80" fixed="right">
+                <el-table-column prop="title" :label="$t('dirscan.title')" min-width="100" show-overflow-tooltip />
+                <el-table-column prop="contentType" :label="$t('dirscan.contentType')" width="130" show-overflow-tooltip />
+                <el-table-column prop="redirectUrl" :label="$t('dirscan.redirectUrl')" min-width="120" show-overflow-tooltip />
+                <el-table-column prop="createTime" :label="$t('dirscan.discoveryTime')" width="150">
+                  <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+                </el-table-column>
+                <el-table-column :label="$t('common.operation')" width="70" fixed="right" align="center">
                   <template #default="{ row }">
                     <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('common.delete') }}</el-button>
                   </template>
@@ -362,6 +364,14 @@ function getStatusType(code) {
   if (code >= 400 && code < 500) return 'danger'
   if (code >= 500) return 'danger'
   return 'info'
+}
+
+function formatTime(time) {
+  if (!time) return '-'
+  const d = new Date(time)
+  if (isNaN(d.getTime())) return time
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 function formatSize(bytes) {

@@ -185,12 +185,29 @@ func (l *VulLogic) VulBatchDelete(req *types.VulBatchDeleteReq, workspaceId stri
 }
 
 func (l *VulLogic) VulClear(workspaceId string) (resp *types.BaseResp, err error) {
-	vulModel := l.svcCtx.GetVulModel(workspaceId)
-	deleted, err := vulModel.Clear(l.ctx)
-	if err != nil {
-		return &types.BaseResp{Code: 500, Msg: "清空失败: " + err.Error()}, nil
+	var totalDeleted int64
+
+	if workspaceId == "" || workspaceId == "all" {
+		wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, "all")
+		for _, wsId := range wsIds {
+			vulModel := l.svcCtx.GetVulModel(wsId)
+			deleted, err := vulModel.Clear(l.ctx)
+			if err != nil {
+				logx.Errorf("[VulClear] 清空工作空间 %s 漏洞失败: %v", wsId, err)
+				continue
+			}
+			totalDeleted += deleted
+		}
+	} else {
+		vulModel := l.svcCtx.GetVulModel(workspaceId)
+		deleted, err := vulModel.Clear(l.ctx)
+		if err != nil {
+			return &types.BaseResp{Code: 500, Msg: "清空失败: " + err.Error()}, nil
+		}
+		totalDeleted = deleted
 	}
-	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(deleted, 10) + " 条漏洞"}, nil
+
+	return &types.BaseResp{Code: 0, Msg: "成功清空 " + strconv.FormatInt(totalDeleted, 10) + " 条漏洞"}, nil
 }
 
 // VulStatLogic 漏洞统计逻辑
