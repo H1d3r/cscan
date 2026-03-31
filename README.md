@@ -4,24 +4,10 @@
 
 [中文](README.md) | [English](README_EN.md)
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-2.7-green)](VERSION)
-
-## 功能特性
-
-| 模块 | 功能 | 工具                       |
-|------|------|--------------------------|
-| 资产发现 | 端口扫描、服务识别 | Naabu / Masscan / Nmap   |
-| 子域名枚举 | 被动枚举 + 字典爆破 | Subfinder + KSubdomain   |
-| 指纹识别 | Web 指纹、3W+ 规则 | Httpx + Wappalyzer + 自定义引擎 |
-| URL 发现 | 路径爬取 | FFuF                     |
-| 漏洞检测 | POC 扫描、自定义 POC | Nuclei SDK               |
-| Web 截图 | 页面快照 | Chromedp / HTTPX         |
-| 在线数据源 | API 聚合搜索 | FOFA / Hunter / Quake    |
-
-**平台能力**：分布式架构 · 多工作空间 · 报告导出 · 审计日志
+[![Version](https://img.shields.io/badge/Version-2.24-green)](VERSION)
 
 ## 快速开始
 
@@ -66,15 +52,6 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 # Windows
 cscan-worker.exe -k <install_key> -s http://<api_host>:8888
 ```
-
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端 | Go 1.25 + Go-Zero |
-| 前端 | Vue 3.4 + Element Plus + Vite + Sass |
-| 存储 | MongoDB 6 + Redis 7 |
-| 扫描 | Naabu / Masscan / Nmap / Subfinder / Httpx / Nuclei |
 
 ## License
 

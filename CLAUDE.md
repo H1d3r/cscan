@@ -1,7 +1,4 @@
 # CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## 一、项目架构
 
 ### 1.1 项目概述
