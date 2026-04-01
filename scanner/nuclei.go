@@ -687,6 +687,8 @@ func (s *NucleiScanner) convertResult(event *output.ResultEvent) *Vulnerability 
 	evidence := CollectEvidence(event)
 
 	// 构建漏洞对象
+	tags := event.Info.Tags.ToSlice()
+	logx.Infof("[convertResult] poc=%s matched=%s vulName=%q tags=%v", event.TemplateID, event.Matched, event.Info.Name, tags)
 	vul := &Vulnerability{
 		Authority: utils.BuildTargetWithPort(host, port),
 		Host:      host,
@@ -697,7 +699,7 @@ func (s *NucleiScanner) convertResult(event *output.ResultEvent) *Vulnerability 
 		Severity:  event.Info.SeverityHolder.Severity.String(),
 		Result:    resultDesc,
 		VulName:   event.Info.Name,
-		Tags:      event.Info.Tags.ToSlice(),
+		Tags:      tags,
 	}
 
 	// 关联模板知识库信息 (Requirement 1.4)

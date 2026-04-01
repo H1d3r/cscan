@@ -108,6 +108,11 @@ func (l *SaveVulResultLogic) SaveVulResult(in *pb.SaveVulResultReq) (*pb.SaveVul
 		if len(pbVul.Tags) > 0 {
 			vul.Tags = pbVul.Tags
 		}
+		pbVulName := ""
+		if pbVul.VulName != nil {
+			pbVulName = *pbVul.VulName
+		}
+		l.Logger.Infof("[SaveVulResult] poc=%s pbVulName.nil=%v pbVulName=%q pbTags=%v modelVulName=%q modelTags=%v", pbVul.PocFile, pbVul.VulName == nil, pbVulName, pbVul.Tags, vul.VulName, vul.Tags)
 
 		// 使用Upsert避免重复
 		// Note: The Upsert method in VulModel already handles scan_count and timestamps
