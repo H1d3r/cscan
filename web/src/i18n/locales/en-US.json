@@ -239,7 +239,7 @@
     "assetInventory": "Asset Inventory",
     "screenshots": "Screenshots",
     "searchAssetGroups": "Search asset groups...",
-    "searchInHostNames": "Search in host names...",
+    "searchInHostNames": "Search IP / domain / hostname / title...",
     "searchInScreenshots": "Search in screenshots...",
     "assetGroupName": "Asset Group Name",
     "source": "Source",
@@ -553,6 +553,7 @@
     "labels": "Labels"
   },
   "ip": {
+    "searchPlaceholder": "Search IP / hostname...",
     "title": "IP Management",
     "ipAddress": "IP Address",
     "port": "Port",
@@ -2008,6 +2009,7 @@
     "searchResult": "Search Result",
     "total": "Total",
     "items": "",
+    "host": "Host",
     "ip": "IP",
     "port": "Port",
     "protocol": "Protocol",
@@ -2027,6 +2029,8 @@
     "confirmImportCurrent": "Are you sure to import {count} records from current page to asset library?",
     "importSuccess": "Import successful",
     "importFailed": "Import failed",
+    "items": "items",
+    "importDedupInfo": " (fetched {fetched}, {duplicates} duplicates merged)",
     "enterQueryFirst": "Please enter query statement and search first",
     "confirmImportAll": "Are you sure to import all assets? Will automatically traverse all pages, estimated to import about {count} records",
     "importAllTitle": "Import All Assets",
@@ -2093,6 +2097,8 @@
     "sizeMax": "Max size"
   },
   "vul": {
+    "vulName": "Vulnerability Name",
+    "tags": "POC Tags",
     "target": "Target",
     "targetPlaceholder": "IP:Port",
     "severity": "Severity",
