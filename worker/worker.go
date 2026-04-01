@@ -2257,15 +2257,19 @@ func (w *Worker) saveVulResult(ctx context.Context, workspaceId, mainTaskId stri
 
 	httpVuls := make([]VulDocument, 0, len(vuls))
 	for _, vul := range vuls {
-		// Debug: 打印证据链数据
-		w.taskLog(mainTaskId, LevelDebug, "[SaveVul] PocFile=%s, CurlCommand len=%d, Request len=%d, Response len=%d",
-			vul.PocFile, len(vul.CurlCommand), len(vul.Request), len(vul.Response))
+		// Debug: 打印扫描层与发送层的关键字段
+		w.taskLog(mainTaskId, LevelDebug, "[SaveVul] scanner.PocFile=%s, scanner.VulName=%q, scanner.Tags=%v, CurlCommand len=%d, Request len=%d, Response len=%d",
+			vul.PocFile, vul.VulName, vul.Tags, len(vul.CurlCommand), len(vul.Request), len(vul.Response))
 
 		httpVul := ToVulDocument(vul, mainTaskId)
+		httpVulName := ""
+		if httpVul.VulName != nil {
+			httpVulName = *httpVul.VulName
+		}
 
-		// 输出httpVul中的证据字段
-		w.taskLog(mainTaskId, LevelDebug, "[SaveVul] httpVul.CurlCommand=%v, httpVul.Request=%v, httpVul.Response=%v",
-			httpVul.CurlCommand != nil, httpVul.Request != nil, httpVul.Response != nil)
+		// 输出httpVul中的关键字段
+		w.taskLog(mainTaskId, LevelDebug, "[SaveVul] httpVul.VulName.nil=%v, httpVul.VulName=%q, httpVul.Tags=%v, httpVul.CurlCommand=%v, httpVul.Request=%v, httpVul.Response=%v",
+			httpVul.VulName == nil, httpVulName, httpVul.Tags, httpVul.CurlCommand != nil, httpVul.Request != nil, httpVul.Response != nil)
 
 		httpVuls = append(httpVuls, httpVul)
 	}

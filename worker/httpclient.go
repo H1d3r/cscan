@@ -569,7 +569,70 @@ func (c *WorkerHTTPClient) SaveTaskResult(ctx context.Context, req *TaskResultRe
 
 // SaveVulResult 保存漏洞结果
 func (c *WorkerHTTPClient) SaveVulResult(ctx context.Context, req *VulResultReq) (*VulResultResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul", req)
+	payload := struct {
+		WorkspaceId string                   `json:"workspaceId"`
+		MainTaskId  string                   `json:"mainTaskId"`
+		Vuls        []map[string]interface{} `json:"vuls"`
+	}{
+		WorkspaceId: req.WorkspaceId,
+		MainTaskId:  req.MainTaskId,
+		Vuls:        make([]map[string]interface{}, 0, len(req.Vuls)),
+	}
+
+	for _, vul := range req.Vuls {
+		item := map[string]interface{}{
+			"authority": vul.Authority,
+			"host":      vul.Host,
+			"port":      vul.Port,
+			"url":       vul.Url,
+			"pocFile":   vul.PocFile,
+			"source":    vul.Source,
+			"severity":  vul.Severity,
+			"extra":     vul.Extra,
+			"result":    vul.Result,
+			"taskId":    vul.TaskId,
+			"tags":      vul.Tags,
+		}
+		if vul.VulName != nil {
+			item["vulName"] = *vul.VulName
+		}
+		if vul.CvssScore != nil {
+			item["cvssScore"] = *vul.CvssScore
+		}
+		if vul.CveId != nil {
+			item["cveId"] = *vul.CveId
+		}
+		if vul.CweId != nil {
+			item["cweId"] = *vul.CweId
+		}
+		if vul.Remediation != nil {
+			item["remediation"] = *vul.Remediation
+		}
+		if len(vul.References) > 0 {
+			item["references"] = vul.References
+		}
+		if vul.MatcherName != nil {
+			item["matcherName"] = *vul.MatcherName
+		}
+		if len(vul.ExtractedResults) > 0 {
+			item["extractedResults"] = vul.ExtractedResults
+		}
+		if vul.CurlCommand != nil {
+			item["curlCommand"] = *vul.CurlCommand
+		}
+		if vul.Request != nil {
+			item["request"] = *vul.Request
+		}
+		if vul.Response != nil {
+			item["response"] = *vul.Response
+		}
+		if vul.ResponseTruncated != nil {
+			item["responseTruncated"] = *vul.ResponseTruncated
+		}
+		payload.Vuls = append(payload.Vuls, item)
+	}
+
+	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/vul", payload)
 	if err != nil {
 		return nil, err
 	}
