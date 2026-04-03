@@ -1053,7 +1053,7 @@ const form = reactive({
   fingerprintScreenshot: false,
   fingerprintActiveScan: false,
   fingerprintActiveTimeout: 10,
-  fingerprintTimeout: 30,
+  fingerprintTimeout: 90,
   fingerprintFilterMode: 'http_mapping', // 过滤模式: http_mapping(HTTP映射) 或 service_mapping(服务映射)
   fingerprintForceScan: false,
   // 漏洞扫描
@@ -1263,7 +1263,7 @@ function applyConfig(config) {
     fingerprintScreenshot: config.fingerprint?.screenshot ?? false,
     fingerprintActiveScan: config.fingerprint?.activeScan ?? false,
     fingerprintActiveTimeout: config.fingerprint?.activeTimeout || 10,
-    fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
+    fingerprintTimeout: config.fingerprint?.targetTimeout || 90,
     fingerprintFilterMode: config.fingerprint?.filterMode || 'http_mapping',
     // 漏洞扫描
     pocscanEnable: config.pocscan?.enable ?? false,
@@ -1333,6 +1333,10 @@ watch(
     skipHostDiscovery: form.skipHostDiscovery,
     excludeCDN: form.excludeCDN,
     excludeHosts: form.excludeHosts,
+      workers: form.portscanWorkers,
+      retries: form.portscanRetries,
+      warmUpTime: form.portscanWarmUpTime,
+      verify: form.portscanVerify,
     portidentifyEnable: form.portidentifyEnable,
     portidentifyTool: form.portidentifyTool,
     portidentifyTimeout: form.portidentifyTimeout,
@@ -1430,7 +1434,11 @@ function buildConfig() {
       timeout: form.portscanTimeout,
       skipHostDiscovery: form.skipHostDiscovery,
       excludeCDN: form.excludeCDN,
-      excludeHosts: form.excludeHosts
+      excludeHosts: form.excludeHosts,
+      workers: form.portscanWorkers,
+      retries: form.portscanRetries,
+      warmUpTime: form.portscanWarmUpTime,
+      verify: form.portscanVerify
     },
     portidentify: {
       enable: form.portidentifyEnable,
@@ -1456,12 +1464,18 @@ function buildConfig() {
     },
     pocscan: {
       enable: form.pocscanEnable,
+      mode: form.pocscanMode,
       useNuclei: true,
       forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value,
+      autoScan: form.pocscanAutoScan,
+      automaticScan: form.pocscanAutomaticScan,
+      customOnly: form.pocscanCustomOnly,
       severity: form.pocscanSeverity.join(','),
       targetTimeout: form.pocscanTargetTimeout,
       rateLimit: form.pocscanRateLimit,
       concurrency: form.pocscanConcurrency,
+      nucleiTemplateIds: form.pocscanNucleiTemplateIds || [],
+      customPocIds: form.pocscanCustomPocIds || [],
       customHeaders: buildCustomHeaders()
     },
     dirscan: {
