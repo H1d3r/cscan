@@ -115,6 +115,15 @@ func (l *WorkspaceDeleteLogic) WorkspaceDelete(req *types.WorkspaceDeleteReq) (r
 		return &types.BaseResp{Code: 400, Msg: "ID不能为空"}, nil
 	}
 
+	ws, err := l.svcCtx.WorkspaceModel.FindById(l.ctx, req.Id)
+	if err != nil {
+		return &types.BaseResp{Code: 500, Msg: "查询工作空间失败"}, nil
+	}
+
+	if ws.Name == "默认工作空间" {
+		return &types.BaseResp{Code: 400, Msg: "系统默认工作空间不允许删除"}, nil
+	}
+
 	if err = l.svcCtx.WorkspaceModel.Delete(l.ctx, req.Id); err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}

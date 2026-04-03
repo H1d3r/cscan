@@ -56,15 +56,15 @@ type CronTaskItem struct {
 
 // CronTaskSaveReq 保存定时任务请求
 type CronTaskSaveReq struct {
-	Id           string `json:"id"`
+	Id           string `json:"id,optional"`
 	Name         string `json:"name"`
 	ScheduleType string `json:"scheduleType"` // cron: Cron表达式, once: 指定时间
-	CronSpec     string `json:"cronSpec"`     // Cron表达式
-	ScheduleTime string `json:"scheduleTime"` // 指定执行时间 (格式: 2006-01-02 15:04:05)
+	CronSpec     string `json:"cronSpec,optional"`     // Cron表达式
+	ScheduleTime string `json:"scheduleTime,optional"` // 指定执行时间 (格式: 2006-01-02 15:04:05)
 	MainTaskId   string `json:"mainTaskId"`   // 关联的任务ID（用于获取初始配置）
-	WorkspaceId  string `json:"workspaceId"`  // 任务所属工作空间ID
-	Target       string `json:"target"`       // 扫描目标（可自定义，不填则使用关联任务的目标）
-	Config       string `json:"config"`       // 任务配置JSON（可自定义，不填则使用关联任务的配置）
+	WorkspaceId  string `json:"workspaceId,optional"`  // 任务所属工作空间ID
+	Target       string `json:"target,optional"`       // 扫描目标（可自定义，不填则使用关联任务的目标）
+	Config       string `json:"config,optional"`       // 任务配置JSON（可自定义，不填则使用关联任务的配置）
 }
 
 // CronTaskToggleReq 开关定时任务请求
