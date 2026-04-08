@@ -1285,6 +1285,11 @@ function applyConfig(config) {
     dirscanTimeout: config.dirscan?.timeout || 10,
     dirscanFollowRedirect: config.dirscan?.followRedirect ?? false
   })
+
+  // 恢复选择的模板
+  if (config.template !== undefined) {
+    selectedTemplate.value = config.template
+  }
 }
 
 // 处理模板配置加载
@@ -1405,6 +1410,7 @@ function buildCustomHeaders() {
 
 function buildConfig() {
   const config = {
+    template: selectedTemplate.value,
     batchSize: form.batchSize,
     domainscan: {
       enable: form.domainscanEnable,
