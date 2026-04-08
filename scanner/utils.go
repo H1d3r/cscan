@@ -349,13 +349,16 @@ func parsePorts(portStr string) []int {
 			if len(rangeParts) == 2 {
 				start, _ := strconv.Atoi(rangeParts[0])
 				end, _ := strconv.Atoi(rangeParts[1])
+				if start <= 0 {
+					start = 1
+				}
 				for p := start; p <= end; p++ {
 					ports = append(ports, p)
 				}
 			}
 		} else {
 			// 单个端口
-			if p, err := strconv.Atoi(part); err == nil {
+			if p, err := strconv.Atoi(part); err == nil && p > 0 {
 				ports = append(ports, p)
 			}
 		}
