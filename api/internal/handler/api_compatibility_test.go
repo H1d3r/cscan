@@ -69,6 +69,20 @@ var ExpectedEndpoints = []APIEndpoint{
 	{Method: http.MethodPost, Path: "/api/v1/asset/domain/stat"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/domain/delete"},
 
+	// App management
+	{Method: http.MethodPost, Path: "/api/v1/asset/app/list"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/app/stat"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/app/delete"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/app/batchDelete"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/app/clear"},
+
+	// Icon management
+	{Method: http.MethodPost, Path: "/api/v1/asset/icon/list"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/icon/stat"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/icon/delete"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/icon/batchDelete"},
+	{Method: http.MethodPost, Path: "/api/v1/asset/icon/clear"},
+
 	// IP management
 	{Method: http.MethodPost, Path: "/api/v1/asset/ip/list"},
 	{Method: http.MethodPost, Path: "/api/v1/asset/ip/stat"},
@@ -253,6 +267,28 @@ func TestWorkerListResponseFieldsExist(t *testing.T) {
 	for _, fieldName := range requiredFields {
 		if !hasJSONTag(respType, fieldName) {
 			t.Errorf("Required field '%s' not found in WorkerListResp", fieldName)
+		}
+	}
+}
+
+func TestAppListResponseFieldsExist(t *testing.T) {
+	resp := types.AppListResp{}
+	respType := reflect.TypeOf(resp)
+
+	for _, field := range ListResponseFields {
+		if !hasJSONTag(respType, field.Name) && field.Required {
+			t.Errorf("Required field '%s' not found in AppListResp", field.Name)
+		}
+	}
+}
+
+func TestIconListResponseFieldsExist(t *testing.T) {
+	resp := types.IconListResp{}
+	respType := reflect.TypeOf(resp)
+
+	for _, field := range ListResponseFields {
+		if !hasJSONTag(respType, field.Name) && field.Required {
+			t.Errorf("Required field '%s' not found in IconListResp", field.Name)
 		}
 	}
 }
