@@ -54,7 +54,7 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	// 4. Update Main Task Status
 	now := time.Now()
 	b.svcCtx.GetMainTaskModel(workspaceId).Update(b.ctx, task.Id.Hex(), bson.M{
-		"status":         model.TaskStatusStarted,
+		"status":         model.TaskStatusPending,
 		"sub_task_count": subTaskCount,
 		"sub_task_done":  0,
 		"start_time":     now,
