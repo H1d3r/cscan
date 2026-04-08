@@ -109,6 +109,16 @@ func (m *IndexManager) ensureAssetIndexes(ctx context.Context, workspaceId strin
 		{
 			Keys:    bson.D{{Key: "app", Value: 1}},
 			Options: options.Index().SetBackground(true).SetName("idx_app"),
+		// icon 索引（多值）
+		{
+			Keys:    bson.D{{Key: "icon", Value: 1}},
+			Options: options.Index().SetBackground(true).SetName("idx_icon"),
+		},
+		// port 索引
+		{
+			Keys:    bson.D{{Key: "port", Value: 1}},
+			Options: options.Index().SetBackground(true).SetName("idx_port"),
+		},
 		},
 		// 风险评分索引
 		{
