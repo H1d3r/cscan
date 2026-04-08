@@ -7,7 +7,13 @@
 [![Go](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-2.29-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-2.30-green)](VERSION)
+
+## Screenshots
+
+| Dashboard | Asset Filter | Fingerprint Management |  Vulnerability |  Nodes Monitor | Notification Config |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| <img src="images/dashboard.png"> | <img src="images/filter.png"> | <img src="images/finger.png"> | <img src="images/poc.png"> | <img src="images/worker.png"> | <img src="images/notice.png"> |
 
 ## Quick Start
 
