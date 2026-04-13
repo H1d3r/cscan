@@ -42,7 +42,7 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq, wo
 
 	// Create asset service and fetch assets with scan summaries
 	assetService := svc.NewAssetService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
-	
+
 	assetReq := &svc.GetAssetListReq{
 		WorkspaceId: workspaceId,
 		Filter:      filter,
@@ -61,16 +61,16 @@ func (l *AssetsWithScansLogic) AssetsWithScans(req *types.AssetsWithScansReq, wo
 	for i, assetWithSummary := range assetResp.Assets {
 		// Convert model.Asset to types.Asset
 		asset := types.Asset{
-			Id:           assetWithSummary.Asset.Id.Hex(),
-			Authority:    assetWithSummary.Asset.Authority,
-			Host:         assetWithSummary.Asset.Host,
-			Port:         assetWithSummary.Asset.Port,
-			Service:      assetWithSummary.Asset.Service,
-			Title:        assetWithSummary.Asset.Title,
-			App:          assetWithSummary.Asset.App,
-			Screenshot:   assetWithSummary.Asset.Screenshot,
-			CreateTime:   assetWithSummary.Asset.CreateTime.Format("2006-01-02 15:04:05"),
-			UpdateTime:   assetWithSummary.Asset.UpdateTime.Format("2006-01-02 15:04:05"),
+			Id:         assetWithSummary.Asset.Id.Hex(),
+			Authority:  assetWithSummary.Asset.Authority,
+			Host:       assetWithSummary.Asset.Host,
+			Port:       assetWithSummary.Asset.Port,
+			Service:    assetWithSummary.Asset.Service,
+			Title:      assetWithSummary.Asset.Title,
+			App:        assetWithSummary.Asset.App,
+			Screenshot: assetWithSummary.Asset.Screenshot,
+			CreateTime: assetWithSummary.Asset.CreateTime.Format("2006-01-02 15:04:05"),
+			UpdateTime: assetWithSummary.Asset.UpdateTime.Format("2006-01-02 15:04:05"),
 		}
 
 		// Format last scan time

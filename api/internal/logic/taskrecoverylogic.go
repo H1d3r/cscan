@@ -27,13 +27,13 @@ func NewTaskRecoveryStatsLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 func (l *TaskRecoveryStatsLogic) GetTaskRecoveryStats() (resp *types.TaskRecoveryStatsResp, err error) {
 	// 通过 RPC 调用获取恢复统计信息
 	// 这里简化处理，直接从 Redis 获取
-	
+
 	processingCount, _ := l.svcCtx.RedisClient.SCard(l.ctx, "cscan:task:processing").Result()
-	
+
 	// 获取所有 Worker 状态
 	workersKey := "cscan:workers"
 	workers, _ := l.svcCtx.RedisClient.SMembers(l.ctx, workersKey).Result()
-	
+
 	onlineWorkers := 0
 	for _, worker := range workers {
 		workerKey := "cscan:worker:" + worker

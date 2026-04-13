@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"cscan/pkg/xerr"
+	"github.com/zeromicro/go-zero/core/logx"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
@@ -41,9 +42,10 @@ func Error(w http.ResponseWriter, err error) {
 		})
 		return
 	}
+	logx.Errorf("internal error: %v", err)
 	httpx.OkJson(w, &Response{
 		Code: xerr.ServerError,
-		Msg:  err.Error(),
+		Msg:  "系统内部错误，请稍后重试",
 	})
 }
 

@@ -12,14 +12,14 @@ import (
 
 // 任务状态常量
 const (
-	TaskStatusCreated  = "CREATED"  // 已创建，等待手动启动
-	TaskStatusPending  = "PENDING"  // 等待执行（已入队）
-	TaskStatusStarted  = "STARTED"  // 执行中
-	TaskStatusPaused   = "PAUSED"   // 已暂停
-	TaskStatusSuccess  = "SUCCESS"  // 执行成功
-	TaskStatusFailure  = "FAILURE"  // 执行失败
-	TaskStatusRevoked  = "REVOKED"  // 已取消
-	TaskStatusStopped  = "STOPPED"  // 已停止
+	TaskStatusCreated = "CREATED" // 已创建，等待手动启动
+	TaskStatusPending = "PENDING" // 等待执行（已入队）
+	TaskStatusStarted = "STARTED" // 执行中
+	TaskStatusPaused  = "PAUSED"  // 已暂停
+	TaskStatusSuccess = "SUCCESS" // 执行成功
+	TaskStatusFailure = "FAILURE" // 执行失败
+	TaskStatusRevoked = "REVOKED" // 已取消
+	TaskStatusStopped = "STOPPED" // 已停止
 )
 
 type MainTask struct {
@@ -30,7 +30,7 @@ type MainTask struct {
 	ProfileId   string             `bson:"profile_id" json:"profileId"`
 	ProfileName string             `bson:"profile_name" json:"profileName"`
 	OrgId       string             `bson:"org_id,omitempty" json:"orgId"`
-	Tags        []string           `bson:"tags,omitempty" json:"tags"`        // 任务标签
+	Tags        []string           `bson:"tags,omitempty" json:"tags"` // 任务标签
 	Status      string             `bson:"status" json:"status"`
 	Progress    int                `bson:"progress" json:"progress"`
 	Result      string             `bson:"result" json:"result"`
@@ -43,12 +43,12 @@ type MainTask struct {
 	StartTime   *time.Time         `bson:"start_time" json:"startTime"`
 	EndTime     *time.Time         `bson:"end_time" json:"endTime"`
 	// 任务进度保存（用于暂停/继续）
-	TaskState    string            `bson:"task_state" json:"taskState"`       // 任务执行状态JSON（保存已完成的阶段和数据）
-	Config       string            `bson:"config" json:"config"`              // 任务配置JSON
-	CurrentPhase string            `bson:"current_phase" json:"currentPhase"` // 当前执行阶段
+	TaskState    string `bson:"task_state" json:"taskState"`       // 任务执行状态JSON（保存已完成的阶段和数据）
+	Config       string `bson:"config" json:"config"`              // 任务配置JSON
+	CurrentPhase string `bson:"current_phase" json:"currentPhase"` // 当前执行阶段
 	// 子任务拆分（用于分布式并发）
-	SubTaskCount int               `bson:"sub_task_count" json:"subTaskCount"` // 子任务总数
-	SubTaskDone  int               `bson:"sub_task_done" json:"subTaskDone"`   // 已完成子任务数
+	SubTaskCount int `bson:"sub_task_count" json:"subTaskCount"` // 子任务总数
+	SubTaskDone  int `bson:"sub_task_done" json:"subTaskDone"`   // 已完成子任务数
 }
 
 type ExecutorTask struct {
@@ -83,14 +83,13 @@ func NewMainTaskModel(db *mongo.Database, workspaceId string) *MainTaskModel {
 	coll := db.Collection(workspaceId + "_maintask")
 
 	// 创建索引
-	ctx := context.Background()
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "task_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		{Keys: bson.D{{Key: "status", Value: 1}}},
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 		{Keys: bson.D{{Key: "tags", Value: 1}}},
 	}
-	coll.Indexes().CreateMany(ctx, indexes)
+	ensureIndexes(coll, indexes)
 
 	return &MainTaskModel{
 		coll: coll,

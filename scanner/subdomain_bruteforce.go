@@ -36,19 +36,19 @@ func NewSubdomainBruteforceScanner() *SubdomainBruteforceScanner {
 
 // SubdomainBruteforceOptions 子域名暴力破解选项
 type SubdomainBruteforceOptions struct {
-	Wordlist        string   `json:"wordlist"`        // 字典内容（每行一个前缀）
-	Threads         int      `json:"threads"`         // 并发线程数
-	RateLimit       int      `json:"rateLimit"`       // 速率限制
-	Timeout         int      `json:"timeout"`         // 超时时间(秒)
-	Resolvers       []string `json:"resolvers"`       // 自定义DNS解析器
-	WildcardFilter  bool     `json:"wildcardFilter"`  // 泛解析过滤
-	ResolveDNS      bool     `json:"resolveDNS"`      // 是否解析DNS
-	Concurrent      int      `json:"concurrent"`      // DNS解析并发数
+	Wordlist       string   `json:"wordlist"`       // 字典内容（每行一个前缀）
+	Threads        int      `json:"threads"`        // 并发线程数
+	RateLimit      int      `json:"rateLimit"`      // 速率限制
+	Timeout        int      `json:"timeout"`        // 超时时间(秒)
+	Resolvers      []string `json:"resolvers"`      // 自定义DNS解析器
+	WildcardFilter bool     `json:"wildcardFilter"` // 泛解析过滤
+	ResolveDNS     bool     `json:"resolveDNS"`     // 是否解析DNS
+	Concurrent     int      `json:"concurrent"`     // DNS解析并发数
 	// 扫描引擎选择
-	Engine          string   `json:"engine"`          // 扫描引擎: dnsx, ksubdomain (默认ksubdomain)
-	Bandwidth       string   `json:"bandwidth"`       // ksubdomain带宽限制，如"5M", "10M", "100M"
-	Retry           int      `json:"retry"`           // ksubdomain重试次数
-	WildcardMode    string   `json:"wildcardMode"`    // ksubdomain泛解析过滤模式: basic, advanced, none
+	Engine       string `json:"engine"`       // 扫描引擎: dnsx, ksubdomain (默认ksubdomain)
+	Bandwidth    string `json:"bandwidth"`    // ksubdomain带宽限制，如"5M", "10M", "100M"
+	Retry        int    `json:"retry"`        // ksubdomain重试次数
+	WildcardMode string `json:"wildcardMode"` // ksubdomain泛解析过滤模式: basic, advanced, none
 	// 增强功能
 	RecursiveBrute    bool   `json:"recursiveBrute"`    // 递归爆破
 	RecursiveDepth    int    `json:"recursiveDepth"`    // 递归深度，默认2
@@ -95,43 +95,43 @@ type TakeoverResult struct {
 
 // 子域接管指纹库
 var takeoverFingerprints = map[string][]string{
-	"github":        {"There isn't a GitHub Pages site here", "For root URLs (like http://example.com/) you must provide an index.html file"},
-	"heroku":        {"No such app", "no-such-app.herokuapp.com"},
-	"amazonaws":     {"NoSuchBucket", "The specified bucket does not exist"},
-	"bitbucket":     {"Repository not found"},
-	"ghost":         {"The thing you were looking for is no longer here"},
-	"tumblr":        {"There's nothing here.", "Whatever you were looking for doesn't currently exist at this address"},
-	"shopify":       {"Sorry, this shop is currently unavailable", "Only one step left!"},
-	"wordpress":     {"Do you want to register"},
-	"teamwork":      {"Oops - We didn't find your site"},
-	"helpjuice":     {"We could not find what you're looking for"},
-	"helpscout":     {"No settings were found for this company"},
-	"cargo":         {"If you're moving your domain away from Cargo"},
-	"statuspage":    {"You are being redirected", "statuspage.io"},
-	"uservoice":     {"This UserVoice subdomain is currently available"},
-	"surge":         {"project not found"},
-	"intercom":      {"This page is reserved for artistic dogs", "Uh oh. That page doesn't exist"},
-	"webflow":       {"The page you are looking for doesn't exist or has been moved"},
-	"kajabi":        {"The page you were looking for doesn't exist"},
-	"thinkific":     {"You may have mistyped the address or the page may have moved"},
-	"tave":          {"Sorry, this page is no longer available"},
-	"wishpond":      {"https://www.wishpond.com/404?campaign=true"},
-	"aftership":     {"Oops.</h2><p class=\"text-muted text-tight\">The page you're looking for doesn't exist"},
-	"aha":           {"There is no portal here ... sending you back to Aha!"},
-	"tictail":       {"to target URL: <a href=\"https://tictail.com"},
-	"brightcove":    {"<p class=\"bc-gallery-error-code\">Error Code: 404</p>"},
-	"bigcartel":     {"<h1>Oops! We couldn&#8217;t find that page.</h1>"},
-	"acquia":        {"The site you are looking for could not be found"},
-	"fastly":        {"Fastly error: unknown domain"},
-	"pantheon":      {"The gods are wise, but do not know of the site which you seek"},
-	"zendesk":       {"Help Center Closed", "Oops, this help center no longer exists"},
-	"desk":          {"Sorry, We Couldn't Find That Page", "Please check the URL and try your request again"},
-	"unbounce":      {"The requested URL was not found on this server", "The page you're looking for doesn't exist"},
-	"pingdom":       {"Sorry, couldn't find the status page"},
-	"tilda":         {"Please renew your subscription"},
-	"smartling":     {"Domain is not configured"},
+	"github":          {"There isn't a GitHub Pages site here", "For root URLs (like http://example.com/) you must provide an index.html file"},
+	"heroku":          {"No such app", "no-such-app.herokuapp.com"},
+	"amazonaws":       {"NoSuchBucket", "The specified bucket does not exist"},
+	"bitbucket":       {"Repository not found"},
+	"ghost":           {"The thing you were looking for is no longer here"},
+	"tumblr":          {"There's nothing here.", "Whatever you were looking for doesn't currently exist at this address"},
+	"shopify":         {"Sorry, this shop is currently unavailable", "Only one step left!"},
+	"wordpress":       {"Do you want to register"},
+	"teamwork":        {"Oops - We didn't find your site"},
+	"helpjuice":       {"We could not find what you're looking for"},
+	"helpscout":       {"No settings were found for this company"},
+	"cargo":           {"If you're moving your domain away from Cargo"},
+	"statuspage":      {"You are being redirected", "statuspage.io"},
+	"uservoice":       {"This UserVoice subdomain is currently available"},
+	"surge":           {"project not found"},
+	"intercom":        {"This page is reserved for artistic dogs", "Uh oh. That page doesn't exist"},
+	"webflow":         {"The page you are looking for doesn't exist or has been moved"},
+	"kajabi":          {"The page you were looking for doesn't exist"},
+	"thinkific":       {"You may have mistyped the address or the page may have moved"},
+	"tave":            {"Sorry, this page is no longer available"},
+	"wishpond":        {"https://www.wishpond.com/404?campaign=true"},
+	"aftership":       {"Oops.</h2><p class=\"text-muted text-tight\">The page you're looking for doesn't exist"},
+	"aha":             {"There is no portal here ... sending you back to Aha!"},
+	"tictail":         {"to target URL: <a href=\"https://tictail.com"},
+	"brightcove":      {"<p class=\"bc-gallery-error-code\">Error Code: 404</p>"},
+	"bigcartel":       {"<h1>Oops! We couldn&#8217;t find that page.</h1>"},
+	"acquia":          {"The site you are looking for could not be found"},
+	"fastly":          {"Fastly error: unknown domain"},
+	"pantheon":        {"The gods are wise, but do not know of the site which you seek"},
+	"zendesk":         {"Help Center Closed", "Oops, this help center no longer exists"},
+	"desk":            {"Sorry, We Couldn't Find That Page", "Please check the URL and try your request again"},
+	"unbounce":        {"The requested URL was not found on this server", "The page you're looking for doesn't exist"},
+	"pingdom":         {"Sorry, couldn't find the status page"},
+	"tilda":           {"Please renew your subscription"},
+	"smartling":       {"Domain is not configured"},
 	"campaignmonitor": {"Trying to access your account?", "Double check the URL"},
-	"azure":         {"404 Web Site not found"},
+	"azure":           {"404 Web Site not found"},
 }
 
 // Scan 执行子域名暴力破解扫描
@@ -272,14 +272,14 @@ func (s *SubdomainBruteforceScanner) Scan(ctx context.Context, config *ScanConfi
 				assetMap[asset.Host] = asset
 			}
 		}
-		
+
 		// 转换为列表
 		result.Assets = make([]*Asset, 0, len(assetMap))
 		for _, asset := range assetMap {
 			asset.Source = "bruteforce"
 			result.Assets = append(result.Assets, asset)
 		}
-		
+
 		taskLog("INFO", "Bruteforce: total %d unique assets with IP information from ksubdomain", len(result.Assets))
 		return result, nil
 	}
@@ -499,7 +499,7 @@ func (s *SubdomainBruteforceScanner) recursiveBruteforce(ctx context.Context, ro
 	if opts.RecursiveWordlist != "" {
 		recursiveWordlist = s.parseWordlist(opts.RecursiveWordlist)
 	}
-	
+
 	// 如果没有指定递归字典，跳过递归爆破
 	if len(recursiveWordlist) == 0 {
 		taskLog("WARN", "Bruteforce: no recursive wordlist provided, skipping recursive bruteforce")
@@ -555,7 +555,7 @@ func (s *SubdomainBruteforceScanner) recursiveBruteforce(ctx context.Context, ro
 
 		// 去重
 		levelSubdomains = utils.UniqueStrings(levelSubdomains)
-		
+
 		// 过滤已存在的子域名
 		existingSet := make(map[string]bool)
 		for _, s := range foundSubdomains {
@@ -793,7 +793,7 @@ func (s *SubdomainBruteforceScanner) checkSubdomainTakeover(ctx context.Context,
 				default:
 					result := s.checkTakeover(ctx, client, asset)
 					if result != nil && result.Vulnerable {
-						taskLog("WARN", "Takeover: %s is vulnerable! CNAME: %s, Service: %s", 
+						taskLog("WARN", "Takeover: %s is vulnerable! CNAME: %s, Service: %s",
 							result.Subdomain, result.CName, result.Service)
 						// 在资产中标记接管风险
 						asset.TakeoverRisk = true
@@ -1037,51 +1037,52 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 
 	return assets
 }
+
 // bruteforceWithKSubdomain 使用ksubdomain进行暴力破解
 func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) ([]string, error) {
 	var subdomains []string
-	
+
 	// 创建 output 目录
 	outputDir := "output"
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		taskLog("WARN", "Bruteforce: failed to create output directory: %v", err)
 		outputDir = os.TempDir() // 回退到临时目录
 	}
-	
+
 	// 创建字典文件（保存到 output 目录）
 	timestamp := time.Now().Format("20060102_150405")
 	dictFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_dict_%s_%s.txt", domain, timestamp))
-	
+
 	// 写入字典内容（从数据库获取的字典）
 	if err := os.WriteFile(dictFile, []byte(strings.Join(wordlist, "\n")), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write wordlist file: %v", err)
 	}
-	
+
 	taskLog("INFO", "Bruteforce: created dictionary file with %d words: %s", len(wordlist), dictFile)
-	
+
 	// 创建输出文件（保存到 output 目录）
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
-	
+
 	// 构建ksubdomain命令
 	// ksubdomain e -d example.com -f dict.txt --wild-filter-mode advanced -o output.txt
 	args := []string{
-		"e",  // 枚举模式
+		"e", // 枚举模式
 		"-d", domain,
-		"-f", dictFile,  // 使用数据库中的字典文件
-		"--wild-filter-mode", "advanced",  // 泛解析过滤模式
+		"-f", dictFile, // 使用数据库中的字典文件
+		"--wild-filter-mode", "advanced", // 泛解析过滤模式
 		"-o", outputFile,
 	}
-	
+
 	// 添加带宽限制
 	if opts.Bandwidth != "" {
 		args = append(args, "-b", opts.Bandwidth)
 	}
-	
+
 	// 添加重试次数
 	if opts.Retry > 0 {
 		args = append(args, "--retry", fmt.Sprintf("%d", opts.Retry))
 	}
-	
+
 	// 自定义泛解析过滤模式（如果指定）
 	if opts.WildcardMode != "" && opts.WildcardMode != "none" && opts.WildcardMode != "advanced" {
 		// 替换默认的advanced模式
@@ -1092,14 +1093,14 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			}
 		}
 	}
-	
+
 	// 添加DNS服务器
 	if len(opts.Resolvers) > 0 {
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
-	
+
 	taskLog("INFO", "Bruteforce: executing ksubdomain with args: %v", args)
-	
+
 	// 设置超时（防止卡住）
 	// 子域名爆破需要较长时间，使用独立的超时设置
 	timeout := 3 * time.Minute // 默认30分钟超时
@@ -1107,28 +1108,28 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 		// 如果配置的超时时间大于60秒，则使用配置的值
 		timeout = time.Duration(opts.Timeout) * time.Second
 	}
-	
+
 	// 创建带超时的context
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	
+
 	// 执行ksubdomain命令
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
-	
+
 	// 捕获输出
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	// 执行命令
 	err := cmd.Run()
-	
+
 	// 检查是否超时
 	if cmdCtx.Err() == context.DeadlineExceeded {
 		taskLog("WARN", "Bruteforce: ksubdomain execution timeout after %v", timeout)
 		return subdomains, fmt.Errorf("ksubdomain execution timeout after %v", timeout)
 	}
-	
+
 	if err != nil {
 		// 检查是否是因为ksubdomain未安装
 		if strings.Contains(err.Error(), "executable file not found") {
@@ -1139,16 +1140,16 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 		// 如果ksubdomain执行失败，回退到dnsx
 		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 	}
-	
+
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, reading results from: %s", outputFile)
-	
+
 	// 读取输出文件
 	content, err := os.ReadFile(outputFile)
 	if err != nil {
 		taskLog("WARN", "Bruteforce: failed to read ksubdomain output file: %v, falling back to dnsx", err)
 		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 	}
-	
+
 	// 解析结果（ksubdomain格式：域名=>IP）
 	// 例如：www.qq.com=>198.18.119.65
 	lines := strings.Split(string(content), "\n")
@@ -1159,7 +1160,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			continue
 		}
 		totalLines++
-		
+
 		// 解析 ksubdomain 格式：域名=>IP
 		parts := strings.Split(line, "=>")
 		if len(parts) >= 1 {
@@ -1169,60 +1170,57 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			}
 		}
 	}
-	
+
 	taskLog("INFO", "Bruteforce: ksubdomain output file contains %d lines, parsed %d subdomains (before deduplication)", totalLines, len(subdomains))
-	
+
 	return subdomains, nil
 }
-
-
-
 
 // bruteforceWithKSubdomainAndParseIP 使用ksubdomain进行暴力破解并解析IP信息
 // 返回带IP信息的资产列表
 func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx context.Context, domain string, wordlist []string, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) ([]*Asset, error) {
 	var assets []*Asset
-	
+
 	// 创建 output 目录
 	outputDir := "output"
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		taskLog("WARN", "Bruteforce: failed to create output directory: %v", err)
 		outputDir = os.TempDir() // 回退到临时目录
 	}
-	
+
 	// 创建字典文件（保存到 output 目录）
 	timestamp := time.Now().Format("20060102_150405")
 	dictFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_dict_%s_%s.txt", domain, timestamp))
-	
+
 	// 写入字典内容（从数据库获取的字典）
 	if err := os.WriteFile(dictFile, []byte(strings.Join(wordlist, "\n")), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write wordlist file: %v", err)
 	}
-	
+
 	taskLog("INFO", "Bruteforce: created dictionary file with %d words: %s", len(wordlist), dictFile)
-	
+
 	// 创建输出文件（保存到 output 目录）
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("ksubdomain_output_%s_%s.txt", domain, timestamp))
-	
+
 	// 构建ksubdomain命令
 	args := []string{
-		"e",  // 枚举模式
+		"e", // 枚举模式
 		"-d", domain,
 		"-f", dictFile,
 		"--wild-filter-mode", "advanced",
 		"-o", outputFile,
 	}
-	
+
 	// 添加带宽限制
 	if opts.Bandwidth != "" {
 		args = append(args, "-b", opts.Bandwidth)
 	}
-	
+
 	// 添加重试次数
 	if opts.Retry > 0 {
 		args = append(args, "--retry", fmt.Sprintf("%d", opts.Retry))
 	}
-	
+
 	// 自定义泛解析过滤模式
 	if opts.WildcardMode != "" && opts.WildcardMode != "none" && opts.WildcardMode != "advanced" {
 		for i, arg := range args {
@@ -1232,35 +1230,35 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			}
 		}
 	}
-	
+
 	// 添加DNS服务器
 	if len(opts.Resolvers) > 0 {
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
-	
+
 	taskLog("INFO", "Bruteforce: executing ksubdomain with args: %v", args)
-	
+
 	// 设置超时
 	timeout := 30 * time.Minute
 	if opts.Timeout > 60 {
 		timeout = time.Duration(opts.Timeout) * time.Second
 	}
-	
+
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	
+
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	err := cmd.Run()
-	
+
 	if cmdCtx.Err() == context.DeadlineExceeded {
 		taskLog("WARN", "Bruteforce: ksubdomain execution timeout after %v", timeout)
 		return assets, fmt.Errorf("ksubdomain execution timeout after %v", timeout)
 	}
-	
+
 	if err != nil {
 		if strings.Contains(err.Error(), "executable file not found") {
 			taskLog("WARN", "Bruteforce: ksubdomain not found")
@@ -1269,16 +1267,16 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s", err, stderr.String())
 		return assets, fmt.Errorf("ksubdomain execution error: %v", err)
 	}
-	
+
 	taskLog("INFO", "Bruteforce: ksubdomain execution completed, parsing results with IP from: %s", outputFile)
-	
+
 	// 读取输出文件
 	content, err := os.ReadFile(outputFile)
 	if err != nil {
 		taskLog("WARN", "Bruteforce: failed to read ksubdomain output file: %v", err)
 		return assets, err
 	}
-	
+
 	// 解析结果（ksubdomain格式：域名=>IP）
 	// 例如：www.qq.com=>198.18.119.65
 	lines := strings.Split(string(content), "\n")
@@ -1289,25 +1287,25 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			continue
 		}
 		totalLines++
-		
+
 		// 解析 ksubdomain 格式：域名=>IP
 		// 注意：分隔符是固定的 "=>"
 		if !strings.Contains(line, "=>") {
 			continue
 		}
-		
+
 		parts := strings.Split(line, "=>")
 		if len(parts) != 2 {
 			continue
 		}
-		
+
 		subdomain := strings.TrimSpace(parts[0])
 		ipStr := strings.TrimSpace(parts[1])
-		
+
 		if subdomain == "" {
 			continue
 		}
-		
+
 		asset := &Asset{
 			Authority: subdomain,
 			Host:      subdomain,
@@ -1315,7 +1313,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			Source:    "bruteforce",
 			Port:      0, // 子域名爆破阶段没有端口信息
 		}
-		
+
 		// 解析IP地址（如果有）
 		if ipStr != "" {
 			ip := net.ParseIP(ipStr)
@@ -1327,11 +1325,11 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 				}
 			}
 		}
-		
+
 		assets = append(assets, asset)
 	}
-	
+
 	taskLog("INFO", "Bruteforce: ksubdomain output file contains %d lines, parsed %d assets with IP information", totalLines, len(assets))
-	
+
 	return assets, nil
 }

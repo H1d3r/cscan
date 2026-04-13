@@ -306,7 +306,7 @@ func (l *DomainLogic) DomainBatchDelete(req *types.DomainBatchDeleteReq, workspa
 	}
 
 	workspaceIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
-	
+
 	// 先收集所有要删除的域名值
 	domainNames := make(map[string]bool)
 	for _, wsId := range workspaceIds {

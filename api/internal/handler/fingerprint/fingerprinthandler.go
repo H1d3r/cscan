@@ -413,7 +413,6 @@ func HttpServiceImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-
 // FingerprintMatchAssetsHandler 验证指纹匹配现有资产
 func FingerprintMatchAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +432,6 @@ func FingerprintMatchAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc 
 		httpx.OkJson(w, resp)
 	}
 }
-
 
 // ==================== 主动扫描指纹 Handler ====================
 

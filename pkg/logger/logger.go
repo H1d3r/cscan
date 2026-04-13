@@ -168,11 +168,11 @@ func Error(format string, args ...interface{}) {
 // NoopLogger 空日志器（用于禁用日志）
 type NoopLogger struct{}
 
-func (l *NoopLogger) Debug(format string, args ...interface{}) {}
-func (l *NoopLogger) Info(format string, args ...interface{})  {}
-func (l *NoopLogger) Warn(format string, args ...interface{})  {}
-func (l *NoopLogger) Error(format string, args ...interface{}) {}
-func (l *NoopLogger) WithPrefix(prefix string) Logger          { return l }
+func (l *NoopLogger) Debug(format string, args ...interface{})       {}
+func (l *NoopLogger) Info(format string, args ...interface{})        {}
+func (l *NoopLogger) Warn(format string, args ...interface{})        {}
+func (l *NoopLogger) Error(format string, args ...interface{})       {}
+func (l *NoopLogger) WithPrefix(prefix string) Logger                { return l }
 func (l *NoopLogger) WithField(key string, value interface{}) Logger { return l }
 
 // NewNoopLogger 创建空日志器

@@ -627,39 +627,43 @@ func (s *FingerprintScanner) getIconHashWithData(baseUrl string, htmlBody string
 	)
 
 	for _, path := range faviconPaths {
-		var iconUrl string
-		if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-			// 已经是完整URL
-			iconUrl = path
-		} else {
-			iconUrl = baseUrl + path
+		match, hash, data := func(p string) (bool, string, []byte) {
+			var iconUrl string
+			if strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") {
+				// 已经是完整URL
+				iconUrl = p
+			} else {
+				iconUrl = baseUrl + p
+			}
+
+			resp, err := s.client.Get(iconUrl)
+			if err != nil {
+				return false, "", nil
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				return false, "", nil
+			}
+
+			iconData, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+
+			if readErr != nil || len(iconData) == 0 {
+				return false, "", nil
+			}
+
+			// 验证是否为有效的图片数据（过滤HTML错误页等非图片响应）
+			if !isImageData(iconData) {
+				return false, "", nil
+			}
+
+			// 计算MD5 hash（用于显示）
+			return true, calculateIconHash(iconData), iconData
+		}(path)
+
+		if match {
+			return hash, data
 		}
-
-		resp, err := s.client.Get(iconUrl)
-		if err != nil {
-			continue
-		}
-
-		// 立即读取并关闭，避免 defer 在循环中导致连接泄漏
-		iconData, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			continue
-		}
-
-		if readErr != nil || len(iconData) == 0 {
-			continue
-		}
-
-		// 验证是否为有效的图片数据（过滤HTML错误页等非图片响应）
-		if !isImageData(iconData) {
-			continue
-		}
-
-		// 计算MD5 hash（用于显示）
-		hash := calculateIconHash(iconData)
-		return hash, iconData
 	}
 
 	return "", nil
@@ -737,10 +741,10 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
 
 		// 验证是否为有效的HTTP响应
 		if !isValidHttpResponse(resp) {
+			resp.Body.Close()
 			continue
 		}
 
@@ -748,6 +752,7 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 
 		// 读取响应体（保留原始字节用于GBK编码匹配）
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024)) // 限制1MB
+		resp.Body.Close()
 
 		// 提取信息
 		asset.HttpStatus = fmt.Sprintf("%d", resp.StatusCode)
@@ -1092,26 +1097,32 @@ func (s *FingerprintScanner) getIconHash(baseUrl string) string {
 	}
 
 	for _, path := range faviconPaths {
-		iconUrl := baseUrl + path
-		resp, err := s.client.Get(iconUrl)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
+		match, hash := func(p string) (bool, string) {
+			iconUrl := baseUrl + p
+			resp, err := s.client.Get(iconUrl)
+			if err != nil {
+				return false, ""
+			}
+			defer resp.Body.Close()
 
-		if resp.StatusCode != 200 {
-			continue
-		}
+			if resp.StatusCode != 200 {
+				return false, ""
+			}
 
-		// 读取icon内容
-		iconData, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		if err != nil || len(iconData) == 0 {
-			continue
-		}
+			// 读取icon内容
+			iconData, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 
-		// 计算MMH3 hash (Shodan风格)
-		hash := calculateIconHash(iconData)
-		return hash
+			if err != nil || len(iconData) == 0 {
+				return false, ""
+			}
+
+			// 计算MMH3 hash (Shodan风格)
+			return true, calculateIconHash(iconData)
+		}(path)
+
+		if match {
+			return hash
+		}
 	}
 
 	return ""

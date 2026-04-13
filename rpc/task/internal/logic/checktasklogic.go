@@ -104,7 +104,6 @@ func (l *CheckTaskLogic) popTaskFromQueue(queueKey, processingKey, workerName st
 	}, nil
 }
 
-
 // updateMainTaskToStarted 更新主任务状态为 STARTED
 func (l *CheckTaskLogic) updateMainTaskToStarted(mainTaskId, workspaceId string) {
 	if mainTaskId == "" || workspaceId == "" {

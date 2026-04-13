@@ -712,47 +712,47 @@ func TestEdgeCase_CompareVersionsWithInvalidVersionIds(t *testing.T) {
 // TestEdgeCase_VersionComparisonCalculations tests version comparison difference calculations
 func TestEdgeCase_VersionComparisonCalculations(t *testing.T) {
 	testCases := []struct {
-		name              string
-		v1DirCount        int
-		v1VulnCount       int
-		v2DirCount        int
-		v2VulnCount       int
-		expectedDirAdded  int64
-		expectedDirRemoved int64
-		expectedVulnAdded int64
+		name                string
+		v1DirCount          int
+		v1VulnCount         int
+		v2DirCount          int
+		v2VulnCount         int
+		expectedDirAdded    int64
+		expectedDirRemoved  int64
+		expectedVulnAdded   int64
 		expectedVulnRemoved int64
 	}{
 		{
-			name:              "Results increased",
-			v1DirCount:        10,
-			v1VulnCount:       5,
-			v2DirCount:        15,
-			v2VulnCount:       8,
-			expectedDirAdded:  5,
-			expectedDirRemoved: 0,
-			expectedVulnAdded: 3,
+			name:                "Results increased",
+			v1DirCount:          10,
+			v1VulnCount:         5,
+			v2DirCount:          15,
+			v2VulnCount:         8,
+			expectedDirAdded:    5,
+			expectedDirRemoved:  0,
+			expectedVulnAdded:   3,
 			expectedVulnRemoved: 0,
 		},
 		{
-			name:              "Results decreased",
-			v1DirCount:        15,
-			v1VulnCount:       8,
-			v2DirCount:        10,
-			v2VulnCount:       5,
-			expectedDirAdded:  0,
-			expectedDirRemoved: 5,
-			expectedVulnAdded: 0,
+			name:                "Results decreased",
+			v1DirCount:          15,
+			v1VulnCount:         8,
+			v2DirCount:          10,
+			v2VulnCount:         5,
+			expectedDirAdded:    0,
+			expectedDirRemoved:  5,
+			expectedVulnAdded:   0,
 			expectedVulnRemoved: 3,
 		},
 		{
-			name:              "No change",
-			v1DirCount:        10,
-			v1VulnCount:       5,
-			v2DirCount:        10,
-			v2VulnCount:       5,
-			expectedDirAdded:  0,
-			expectedDirRemoved: 0,
-			expectedVulnAdded: 0,
+			name:                "No change",
+			v1DirCount:          10,
+			v1VulnCount:         5,
+			v2DirCount:          10,
+			v2VulnCount:         5,
+			expectedDirAdded:    0,
+			expectedDirRemoved:  0,
+			expectedVulnAdded:   0,
 			expectedVulnRemoved: 0,
 		},
 	}
@@ -840,7 +840,7 @@ func TestEdgeCase_ChangesSummaryGeneration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Generate changes summary
 			changesSummary := ""
-			changesSummary = "Archived " + string(rune(tc.dirCount+'0')) + " directory scans and " + 
+			changesSummary = "Archived " + string(rune(tc.dirCount+'0')) + " directory scans and " +
 				string(rune(tc.vulnCount+'0')) + " vulnerability scans"
 
 			// Note: This is a simplified test - actual implementation uses fmt.Sprintf

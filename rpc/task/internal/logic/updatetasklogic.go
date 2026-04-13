@@ -144,12 +144,12 @@ func (l *UpdateTaskLogic) updateTaskInDBWithPhase(taskId, state, result, phase s
 
 	// 构建更新字段
 	update := bson.M{}
-	
+
 	// 如果有状态，更新状态
 	if state != "" {
 		update["status"] = state
 	}
-	
+
 	// 如果有阶段，更新当前阶段
 	if phase != "" {
 		update["current_phase"] = phase
@@ -264,11 +264,11 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 		// 转换高危过滤配置
 		if c.HighRiskFilter != nil {
 			item.HighRiskFilter = &notify.HighRiskFilter{
-				Enabled:              c.HighRiskFilter.Enabled,
-				HighRiskFingerprints: c.HighRiskFilter.HighRiskFingerprints,
-				HighRiskPorts:        c.HighRiskFilter.HighRiskPorts,
+				Enabled:               c.HighRiskFilter.Enabled,
+				HighRiskFingerprints:  c.HighRiskFilter.HighRiskFingerprints,
+				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
-				NewAssetNotify:       c.HighRiskFilter.NewAssetNotify,
+				NewAssetNotify:        c.HighRiskFilter.NewAssetNotify,
 			}
 		}
 		configItems = append(configItems, item)

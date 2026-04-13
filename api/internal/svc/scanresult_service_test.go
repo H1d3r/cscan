@@ -1695,8 +1695,8 @@ func TestProperty11_MergePreservesUnchangedData(t *testing.T) {
 // **Validates: Requirement 5.1**
 func TestNormalizeDirScanResult_VersionAssignment(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          model.DirScanResult
+		name            string
+		input           model.DirScanResult
 		expectedVersion int64
 	}{
 		{
@@ -1844,8 +1844,8 @@ func TestNormalizeDirScanResult_MissingOptionalFields(t *testing.T) {
 // **Validates: Requirement 5.1**
 func TestNormalizeVulnScanResult_VersionAssignment(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          model.ScanResult
+		name            string
+		input           model.ScanResult
 		expectedVersion int64
 	}{
 		{

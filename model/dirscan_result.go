@@ -29,8 +29,8 @@ type DirScanResult struct {
 	ContentLines  int64              `bson:"content_lines" json:"contentLines"`
 	Duration      int64              `bson:"duration" json:"duration"`
 	CreateTime    time.Time          `bson:"create_time" json:"createTime"`
-	ScanTime      time.Time          `bson:"scan_time,omitempty" json:"scanTime,omitempty"`       // New field for versioning
-	Version       int64              `bson:"version,omitempty" json:"version,omitempty"`          // New field for versioning
+	ScanTime      time.Time          `bson:"scan_time,omitempty" json:"scanTime,omitempty"` // New field for versioning
+	Version       int64              `bson:"version,omitempty" json:"version,omitempty"`    // New field for versioning
 }
 
 // DirScanResultModel 目录扫描结果模型

@@ -1,8 +1,8 @@
 package scanner
 
 import (
-	"cscan/pkg/utils"
 	"context"
+	"cscan/pkg/utils"
 	"encoding/json"
 	"errors"
 	"fmt"

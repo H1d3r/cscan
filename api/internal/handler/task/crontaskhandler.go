@@ -58,10 +58,10 @@ type CronTaskItem struct {
 type CronTaskSaveReq struct {
 	Id           string `json:"id,optional"`
 	Name         string `json:"name"`
-	ScheduleType string `json:"scheduleType"` // cron: Cron表达式, once: 指定时间
+	ScheduleType string `json:"scheduleType"`          // cron: Cron表达式, once: 指定时间
 	CronSpec     string `json:"cronSpec,optional"`     // Cron表达式
 	ScheduleTime string `json:"scheduleTime,optional"` // 指定执行时间 (格式: 2006-01-02 15:04:05)
-	MainTaskId   string `json:"mainTaskId"`   // 关联的任务ID（用于获取初始配置）
+	MainTaskId   string `json:"mainTaskId"`            // 关联的任务ID（用于获取初始配置）
 	WorkspaceId  string `json:"workspaceId,optional"`  // 任务所属工作空间ID
 	Target       string `json:"target,optional"`       // 扫描目标（可自定义，不填则使用关联任务的目标）
 	Config       string `json:"config,optional"`       // 任务配置JSON（可自定义，不填则使用关联任务的配置）
@@ -139,9 +139,9 @@ func CronTaskListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 				WorkspaceId:  task.WorkspaceId,
 				MainTaskId:   task.MainTaskId,
 				TaskName:     task.TaskName,
-				Target:       task.Target,      // 完整目标（用于编辑）
-				TargetShort:  targetShort,      // 截断目标（用于列表显示）
-				Config:       task.Config,      // 完整配置（用于编辑）
+				Target:       task.Target, // 完整目标（用于编辑）
+				TargetShort:  targetShort, // 截断目标（用于列表显示）
+				Config:       task.Config, // 完整配置（用于编辑）
 				Status:       task.Status,
 				LastRunTime:  task.LastRunTime,
 				NextRunTime:  task.NextRunTime,

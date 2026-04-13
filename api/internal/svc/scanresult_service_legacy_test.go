@@ -406,9 +406,9 @@ func TestProperty14_LegacyRecordCompatibility(t *testing.T) {
 				Port:          port,
 				Path:          path,
 				StatusCode:    200,
-				ContentLength: 0,    // Zero value
-				Title:         "",   // Empty string
-				Version:       0,    // Zero value - legacy
+				ContentLength: 0,           // Zero value
+				Title:         "",          // Empty string
+				Version:       0,           // Zero value - legacy
 				ScanTime:      time.Time{}, // Zero time - legacy
 			}
 

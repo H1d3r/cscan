@@ -227,9 +227,9 @@ type Fingerprint struct {
 	Icon        string             `bson:"icon" json:"icon"`               // 图标URL
 	Description string             `bson:"description" json:"description"` // 描述
 	// 指纹类型
-	Type        FingerprintType    `bson:"type" json:"type"`               // 指纹类型: passive(被动), active(主动)
+	Type FingerprintType `bson:"type" json:"type"` // 指纹类型: passive(被动), active(主动)
 	// 主动指纹专用字段
-	ActivePaths []string           `bson:"active_paths" json:"activePaths"` // 主动探测路径列表，如 ["/admin/login.php", "/wp-admin/"]
+	ActivePaths []string `bson:"active_paths" json:"activePaths"` // 主动探测路径列表，如 ["/admin/login.php", "/wp-admin/"]
 	// 匹配规则 - Wappalyzer格式
 	Headers   map[string]string `bson:"headers" json:"headers"`     // HTTP头匹配 {"Server": "nginx"}
 	Cookies   map[string]string `bson:"cookies" json:"cookies"`     // Cookie匹配
@@ -242,14 +242,14 @@ type Fingerprint struct {
 	URL       []string          `bson:"url" json:"url"`             // URL路径匹配（正则）
 	Dom       string            `bson:"dom" json:"dom"`             // DOM选择器匹配（JSON字符串）
 	// 匹配规则 - ARL/自定义格式（简化规则语法）
-	Rule      string            `bson:"rule" json:"rule"`           // ARL格式规则: body="xxx" && title="xxx"
+	Rule string `bson:"rule" json:"rule"` // ARL格式规则: body="xxx" && title="xxx"
 	// 其他
-	Implies    []string  `bson:"implies" json:"implies"`       // 隐含的其他技术
-	Excludes   []string  `bson:"excludes" json:"excludes"`     // 排除的技术
-	CPE        string    `bson:"cpe" json:"cpe"`               // CPE标识
-	Source     string    `bson:"source" json:"source"`         // 来源: wappalyzer, arl, custom
-	IsBuiltin  bool      `bson:"is_builtin" json:"isBuiltin"`  // 是否内置指纹
-	Enabled    bool      `bson:"enabled" json:"enabled"`       // 是否启用
+	Implies    []string  `bson:"implies" json:"implies"`      // 隐含的其他技术
+	Excludes   []string  `bson:"excludes" json:"excludes"`    // 排除的技术
+	CPE        string    `bson:"cpe" json:"cpe"`              // CPE标识
+	Source     string    `bson:"source" json:"source"`        // 来源: wappalyzer, arl, custom
+	IsBuiltin  bool      `bson:"is_builtin" json:"isBuiltin"` // 是否内置指纹
+	Enabled    bool      `bson:"enabled" json:"enabled"`      // 是否启用
 	CreateTime time.Time `bson:"create_time" json:"createTime"`
 	UpdateTime time.Time `bson:"update_time" json:"updateTime"`
 }
@@ -517,7 +517,6 @@ func (m *FingerprintModel) DeleteBySource(ctx context.Context, source string) (i
 	}
 	return result.DeletedCount, nil
 }
-
 
 // BulkUpsert 批量插入或更新指纹
 // 去重原则：只有 name 和 rule 都完全相同才视为重复

@@ -15,12 +15,12 @@ import (
 type TaskPhase string
 
 const (
-	PhaseDomainScan    TaskPhase = "domainscan"
-	PhasePortScan      TaskPhase = "portscan"
-	PhasePortIdentify  TaskPhase = "portidentify"
-	PhaseFingerprint   TaskPhase = "fingerprint"
-	PhaseDirScan       TaskPhase = "dirscan"
-	PhasePocScan       TaskPhase = "pocscan"
+	PhaseDomainScan   TaskPhase = "domainscan"
+	PhasePortScan     TaskPhase = "portscan"
+	PhasePortIdentify TaskPhase = "portidentify"
+	PhaseFingerprint  TaskPhase = "fingerprint"
+	PhaseDirScan      TaskPhase = "dirscan"
+	PhasePocScan      TaskPhase = "pocscan"
 )
 
 // PhaseConfig 阶段配置

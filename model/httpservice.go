@@ -15,10 +15,10 @@ import (
 // 用于配置哪些端口和服务名称被识别为HTTP服务
 type HttpServiceConfig struct {
 	Id           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	HttpPorts    []int              `bson:"http_ports" json:"httpPorts"`         // HTTP端口列表
-	HttpsPorts   []int              `bson:"https_ports" json:"httpsPorts"`       // HTTPS端口列表
-	NonHttpPorts []int              `bson:"non_http_ports" json:"nonHttpPorts"`  // 非HTTP端口列表（明确排除）
-	Description  string             `bson:"description" json:"description"`      // 描述
+	HttpPorts    []int              `bson:"http_ports" json:"httpPorts"`        // HTTP端口列表
+	HttpsPorts   []int              `bson:"https_ports" json:"httpsPorts"`      // HTTPS端口列表
+	NonHttpPorts []int              `bson:"non_http_ports" json:"nonHttpPorts"` // 非HTTP端口列表（明确排除）
+	Description  string             `bson:"description" json:"description"`     // 描述
 	CreateTime   time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime   time.Time          `bson:"update_time" json:"updateTime"`
 }
@@ -54,24 +54,24 @@ var defaultHttpsPorts = []int{
 // 默认非HTTP端口列表（明确排除的端口）
 var defaultNonHttpPorts = []int{
 	// 远程管理
-	22,    // SSH
-	23,    // Telnet
-	3389,  // RDP
-	5900,  // VNC
-	5901,  // VNC
-	5902,  // VNC
+	22,   // SSH
+	23,   // Telnet
+	3389, // RDP
+	5900, // VNC
+	5901, // VNC
+	5902, // VNC
 	// 文件传输
-	20,    // FTP-data
-	21,    // FTP
-	69,    // TFTP
+	20, // FTP-data
+	21, // FTP
+	69, // TFTP
 	// 邮件服务
-	25,    // SMTP
-	110,   // POP3
-	143,   // IMAP
-	465,   // SMTPS
-	587,   // SMTP Submission
-	993,   // IMAPS
-	995,   // POP3S
+	25,  // SMTP
+	110, // POP3
+	143, // IMAP
+	465, // SMTPS
+	587, // SMTP Submission
+	993, // IMAPS
+	995, // POP3S
 	// 数据库
 	1433,  // MSSQL
 	1521,  // Oracle
@@ -81,20 +81,20 @@ var defaultNonHttpPorts = []int{
 	27017, // MongoDB
 	9042,  // Cassandra
 	// 消息队列
-	5672,  // RabbitMQ AMQP
-	6650,  // Pulsar
-	9092,  // Kafka
+	5672, // RabbitMQ AMQP
+	6650, // Pulsar
+	9092, // Kafka
 	// 目录服务
-	389,   // LDAP
-	636,   // LDAPS
+	389, // LDAP
+	636, // LDAPS
 	// DNS
-	53,    // DNS
+	53, // DNS
 	// Windows服务
-	135,   // RPC
-	137,   // NetBIOS Name
-	138,   // NetBIOS Datagram
-	139,   // NetBIOS Session
-	445,   // SMB
+	135, // RPC
+	137, // NetBIOS Name
+	138, // NetBIOS Datagram
+	139, // NetBIOS Session
+	445, // SMB
 	// 其他常见非HTTP服务
 	111,   // RPC Portmapper
 	161,   // SNMP
@@ -112,33 +112,33 @@ var defaultNonHttpPorts = []int{
 
 // 默认HTTP服务名称映射
 var defaultServiceMappings = map[string]bool{
-	"http":       true,
-	"https":      true,
-	"http-proxy": true,
-	"http-alt":   true,
-	"https-alt":  true,
-	"ssl/http":   true,
-	"ssl/https":  true,
-	"http-mgmt":  true,
+	"http":           true,
+	"https":          true,
+	"http-proxy":     true,
+	"http-alt":       true,
+	"https-alt":      true,
+	"ssl/http":       true,
+	"ssl/https":      true,
+	"http-mgmt":      true,
 	"http-rpc-epmap": true,
 	// 非HTTP服务
-	"ssh":     false,
-	"ftp":     false,
-	"smtp":    false,
-	"pop3":    false,
-	"imap":    false,
-	"mysql":   false,
-	"redis":   false,
-	"mongodb": false,
-	"mssql":   false,
-	"oracle":  false,
+	"ssh":        false,
+	"ftp":        false,
+	"smtp":       false,
+	"pop3":       false,
+	"imap":       false,
+	"mysql":      false,
+	"redis":      false,
+	"mongodb":    false,
+	"mssql":      false,
+	"oracle":     false,
 	"postgresql": false,
-	"telnet":  false,
-	"rdp":     false,
-	"vnc":     false,
-	"ldap":    false,
-	"dns":     false,
-	"smb":     false,
+	"telnet":     false,
+	"rdp":        false,
+	"vnc":        false,
+	"ldap":       false,
+	"dns":        false,
+	"smb":        false,
 }
 
 func NewHttpServiceModel(db *mongo.Database) *HttpServiceModel {

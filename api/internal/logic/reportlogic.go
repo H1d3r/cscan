@@ -33,24 +33,24 @@ func NewReportDetailLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Repo
 
 func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId string) (*types.ReportDetailResp, error) {
 	l.Logger.Infof("ReportDetail: taskId=%s, workspaceId=%s", req.TaskId, workspaceId)
-	
+
 	// 获取任务信息
 	// 当 workspaceId 为 "all" 或空时，需要遍历所有工作空间查找任务
 	var task *model.MainTask
 	var err error
 	var actualWorkspaceId string
-	
+
 	if workspaceId == "" || workspaceId == "all" {
 		// 获取所有工作空间
 		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
 		workspaces, _ := wsModel.FindAll(l.ctx)
-		
+
 		// 先尝试 default 工作空间
 		wsIds := []string{"default"}
 		for _, ws := range workspaces {
 			wsIds = append(wsIds, ws.Id.Hex())
 		}
-		
+
 		// 遍历所有工作空间查找任务
 		for _, wsId := range wsIds {
 			taskModel := l.svcCtx.GetMainTaskModel(wsId)
@@ -61,7 +61,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 				break
 			}
 		}
-		
+
 		if task == nil {
 			l.Logger.Errorf("FindById failed in all workspaces: %v", err)
 			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
@@ -75,7 +75,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 			return &types.ReportDetailResp{Code: 400, Msg: "任务不存在"}, nil
 		}
 	}
-	
+
 	// 资产保存时使用的是 task.Id.Hex() (ObjectID) 作为 taskId
 	// 所以查询时也需要使用 ObjectID
 	queryTaskId := task.Id.Hex()
@@ -84,14 +84,14 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq, workspaceId
 	// 获取资产列表
 	l.Logger.Infof("Querying assets from workspace: %s", actualWorkspaceId)
 	assetModel := l.svcCtx.GetAssetModel(actualWorkspaceId)
-	
+
 	// 构建查询条件：匹配主任务ID或子任务ID（子任务格式: {mainTaskId}-{index}）
 	// 注意：子任务ID格式是 {UUID}-{index}，但资产保存时使用的是 ObjectID
 	assetFilter := bson.M{
 		"$or": []bson.M{
-			{"taskId": queryTaskId},                                    // 主任务ID (ObjectID)
+			{"taskId": queryTaskId}, // 主任务ID (ObjectID)
 			{"taskId": bson.M{"$regex": "^" + queryTaskId + "-\\d+$"}}, // 子任务ID (ObjectID-index)
-			{"taskId": task.TaskId},                                    // 兼容：UUID格式
+			{"taskId": task.TaskId}, // 兼容：UUID格式
 			{"taskId": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}}, // 兼容：UUID-index格式
 		},
 	}
@@ -273,18 +273,18 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 	var task *model.MainTask
 	var err error
 	var actualWorkspaceId string
-	
+
 	if workspaceId == "" || workspaceId == "all" {
 		// 获取所有工作空间
 		wsModel := model.NewWorkspaceModel(l.svcCtx.MongoDB)
 		workspaces, _ := wsModel.FindAll(l.ctx)
-		
+
 		// 先尝试 default 工作空间
 		wsIds := []string{"default"}
 		for _, ws := range workspaces {
 			wsIds = append(wsIds, ws.Id.Hex())
 		}
-		
+
 		// 遍历所有工作空间查找任务
 		for _, wsId := range wsIds {
 			taskModel := l.svcCtx.GetMainTaskModel(wsId)
@@ -294,7 +294,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq, workspaceId
 				break
 			}
 		}
-		
+
 		if task == nil {
 			return nil, "", fmt.Errorf("任务不存在")
 		}

@@ -64,21 +64,21 @@ type FofaResult struct {
 
 // FofaAsset Fofa资产
 type FofaAsset struct {
-	Host       string `json:"host"`
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	Protocol   string `json:"protocol"`
-	Domain     string `json:"domain"`
-	Title      string `json:"title"`
-	Server     string `json:"server"`
-	Country    string `json:"country"`
-	City       string `json:"city"`
-	ASN        string `json:"asn"`
-	Banner     string `json:"banner"`
-	Cert       string `json:"cert"`
-	ICP        string `json:"icp"`
-	Product    string `json:"product"`
-	OS         string `json:"os"`
+	Host     string `json:"host"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Domain   string `json:"domain"`
+	Title    string `json:"title"`
+	Server   string `json:"server"`
+	Country  string `json:"country"`
+	City     string `json:"city"`
+	ASN      string `json:"asn"`
+	Banner   string `json:"banner"`
+	Cert     string `json:"cert"`
+	ICP      string `json:"icp"`
+	Product  string `json:"product"`
+	OS       string `json:"os"`
 }
 
 // Search 搜索

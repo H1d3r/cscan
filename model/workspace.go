@@ -81,7 +81,7 @@ func (m *WorkspaceModel) FindByIds(ctx context.Context, ids []string) ([]Workspa
 		}
 		oids = append(oids, oid)
 	}
-	
+
 	cursor, err := m.coll.Find(ctx, bson.M{"_id": bson.M{"$in": oids}})
 	if err != nil {
 		return nil, err

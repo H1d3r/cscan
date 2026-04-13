@@ -63,7 +63,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true,
         ws: true, // 启用 WebSocket 代理
         configure: (proxy, options) => {
@@ -86,7 +86,7 @@ export default defineConfig({
         }
       },
       '/static': {
-        target: 'http://localhost:8888',
+        target: 'http://127.0.0.1:8888',
         changeOrigin: true
       }
     }

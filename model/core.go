@@ -46,9 +46,9 @@ type ScanResult struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	JobID     string             `bson:"job_id" json:"jobId"`
 	TargetID  string             `bson:"target_id" json:"targetId"`
-	Authority string             `bson:"authority,omitempty" json:"authority,omitempty"`  // New field for consistent association
-	Host      string             `bson:"host,omitempty" json:"host,omitempty"`            // New field for consistent association
-	Port      int                `bson:"port,omitempty" json:"port,omitempty"`            // New field for consistent association
+	Authority string             `bson:"authority,omitempty" json:"authority,omitempty"` // New field for consistent association
+	Host      string             `bson:"host,omitempty" json:"host,omitempty"`           // New field for consistent association
+	Port      int                `bson:"port,omitempty" json:"port,omitempty"`           // New field for consistent association
 	Findings  []Finding          `bson:"findings" json:"findings"`
 	Assets    []Asset            `bson:"assets" json:"assets"`
 	RiskScore float64            `bson:"risk_score" json:"riskScore"`
@@ -56,8 +56,8 @@ type ScanResult struct {
 	Completed time.Time          `bson:"completed" json:"completed"`
 	Created   time.Time          `bson:"create_time" json:"created"`
 	Updated   time.Time          `bson:"update_time" json:"updated"`
-	ScanTime  time.Time          `bson:"scan_time,omitempty" json:"scanTime,omitempty"`   // New field for versioning
-	Version   int64              `bson:"version,omitempty" json:"version,omitempty"`      // New field for versioning
+	ScanTime  time.Time          `bson:"scan_time,omitempty" json:"scanTime,omitempty"` // New field for versioning
+	Version   int64              `bson:"version,omitempty" json:"version,omitempty"`    // New field for versioning
 }
 
 // ==================== Supporting Types ====================
@@ -75,14 +75,14 @@ type Profile struct {
 type Status string
 
 const (
-	StatusCreated  Status = "CREATED"
-	StatusPending  Status = "PENDING"
-	StatusStarted  Status = "STARTED"
-	StatusPaused   Status = "PAUSED"
-	StatusSuccess  Status = "SUCCESS"
-	StatusFailure  Status = "FAILURE"
-	StatusRevoked  Status = "REVOKED"
-	StatusStopped  Status = "STOPPED"
+	StatusCreated Status = "CREATED"
+	StatusPending Status = "PENDING"
+	StatusStarted Status = "STARTED"
+	StatusPaused  Status = "PAUSED"
+	StatusSuccess Status = "SUCCESS"
+	StatusFailure Status = "FAILURE"
+	StatusRevoked Status = "REVOKED"
+	StatusStopped Status = "STOPPED"
 )
 
 // TaskState represents the execution state of a task
@@ -95,14 +95,14 @@ type TaskState struct {
 
 // SubTask represents a sub-task within a main task
 type SubTask struct {
-	ID       string    `bson:"id" json:"id"`
-	Name     string    `bson:"name" json:"name"`
-	Status   Status    `bson:"status" json:"status"`
-	Worker   string    `bson:"worker,omitempty" json:"worker,omitempty"`
-	Result   string    `bson:"result,omitempty" json:"result,omitempty"`
-	Created  time.Time `bson:"created" json:"created"`
-	Started  *time.Time `bson:"started,omitempty" json:"started,omitempty"`
-	Ended    *time.Time `bson:"ended,omitempty" json:"ended,omitempty"`
+	ID      string     `bson:"id" json:"id"`
+	Name    string     `bson:"name" json:"name"`
+	Status  Status     `bson:"status" json:"status"`
+	Worker  string     `bson:"worker,omitempty" json:"worker,omitempty"`
+	Result  string     `bson:"result,omitempty" json:"result,omitempty"`
+	Created time.Time  `bson:"created" json:"created"`
+	Started *time.Time `bson:"started,omitempty" json:"started,omitempty"`
+	Ended   *time.Time `bson:"ended,omitempty" json:"ended,omitempty"`
 }
 
 // Config represents configuration data

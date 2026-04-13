@@ -26,7 +26,7 @@ func NewGetSubfinderProvidersLogic(ctx context.Context, svcCtx *svc.ServiceConte
 // 获取Subfinder数据源配置
 func (l *GetSubfinderProvidersLogic) GetSubfinderProviders(in *pb.GetSubfinderProvidersReq) (*pb.GetSubfinderProvidersResp, error) {
 	l.Logger.Infof("GetSubfinderProviders: workspaceId=%s", in.WorkspaceId)
-	
+
 	// 获取所有启用的Subfinder数据源配置
 	providers, err := l.svcCtx.SubfinderProviderModel.FindEnabled(l.ctx)
 	if err != nil {

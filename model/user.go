@@ -26,6 +26,7 @@ type User struct {
 	LastLoginTime *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
 	CreateTime    time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime    time.Time          `bson:"update_time" json:"updateTime"`
+	MustChangePassword bool          `bson:"must_change_password,omitempty" json:"mustChangePassword"`
 }
 
 type UserModel struct {
@@ -123,8 +124,9 @@ func (m *UserModel) UpdatePassword(ctx context.Context, id string, newPassword s
 		return err
 	}
 	update := bson.M{
-		"password":    HashPassword(newPassword),
-		"update_time": time.Now(),
+		"password":             HashPassword(newPassword),
+		"must_change_password": false,
+		"update_time":          time.Now(),
 	}
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err

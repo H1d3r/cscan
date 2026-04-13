@@ -35,6 +35,7 @@ type LoginResp struct {
 	Username    string `json:"username"`
 	Role        string `json:"role"`
 	WorkspaceId string `json:"workspaceId"`
+	NeedChangePwd bool   `json:"needChangePwd"`
 }
 
 type UserInfo struct {

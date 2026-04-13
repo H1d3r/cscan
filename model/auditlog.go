@@ -28,19 +28,19 @@ const (
 // AuditLog 审计日志
 type AuditLog struct {
 	Id         primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
-	Type       AuditLogType           `bson:"type" json:"type"`               // 操作类型
-	WorkerName string                 `bson:"worker_name" json:"workerName"`  // Worker名称
-	UserId     string                 `bson:"user_id" json:"userId"`          // 操作用户ID
-	Username   string                 `bson:"username" json:"username"`       // 操作用户名
-	ClientIP   string                 `bson:"client_ip" json:"clientIp"`      // 客户端IP
-	Path       string                 `bson:"path,omitempty" json:"path"`     // 文件路径（文件操作）
-	Command    string                 `bson:"command,omitempty" json:"command"` // 命令（终端操作）
+	Type       AuditLogType           `bson:"type" json:"type"`                      // 操作类型
+	WorkerName string                 `bson:"worker_name" json:"workerName"`         // Worker名称
+	UserId     string                 `bson:"user_id" json:"userId"`                 // 操作用户ID
+	Username   string                 `bson:"username" json:"username"`              // 操作用户名
+	ClientIP   string                 `bson:"client_ip" json:"clientIp"`             // 客户端IP
+	Path       string                 `bson:"path,omitempty" json:"path"`            // 文件路径（文件操作）
+	Command    string                 `bson:"command,omitempty" json:"command"`      // 命令（终端操作）
 	SessionId  string                 `bson:"session_id,omitempty" json:"sessionId"` // 会话ID
-	Success    bool                   `bson:"success" json:"success"`         // 是否成功
-	Error      string                 `bson:"error,omitempty" json:"error"`   // 错误信息
-	Details    map[string]interface{} `bson:"details,omitempty" json:"details"` // 额外详情
-	Duration   int64                  `bson:"duration" json:"duration"` // 操作耗时(毫秒)，始终记录
-	CreateTime time.Time              `bson:"create_time" json:"createTime"`  // 创建时间
+	Success    bool                   `bson:"success" json:"success"`                // 是否成功
+	Error      string                 `bson:"error,omitempty" json:"error"`          // 错误信息
+	Details    map[string]interface{} `bson:"details,omitempty" json:"details"`      // 额外详情
+	Duration   int64                  `bson:"duration" json:"duration"`              // 操作耗时(毫秒)，始终记录
+	CreateTime time.Time              `bson:"create_time" json:"createTime"`         // 创建时间
 }
 
 // AuditLogModel 审计日志模型

@@ -60,7 +60,7 @@ func (l *ActiveFingerprintListLogic) ActiveFingerprintList(req *types.ActiveFing
 		relatedFilter := bson.M{"name": doc.Name}
 		relatedDocs, _ := l.svcCtx.FingerprintModel.Find(l.ctx, relatedFilter, 0, 0)
 		item.RelatedCount = len(relatedDocs)
-		
+
 		// 转换关联指纹
 		relatedFingerprints := make([]types.Fingerprint, 0, len(relatedDocs))
 		for _, rf := range relatedDocs {

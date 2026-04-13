@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // TargetType 目标类型
@@ -83,12 +85,14 @@ func (p *TargetParser) Parse(raw string) *Target {
 	return target
 }
 
-// ParseMultiple 解析多个目标（换行分隔）
+// ParseMultiple 解析多个目标
 func (p *TargetParser) ParseMultiple(input string) []*Target {
 	var targets []*Target
-	lines := strings.Split(input, "\n")
-	for _, line := range lines {
-		if t := p.Parse(line); t != nil {
+	normalized := p.NormalizeTargets(input)
+	items := p.splitAndSpread(normalized)
+
+	for _, item := range items {
+		if t := p.Parse(item); t != nil {
 			targets = append(targets, t)
 		}
 	}
@@ -174,7 +178,13 @@ func (p *TargetParser) parseCIDR(raw string) *Target {
 
 	// 展开CIDR
 	var ips []string
+	count := 0
 	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIPLocal(ip) {
+		count++
+		if count > 2048 {
+			logx.Errorf("TargetParser: CIDR range %s exceeded 2048 IPs, silently truncated to prevent exhaustion", raw)
+			break
+		}
 		ips = append(ips, ip.String())
 	}
 
@@ -228,10 +238,18 @@ func (p *TargetParser) parseIPRange(raw string) *Target {
 	var ips []string
 	ip := make(net.IP, len(startIP))
 	copy(ip, startIP)
+	count := 0
 	for ; !ip.Equal(endIP); incIPLocal(ip) {
+		count++
+		if count > 2048 {
+			logx.Errorf("TargetParser: IP range %s exceeded 2048 IPs, silently truncated to prevent exhaustion", raw)
+			break
+		}
 		ips = append(ips, ip.String())
 	}
-	ips = append(ips, endIP.String())
+	if count <= 2048 {
+		ips = append(ips, endIP.String())
+	}
 
 	target.IPs = ips
 	return target

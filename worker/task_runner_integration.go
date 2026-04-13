@@ -556,6 +556,27 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	fpCtx, fpCancel := context.WithTimeout(ctx.Ctx, time.Duration(fingerprintTimeout)*time.Second)
 	defer fpCancel()
 
+	// 创建流式资产缓冲区，满10个或超时触发保存
+	assetBuffer := NewAssetBuffer(10)
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-assetBuffer.GetFlushChan():
+				assetBuffer.Flush(ctx.Ctx, func(assets []*scanner.Asset) {
+					w.saveAssetResult(ctx.Ctx, task.WorkspaceId, task.MainTaskId, ctx.OrgId, assets)
+				})
+			case <-ticker.C:
+				assetBuffer.Flush(ctx.Ctx, func(assets []*scanner.Asset) {
+					w.saveAssetResult(ctx.Ctx, task.WorkspaceId, task.MainTaskId, ctx.OrgId, assets)
+				})
+			case <-fpCtx.Done():
+				return
+			}
+		}
+	}()
+
 	// 创建任务日志回调
 	fpTaskLogger := func(level, format string, args ...interface{}) {
 		w.taskLog(task.TaskId, level, format, args...)
@@ -565,6 +586,10 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 		Assets:     assets, // 使用可能从目标生成的资产
 		Options:    config,
 		TaskLogger: fpTaskLogger,
+		OnAssetUpdated: func(asset *scanner.Asset) {
+			copiedAsset := *asset
+			assetBuffer.Add(&copiedAsset)
+		},
 	})
 
 	ctx.Assets = assets
@@ -611,6 +636,10 @@ func (e *FingerprintExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 			}
 		}
 
+		// 刷新流式缓冲区剩余资产
+		assetBuffer.Flush(ctx.Ctx, func(assets []*scanner.Asset) {
+			w.saveAssetResult(ctx.Ctx, task.WorkspaceId, task.MainTaskId, ctx.OrgId, assets)
+		})
 		// 保存更新结果
 		w.saveAssetResult(ctx.Ctx, task.WorkspaceId, task.MainTaskId, ctx.OrgId, ctx.Assets)
 	}

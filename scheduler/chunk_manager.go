@@ -49,7 +49,7 @@ type ChunkTaskResponse struct {
 
 // CreateChunkedTask 创建分片任务
 func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskRequest) (*ChunkTaskResponse, error) {
-	logx.Infof("[ChunkManager] Creating chunked task: taskId=%s, targets=%d chars", 
+	logx.Infof("[ChunkManager] Creating chunked task: taskId=%s, targets=%d chars",
 		req.TaskId, len(req.Target))
 
 	// 执行任务拆分
@@ -61,7 +61,7 @@ func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskReq
 		}, err
 	}
 
-	logx.Infof("[ChunkManager] Task split result: taskId=%s, totalTargets=%d, chunkCount=%d, needSplit=%v", 
+	logx.Infof("[ChunkManager] Task split result: taskId=%s, totalTargets=%d, chunkCount=%d, needSplit=%v",
 		req.TaskId, splitResult.TotalTargets, splitResult.ChunkCount, splitResult.NeedSplit)
 
 	// 保存分片信息到Redis
@@ -83,14 +83,14 @@ func (cm *ChunkManager) CreateChunkedTask(ctx context.Context, req *ChunkTaskReq
 		for k, v := range req.Config {
 			chunkConfig[k] = v
 		}
-		
+
 		// 设置分片特定配置
 		chunkConfig["target"] = strings.Join(chunk.Targets, "\n")
 		chunkConfig["chunkIndex"] = chunk.Index
 		chunkConfig["chunkTotal"] = splitResult.ChunkCount
 		chunkConfig["chunkId"] = chunk.ChunkId
 		chunkConfig["parentTaskId"] = req.TaskId
-		
+
 		chunkConfigBytes, _ := json.Marshal(chunkConfig)
 
 		// 创建调度任务
@@ -155,7 +155,7 @@ func (cm *ChunkManager) PushChunkedTasks(ctx context.Context, scheduler *Schedul
 		}, err
 	}
 
-	logx.Infof("[ChunkManager] Successfully pushed %d chunk tasks to queue for taskId=%s", 
+	logx.Infof("[ChunkManager] Successfully pushed %d chunk tasks to queue for taskId=%s",
 		len(schedTasks), req.TaskId)
 
 	response.Message = fmt.Sprintf("成功推送 %d 个分片任务到队列", len(schedTasks))
@@ -206,7 +206,7 @@ func (cm *ChunkManager) GetChunkProgress(ctx context.Context, taskId string) (*C
 			}
 		}
 		progress.Chunks = append(progress.Chunks, *status)
-		
+
 		// 统计进度
 		switch status.Status {
 		case "SUCCESS":
@@ -255,7 +255,7 @@ type ChunkStatus struct {
 // UpdateChunkStatus 更新分片状态
 func (cm *ChunkManager) UpdateChunkStatus(ctx context.Context, chunkId, status string, details map[string]interface{}) error {
 	key := cm.getChunkStatusKey(chunkId)
-	
+
 	// 获取现有状态
 	existingStatus, _ := cm.getChunkStatus(ctx, chunkId)
 	if existingStatus == nil {
@@ -315,7 +315,7 @@ func (cm *ChunkManager) CleanupChunkData(ctx context.Context, taskId string) err
 	// 删除分片相关的Redis键
 	var keys []string
 	keys = append(keys, cm.getChunkInfoKey(taskId))
-	
+
 	for _, chunk := range splitResult.Chunks {
 		keys = append(keys, cm.getChunkStatusKey(chunk.ChunkId))
 		keys = append(keys, cm.getChunkTaskInfoKey(chunk.ChunkId))
@@ -348,23 +348,23 @@ func (cm *ChunkManager) saveChunkInfo(ctx context.Context, taskId string, splitR
 // saveChunkTaskInfo 保存分片任务信息
 func (cm *ChunkManager) saveChunkTaskInfo(ctx context.Context, chunkId string, req *ChunkTaskRequest, chunk TaskChunk) error {
 	key := cm.getChunkTaskInfoKey(chunkId)
-	
+
 	info := map[string]interface{}{
-		"chunkId":     chunkId,
+		"chunkId":      chunkId,
 		"parentTaskId": req.TaskId,
-		"workspaceId": req.WorkspaceId,
-		"mainTaskId":  req.MainTaskId,
-		"chunkIndex":  chunk.Index,
-		"targetCount": chunk.TargetCount,
-		"priority":    chunk.Priority,
-		"createTime":  time.Now(),
+		"workspaceId":  req.WorkspaceId,
+		"mainTaskId":   req.MainTaskId,
+		"chunkIndex":   chunk.Index,
+		"targetCount":  chunk.TargetCount,
+		"priority":     chunk.Priority,
+		"createTime":   time.Now(),
 	}
-	
+
 	data, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
-	
+
 	return cm.rdb.Set(ctx, key, data, 24*time.Hour).Err()
 }
 

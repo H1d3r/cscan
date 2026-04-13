@@ -164,11 +164,11 @@ func (l *IncrSubTaskDoneLogic) sendTaskNotification(workspaceId, mainTaskId, sta
 		// 转换高危过滤配置
 		if c.HighRiskFilter != nil {
 			item.HighRiskFilter = &notify.HighRiskFilter{
-				Enabled:              c.HighRiskFilter.Enabled,
-				HighRiskFingerprints: c.HighRiskFilter.HighRiskFingerprints,
-				HighRiskPorts:        c.HighRiskFilter.HighRiskPorts,
+				Enabled:               c.HighRiskFilter.Enabled,
+				HighRiskFingerprints:  c.HighRiskFilter.HighRiskFingerprints,
+				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
-				NewAssetNotify:       c.HighRiskFilter.NewAssetNotify,
+				NewAssetNotify:        c.HighRiskFilter.NewAssetNotify,
 			}
 		}
 		configItems = append(configItems, item)
@@ -365,9 +365,9 @@ func (l *IncrSubTaskDoneLogic) updateChunkStatus(taskId, mainTaskId, phase strin
 	// 更新分片状态到Redis
 	chunkStatusKey := fmt.Sprintf("cscan:chunk:status:%s", taskId)
 	statusData := map[string]interface{}{
-		"chunkId":  taskId,
-		"status":   status,
-		"phase":    phase,
+		"chunkId":    taskId,
+		"status":     status,
+		"phase":      phase,
 		"updateTime": time.Now(),
 	}
 
@@ -391,7 +391,7 @@ func (l *IncrSubTaskDoneLogic) updateChunkStatus(taskId, mainTaskId, phase strin
 	// 如果是完成状态，设置结束时间和计算执行时长
 	if status == "SUCCESS" {
 		statusData["endTime"] = time.Now()
-		
+
 		// 获取开始时间计算执行时长
 		existingData, err := l.svcCtx.RedisClient.Get(l.ctx, chunkStatusKey).Result()
 		if err == nil {
@@ -422,7 +422,7 @@ func (l *IncrSubTaskDoneLogic) isChunkTask(taskId string) bool {
 	if lastDash <= 0 || lastDash >= len(taskId)-1 {
 		return false
 	}
-	
+
 	suffix := taskId[lastDash+1:]
 	// 检查后缀是否全是数字
 	for _, c := range suffix {

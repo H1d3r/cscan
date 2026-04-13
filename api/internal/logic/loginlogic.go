@@ -57,13 +57,14 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 	// 注意：workspaceId 为空时，后端会使用 "default" 工作空间
 
 	return &types.LoginResp{
-		Code:        0,
-		Msg:         "登录成功",
-		Token:       token,
-		UserId:      user.Id.Hex(),
-		Username:    user.Username,
-		Role:        "admin", // 所有用户都是管理员
-		WorkspaceId: workspaceId,
+		Code:          0,
+		Msg:           "登录成功",
+		Token:         token,
+		UserId:        user.Id.Hex(),
+		Username:      user.Username,
+		Role:          "admin", // 所有用户都是管理员
+		WorkspaceId:   workspaceId,
+		NeedChangePwd: user.MustChangePassword,
 	}, nil
 }
 

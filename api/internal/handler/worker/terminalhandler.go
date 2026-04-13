@@ -421,7 +421,7 @@ func WorkerTerminalWSHandler(svcCtx *svc.ServiceContext, wsHandler *WorkerWSHand
 			closeStartTime := time.Now()
 			_, closeErr := workerConn.RequestTerminalClose(sessionId, 5*time.Second)
 			wsHandler.RemoveWorkerSession(workerName, sessionId)
-			
+
 			// 记录关闭终端的审计日志
 			if auditSvc := GetAuditService(); auditSvc != nil {
 				errMsg := ""
@@ -432,7 +432,7 @@ func WorkerTerminalWSHandler(svcCtx *svc.ServiceContext, wsHandler *WorkerWSHand
 				}
 				auditSvc.RecordTerminalOperation(r.Context(), r, model.AuditLogTypeTerminalClose, workerName, sessionId, "", success, errMsg, time.Since(closeStartTime))
 			}
-			
+
 			logx.Infof("[TerminalWS] Client disconnected for worker %s, session %s", workerName, sessionId)
 		}()
 

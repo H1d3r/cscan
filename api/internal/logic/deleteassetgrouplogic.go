@@ -81,7 +81,7 @@ func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq,
 
 		// 2. 删除相关任务
 		taskModel := l.svcCtx.GetMainTaskModel(wsId)
-		
+
 		// 查询所有任务
 		allTasks, err := taskModel.Find(l.ctx, bson.M{}, 0, 0)
 		if err != nil {
@@ -99,7 +99,7 @@ func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq,
 				if target == "" {
 					continue
 				}
-				
+
 				// 提取主域名
 				domain := extractMainDomainFromTargetForDelete(target)
 				if domain == req.Domain {
@@ -152,36 +152,36 @@ func extractMainDomainFromTargetForDelete(target string) string {
 	// 移除协议前缀
 	target = strings.TrimPrefix(target, "http://")
 	target = strings.TrimPrefix(target, "https://")
-	
+
 	// 移除端口
 	if idx := strings.Index(target, ":"); idx > 0 {
 		target = target[:idx]
 	}
-	
+
 	// 移除路径
 	if idx := strings.Index(target, "/"); idx > 0 {
 		target = target[:idx]
 	}
-	
+
 	// 移除通配符
 	target = strings.TrimPrefix(target, "*.")
-	
+
 	// 移除CIDR
 	if strings.Contains(target, "/") {
 		return "" // CIDR不作为域名分组
 	}
-	
+
 	// 如果是IP地址，返回IP
 	if isIPAddressForDelete(target) {
 		return target
 	}
-	
+
 	// 提取主域名
 	parts := strings.Split(target, ".")
 	if len(parts) < 2 {
 		return target
 	}
-	
+
 	// 返回主域名（最后两部分）
 	return strings.Join(parts[len(parts)-2:], ".")
 }

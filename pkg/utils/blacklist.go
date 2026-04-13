@@ -7,10 +7,10 @@ import (
 
 // BlacklistMatcher 黑名单匹配器
 type BlacklistMatcher struct {
-	domainPatterns []string   // 域名模式（支持通配符）
-	ipAddresses    []net.IP   // 单个IP地址
+	domainPatterns []string     // 域名模式（支持通配符）
+	ipAddresses    []net.IP     // 单个IP地址
 	ipNetworks     []*net.IPNet // IP网段（CIDR）
-	keywords       []string   // 关键词
+	keywords       []string     // 关键词
 }
 
 // NewBlacklistMatcher 创建黑名单匹配器
@@ -237,9 +237,9 @@ func (m *BlacklistMatcher) GetBlacklistedTargets(targets []string) []string {
 
 // IsEmpty 检查黑名单是否为空
 func (m *BlacklistMatcher) IsEmpty() bool {
-	return len(m.domainPatterns) == 0 && 
-		len(m.ipAddresses) == 0 && 
-		len(m.ipNetworks) == 0 && 
+	return len(m.domainPatterns) == 0 &&
+		len(m.ipAddresses) == 0 &&
+		len(m.ipNetworks) == 0 &&
 		len(m.keywords) == 0
 }
 
@@ -248,14 +248,13 @@ func (m *BlacklistMatcher) RuleCount() int {
 	return len(m.domainPatterns) + len(m.ipAddresses) + len(m.ipNetworks) + len(m.keywords)
 }
 
-
 // NewExcludeHostsMatcher 从逗号分隔的排除目标字符串创建匹配器
 // 支持 IP 地址和 CIDR 格式，如 "192.168.1.1,10.0.0.0/8"
 func NewExcludeHostsMatcher(excludeHosts string) *BlacklistMatcher {
 	if excludeHosts == "" {
 		return nil
 	}
-	
+
 	var rules []string
 	parts := strings.Split(excludeHosts, ",")
 	for _, part := range parts {
@@ -264,11 +263,11 @@ func NewExcludeHostsMatcher(excludeHosts string) *BlacklistMatcher {
 			rules = append(rules, part)
 		}
 	}
-	
+
 	if len(rules) == 0 {
 		return nil
 	}
-	
+
 	return NewBlacklistMatcher(rules)
 }
 
@@ -276,7 +275,7 @@ func NewExcludeHostsMatcher(excludeHosts string) *BlacklistMatcher {
 // 返回一个新的匹配器，包含所有输入匹配器的规则
 func MergeMatchers(matchers ...*BlacklistMatcher) *BlacklistMatcher {
 	merged := &BlacklistMatcher{}
-	
+
 	for _, m := range matchers {
 		if m == nil {
 			continue
@@ -286,7 +285,7 @@ func MergeMatchers(matchers ...*BlacklistMatcher) *BlacklistMatcher {
 		merged.ipNetworks = append(merged.ipNetworks, m.ipNetworks...)
 		merged.keywords = append(merged.keywords, m.keywords...)
 	}
-	
+
 	return merged
 }
 
@@ -296,14 +295,14 @@ func (m *BlacklistMatcher) FilterAssetsByIP(hosts []string, ipv4Map map[string][
 	if m == nil || m.IsEmpty() {
 		return hosts
 	}
-	
+
 	var filtered []string
 	for _, host := range hosts {
 		// 检查主机名/域名本身
 		if m.IsBlacklisted(host) {
 			continue
 		}
-		
+
 		// 检查该主机解析出的所有IP
 		if ips, ok := ipv4Map[host]; ok {
 			isBlacklisted := false
@@ -317,9 +316,9 @@ func (m *BlacklistMatcher) FilterAssetsByIP(hosts []string, ipv4Map map[string][
 				continue
 			}
 		}
-		
+
 		filtered = append(filtered, host)
 	}
-	
+
 	return filtered
 }

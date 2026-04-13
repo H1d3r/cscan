@@ -33,7 +33,7 @@ func VulListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// VulDetailHandler 漏洞详情 
+// VulDetailHandler 漏洞详情
 func VulDetailHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.VulDetailReq

@@ -32,11 +32,11 @@ type ConfigItem struct {
 
 // HighRiskFilter 高危过滤配置
 type HighRiskFilter struct {
-	Enabled              bool     `json:"enabled"`              // 是否启用高危过滤
-	HighRiskFingerprints []string `json:"highRiskFingerprints"` // 高危指纹列表
-	HighRiskPorts        []int    `json:"highRiskPorts"`        // 高危端口列表
+	Enabled               bool     `json:"enabled"`               // 是否启用高危过滤
+	HighRiskFingerprints  []string `json:"highRiskFingerprints"`  // 高危指纹列表
+	HighRiskPorts         []int    `json:"highRiskPorts"`         // 高危端口列表
 	HighRiskPocSeverities []string `json:"highRiskPocSeverities"` // 高危POC严重级别
-	NewAssetNotify       bool     `json:"newAssetNotify"`       // 新资产发现时通知
+	NewAssetNotify        bool     `json:"newAssetNotify"`        // 新资产发现时通知
 }
 
 // LoadConfigs 从配置列表加载提供者

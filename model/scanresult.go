@@ -15,7 +15,7 @@ type ScanResultModel struct {
 // NewScanResultModel creates a new ScanResultModel
 func NewScanResultModel(db *mongo.Database, workspaceId string) *ScanResultModel {
 	coll := db.Collection(workspaceId + "_scanresult")
-	
+
 	// Create indexes
 	ctx := context.Background()
 	indexes := []mongo.IndexModel{
@@ -39,7 +39,7 @@ func NewScanResultModel(db *mongo.Database, workspaceId string) *ScanResultModel
 		{Keys: bson.D{{Key: "version", Value: 1}}},
 	}
 	coll.Indexes().CreateMany(ctx, indexes)
-	
+
 	return &ScanResultModel{
 		BaseModel: NewBaseModel[ScanResult](coll),
 	}
@@ -108,13 +108,13 @@ func (m *ScanResultModel) AggregateRiskStats(ctx context.Context) (map[string]in
 			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 		}}},
 	}
-	
+
 	cursor, err := m.Coll.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
 	defer cursor.Close(ctx)
-	
+
 	var results []struct {
 		Level string `bson:"_id"`
 		Count int    `bson:"count"`
@@ -122,7 +122,7 @@ func (m *ScanResultModel) AggregateRiskStats(ctx context.Context) (map[string]in
 	if err = cursor.All(ctx, &results); err != nil {
 		return nil, err
 	}
-	
+
 	stats := make(map[string]int)
 	for _, r := range results {
 		if r.Level != "" {
@@ -143,13 +143,13 @@ func (m *ScanResultModel) AggregateAverageRiskScore(ctx context.Context, jobID s
 			{Key: "avgRisk", Value: bson.D{{Key: "$avg", Value: "$risk_score"}}},
 		}}},
 	}
-	
+
 	cursor, err := m.Coll.Aggregate(ctx, pipeline)
 	if err != nil {
 		return 0, err
 	}
 	defer cursor.Close(ctx)
-	
+
 	var result struct {
 		AvgRisk float64 `bson:"avgRisk"`
 	}
@@ -158,6 +158,6 @@ func (m *ScanResultModel) AggregateAverageRiskScore(ctx context.Context, jobID s
 			return 0, err
 		}
 	}
-	
+
 	return result.AvgRisk, nil
 }

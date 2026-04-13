@@ -299,7 +299,7 @@ func (l *OnlineAPILogic) ImportAll(req *types.OnlineImportAllReq, workspaceId st
 	totalFetched := 0
 	totalImport := 0
 	currentPage := 1
-	apiTotal := 0     // API 报告的总结果数（Hunter/Quake 有此字段）
+	apiTotal := 0        // API 报告的总结果数（Hunter/Quake 有此字段）
 	hasAPITotal := false // 标记是否有可用的 API 总数
 
 PageLoop:

@@ -12,7 +12,7 @@ import (
 type NotifyResult struct {
 	TaskId      string    `json:"taskId"`
 	TaskName    string    `json:"taskName"`
-	Status      string    `json:"status"`      // SUCCESS, FAILURE
+	Status      string    `json:"status"` // SUCCESS, FAILURE
 	AssetCount  int       `json:"assetCount"`
 	VulCount    int       `json:"vulCount"`
 	Duration    string    `json:"duration"`
@@ -26,11 +26,11 @@ type NotifyResult struct {
 
 // HighRiskInfo 高危检测信息
 type HighRiskInfo struct {
-	HighRiskFingerprints []string `json:"highRiskFingerprints"` // 发现的高危指纹
-	HighRiskPorts        []int    `json:"highRiskPorts"`        // 发现的高危端口
-	HighRiskVulCount     int      `json:"highRiskVulCount"`     // 高危漏洞数量
+	HighRiskFingerprints  []string       `json:"highRiskFingerprints"`  // 发现的高危指纹
+	HighRiskPorts         []int          `json:"highRiskPorts"`         // 发现的高危端口
+	HighRiskVulCount      int            `json:"highRiskVulCount"`      // 高危漏洞数量
 	HighRiskVulSeverities map[string]int `json:"highRiskVulSeverities"` // 按严重级别统计: critical->5, high->10
-	NewAssetCount        int      `json:"newAssetCount"`        // 新发现资产数量
+	NewAssetCount         int            `json:"newAssetCount"`         // 新发现资产数量
 }
 
 // Provider 通知提供者接口

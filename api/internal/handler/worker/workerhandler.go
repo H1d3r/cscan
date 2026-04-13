@@ -181,11 +181,11 @@ func WorkerLogsClearHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 func WorkerLogsHistoryHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Limit    int    `json:"limit"`    // 每页数量，默认100
-			LastId   string `json:"lastId"`   // 上一页最后一条日志的ID，用于分页
-			Search   string `json:"search"`   // 模糊搜索关键词
-			Worker   string `json:"worker"`   // 过滤指定 Worker
-			Level    string `json:"level"`    // 过滤日志级别
+			Limit     int    `json:"limit"`     // 每页数量，默认100
+			LastId    string `json:"lastId"`    // 上一页最后一条日志的ID，用于分页
+			Search    string `json:"search"`    // 模糊搜索关键词
+			Worker    string `json:"worker"`    // 过滤指定 Worker
+			Level     string `json:"level"`     // 过滤日志级别
 			NewerThan string `json:"newerThan"` // 获取比此ID更新的日志（用于实时更新）
 		}
 		json.NewDecoder(r.Body).Decode(&req)

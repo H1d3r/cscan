@@ -12,6 +12,7 @@ import (
 	"cscan/rpc/task/pb"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -100,10 +101,11 @@ func sortedJoin(arr []string) string {
 
 // truncateForChange 截断字符串用于变更记录
 func truncateForChange(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 type SaveTaskResultLogic struct {
@@ -209,7 +211,7 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 		if asset.Port > 0 && len(asset.Ip.IpV4) == 0 && len(asset.Ip.IpV6) == 0 && !utils.IsIPAddress(asset.Host) {
 			baseAsset, _ := assetModel.FindByAuthorityOnly(l.ctx, asset.Host)
 			if baseAsset != nil {
-				asset.Ip = baseAsset.Ip       // 继承 IP 数组
+				asset.Ip = baseAsset.Ip // 继承 IP 数组
 				if asset.CName == "" {
 					asset.CName = baseAsset.CName // 继承 CName
 				}
@@ -305,7 +307,6 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				"authority":   asset.Authority,
 				"service":     asset.Service,
 				"title":       asset.Title,
-				"app":         asset.App,
 				"status":      asset.HttpStatus,
 				"header":      asset.HttpHeader,
 				"body":        asset.HttpBody,
@@ -363,7 +364,14 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				updateFields["category"] = asset.Category
 			}
 
-			if err := assetModel.Update(l.ctx, existing.Id.Hex(), updateFields); err != nil {
+			rawUpdate := bson.M{"$set": updateFields}
+			if len(asset.App) > 0 {
+				rawUpdate["$addToSet"] = bson.M{
+					"app": bson.M{"$each": asset.App},
+				}
+			}
+
+			if err := assetModel.UpdateWithRaw(l.ctx, existing.Id.Hex(), rawUpdate); err != nil {
 				l.Logger.Errorf("Update asset failed: %v", err)
 				continue
 			}

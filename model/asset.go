@@ -80,7 +80,6 @@ func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
 	coll := db.Collection(workspaceId + "_asset")
 
 	// 创建索引
-	ctx := context.Background()
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "host", Value: 1}, {Key: "port", Value: 1}}},
 		{Keys: bson.D{{Key: "authority", Value: 1}}},
@@ -90,7 +89,7 @@ func NewAssetModel(db *mongo.Database, workspaceId string) *AssetModel {
 		// 新增索引 - 支持按风险评分排序
 		{Keys: bson.D{{Key: "risk_score", Value: -1}}},
 	}
-	coll.Indexes().CreateMany(ctx, indexes)
+	ensureIndexes(coll, indexes)
 
 	return &AssetModel{
 		coll: coll,
@@ -398,6 +397,20 @@ func (m *AssetModel) Update(ctx context.Context, id string, update bson.M) error
 	}
 	update["update_time"] = time.Now()
 	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
+	return err
+}
+
+// UpdateWithRaw 使用原始 MongoDB 更新文档更新资产（支持 $addToSet 等操作符）
+func (m *AssetModel) UpdateWithRaw(ctx context.Context, id string, rawUpdate bson.M) error {
+	oid, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	// 确保 $set 中包含 update_time
+	if setFields, ok := rawUpdate["$set"].(bson.M); ok {
+		setFields["update_time"] = time.Now()
+	}
+	_, err = m.coll.UpdateOne(ctx, bson.M{"_id": oid}, rawUpdate)
 	return err
 }
 

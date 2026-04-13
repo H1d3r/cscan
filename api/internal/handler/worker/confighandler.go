@@ -148,8 +148,8 @@ type WorkerActiveFingerprintsReq struct {
 // WorkerActiveFingerprintDocument 主动指纹文档
 type WorkerActiveFingerprintDocument struct {
 	Id          string   `json:"id"`
-	Name        string   `json:"name"`        // 应用名称（用于关联被动指纹）
-	Paths       []string `json:"paths"`       // 主动探测路径列表
+	Name        string   `json:"name"`  // 应用名称（用于关联被动指纹）
+	Paths       []string `json:"paths"` // 主动探测路径列表
 	Description string   `json:"description"`
 	Enabled     bool     `json:"enabled"`
 	// 关联的被动指纹规则（用于匹配响应）
@@ -600,9 +600,9 @@ type WorkerDirScanDictReq struct {
 
 // WorkerDirScanDictItem 目录扫描字典项
 type WorkerDirScanDictItem struct {
-	Id      string   `json:"id"`
-	Name    string   `json:"name"`
-	Paths   []string `json:"paths"` // 解析后的路径列表
+	Id    string   `json:"id"`
+	Name  string   `json:"name"`
+	Paths []string `json:"paths"` // 解析后的路径列表
 }
 
 // WorkerDirScanDictResp 目录扫描字典获取响应

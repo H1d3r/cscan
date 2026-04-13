@@ -214,7 +214,6 @@ func (v *ConfigValidator) validateDirScan(config *DirScanConfig) error {
 	return nil
 }
 
-
 // ApplyDefaults 应用默认值
 // 在配置解析时应用默认值，而不是在执行时
 func (v *ConfigValidator) ApplyDefaults(config *TaskConfig) {

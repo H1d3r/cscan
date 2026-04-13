@@ -36,7 +36,7 @@ func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq, works
 
 	// Create scan result service and fetch vulnerability scan results
 	scanResultService := svc.NewScanResultService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
-	
+
 	scanReq := &svc.GetVulnScanResultsReq{
 		WorkspaceId: workspaceId,
 		Authority:   asset.Authority,
@@ -66,17 +66,17 @@ func (l *AssetVulnScansLogic) AssetVulnScans(req *types.AssetVulnScansReq, works
 				CVSS:        finding.RiskScore,
 				MatchedURL:  "", // Not available in Finding struct
 			}
-			
+
 			// Try to get CVE from metadata
 			if cve, ok := finding.Metadata["cve"]; ok {
 				vulnItem.CVE = cve
 			}
-			
+
 			// Format discovered time
 			if !finding.Discovered.IsZero() {
 				vulnItem.DiscoveredAt = finding.Discovered.Format("2006-01-02 15:04:05")
 			}
-			
+
 			results = append(results, vulnItem)
 		}
 	}

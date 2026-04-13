@@ -43,9 +43,25 @@ func (b *TaskBuilder) BuildAndPushSubTasks(workspaceId string, task *model.MainT
 	splitter := scheduler.NewTargetSplitter(batchSize)
 	batches := splitter.SplitTargets(task.Target)
 
-	if err := b.prewriteInitialAssets(workspaceId, task, taskConfig, batches); err != nil {
-		b.log.Errorf("TaskBuilder: prewrite initial assets failed for task %s: %v", task.TaskId, err)
-	}
+	// Scheme 1: Asynchronous prewrite using context.WithoutCancel to prevent HTTP context cancellation
+	bgCtx := context.WithoutCancel(b.ctx)
+	timeoutCtx, cancel := context.WithTimeout(bgCtx, 10*time.Minute)
+	go func(ctx context.Context, cancelFunc context.CancelFunc) {
+		defer cancelFunc()
+		defer func() {
+			if r := recover(); r != nil {
+				logx.WithContext(ctx).Errorf("TaskBuilder: panic in async prewrite for task %s: %v", task.TaskId, r)
+			}
+		}()
+		asyncBuilder := &TaskBuilder{
+			ctx:    ctx,
+			svcCtx: b.svcCtx,
+			log:    logx.WithContext(ctx),
+		}
+		if err := asyncBuilder.prewriteInitialAssets(workspaceId, task, taskConfig, batches); err != nil {
+			asyncBuilder.log.Errorf("TaskBuilder: async prewrite initial assets failed for task %s: %v", task.TaskId, err)
+		}
+	}(timeoutCtx, cancel)
 
 	// 3. Calculate SubTask Count
 	enabledModules := b.countEnabledModules(taskConfig)
@@ -88,7 +104,10 @@ func (b *TaskBuilder) pushSingleBatch(workspaceId string, task *model.MainTask, 
 	subConfig["subTaskIndex"] = index
 	subConfig["subTaskTotal"] = total
 
-	configBytes, _ := json.Marshal(subConfig)
+	configBytes, err := json.Marshal(subConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sub-task config: %w", err)
+	}
 	subTaskId := task.TaskId
 	if total > 1 {
 		subTaskId = fmt.Sprintf("%s-%d", task.TaskId, index)
@@ -122,7 +141,8 @@ func (b *TaskBuilder) prewriteInitialAssets(workspaceId string, task *model.Main
 }
 
 func collectInitialAssets(batches []string) []*scanner.Asset {
-	return collectInitialAssetsWithGenerator(batches, scanner.GenerateAssetsFromTargets)
+	// Scheme 2: Pass a generator that avoids synchronous DNS lookups during API request
+	return collectInitialAssetsWithGenerator(batches, scanner.GenerateAssetsFromTargetsWithoutDNS)
 }
 
 func collectInitialAssetsWithGenerator(batches []string, generator func(string) []*scanner.Asset) []*scanner.Asset {
@@ -229,19 +249,19 @@ func (b *TaskBuilder) upsertInitialAsset(assetModel *model.AssetModel, task *mod
 func convertScannerAssetToModelAsset(task *model.MainTask, scanAsset *scanner.Asset, orgId string) *model.Asset {
 	now := time.Now()
 	asset := &model.Asset{
-		Authority:     scanAsset.Authority,
-		Host:          scanAsset.Host,
-		Port:          scanAsset.Port,
-		Category:      scanAsset.Category,
-		CName:         scanAsset.CName,
-		IsHTTP:        scanAsset.IsHTTP,
-		TaskId:        task.TaskId,
-		Source:        scanAsset.Source,
-		OrgId:         orgId,
-		CreateTime:    now,
-		UpdateTime:    now,
-		IsNewAsset:    true,
-		IsUpdated:     false,
+		Authority:       scanAsset.Authority,
+		Host:            scanAsset.Host,
+		Port:            scanAsset.Port,
+		Category:        scanAsset.Category,
+		CName:           scanAsset.CName,
+		IsHTTP:          scanAsset.IsHTTP,
+		TaskId:          task.TaskId,
+		Source:          scanAsset.Source,
+		OrgId:           orgId,
+		CreateTime:      now,
+		UpdateTime:      now,
+		IsNewAsset:      true,
+		IsUpdated:       false,
 		FirstSeenTaskId: task.TaskId,
 	}
 	if asset.Source == "" {

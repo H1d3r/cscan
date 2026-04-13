@@ -84,7 +84,7 @@ type QuakeResponse struct {
 // QuakeDataList 自定义类型处理 data 字段（可能是数组或对象）
 // Quake API 在配额用尽或无数据时可能返回对象而非数组
 type QuakeDataList struct {
-	Items      []QuakeData
+	Items       []QuakeData
 	IsExhausted bool // 标记是否配额用尽
 }
 
@@ -239,11 +239,11 @@ func (c *QuakeClient) Search(ctx context.Context, query string, page, size int) 
 
 	// 构建请求体
 	reqBody := map[string]interface{}{
-		"query":      query,
-		"start":      (page - 1) * size,
-		"size":       size,
+		"query":        query,
+		"start":        (page - 1) * size,
+		"size":         size,
 		"ignore_cache": false,
-		"latest":     true,
+		"latest":       true,
 	}
 
 	data, _ := json.Marshal(reqBody)

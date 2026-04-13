@@ -94,14 +94,14 @@ func NewBaseModel[T any](coll *mongo.Collection) *BaseModel[T] {
 // PrepareDocument prepares a document for insertion by setting timestamps and ID
 func (m *BaseModel[T]) PrepareDocument(doc interface{}) {
 	now := time.Now()
-	
+
 	// Set ID if it's identifiable and doesn't have one
 	if identifiable, ok := doc.(Identifiable); ok {
 		if identifiable.GetId().IsZero() {
 			identifiable.SetId(primitive.NewObjectID())
 		}
 	}
-	
+
 	// Set timestamps if it's timestamped
 	if timestamped, ok := doc.(Timestamped); ok {
 		timestamped.SetCreateTime(now)
@@ -183,13 +183,13 @@ func (m *BaseModel[T]) UpdateById(ctx context.Context, id string, update bson.M)
 	if err != nil {
 		return err
 	}
-	
+
 	// Always update the update_time field
 	if update == nil {
 		update = bson.M{}
 	}
 	update["update_time"] = time.Now()
-	
+
 	_, err = m.Coll.UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": update})
 	return err
 }
@@ -201,7 +201,7 @@ func (m *BaseModel[T]) UpdateOne(ctx context.Context, filter bson.M, update bson
 		update = bson.M{}
 	}
 	update["update_time"] = time.Now()
-	
+
 	_, err := m.Coll.UpdateOne(ctx, filter, bson.M{"$set": update})
 	return err
 }
@@ -291,18 +291,18 @@ func (m *BaseModel[T]) Exists(ctx context.Context, filter bson.M) (bool, error) 
 // Upsert 插入或更新
 func (m *BaseModel[T]) Upsert(ctx context.Context, filter bson.M, update bson.M) error {
 	now := time.Now()
-	
+
 	// Always update the update_time field
 	if update == nil {
 		update = bson.M{}
 	}
 	update["update_time"] = now
-	
+
 	// Set create_time only on insert
 	setOnInsert := bson.M{
 		"create_time": now,
 	}
-	
+
 	opts := options.Update().SetUpsert(true)
 	_, err := m.Coll.UpdateOne(ctx, filter, bson.M{
 		"$set":         update,

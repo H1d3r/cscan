@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -281,7 +282,7 @@ func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, o
 					}
 
 					// 更新进度
-					if onProgress != nil {
+					if onProgress != nil && totalPorts > 0 {
 						progress := (task.index + 1) * 100 / totalPorts
 						onProgress(progress, fmt.Sprintf("Scanning port %d (%d/%d)", task.port, task.index+1, totalPorts))
 					}
@@ -331,14 +332,37 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	logInfo("Nmap: executing nmap -Pn -p %d %s", port, strings.Join(targets, " "))
 
 	cmd := exec.CommandContext(ctx, "nmap", args...)
-	output, err := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Start()
 	if err != nil {
-		// 检查是否是上下文取消
-		if ctx.Err() != nil {
+		logError("Nmap: failed to start nmap for port %d: %v", port, err)
+		return assets
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var output []byte
+	select {
+	case <-ctx.Done():
+		// 超时，强制终止进程
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		<-done // 等待Wait返回
+		logError("Nmap: port %d timeout after %ds, killed", port, opts.Timeout)
+		return assets
+	case err := <-done:
+		if err != nil {
+			logError("Nmap: error for port %d: %v (stderr: %s)", port, err, stderr.String())
 			return assets
 		}
-		logError("Nmap: error for port %d: %v", port, err)
-		return assets
+		output = stdout.Bytes()
 	}
 
 	// 解析XML输出

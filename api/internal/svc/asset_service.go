@@ -11,8 +11,8 @@ import (
 
 // AssetService provides asset-related operations with scan result integration
 type AssetService struct {
-	db                 *mongo.Database
-	scanResultService  *ScanResultService
+	db                *mongo.Database
+	scanResultService *ScanResultService
 }
 
 // NewAssetService creates a new AssetService
@@ -116,7 +116,7 @@ func (s *AssetService) GetAssetList(ctx context.Context, req *GetAssetListReq) (
 	for i, asset := range assets {
 		assetId := asset.Id.Hex()
 		summary, exists := summaryResp.Summaries[assetId]
-		
+
 		assetsWithSummaries[i] = AssetWithScanSummary{
 			Asset:             asset,
 			DirScanCount:      0,

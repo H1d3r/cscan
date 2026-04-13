@@ -344,59 +344,9 @@ function isValidIPv4(ip) {
  * 检查是否是有效的域名
  */
 function isValidDomain(domain) {
-  // 域名规则：
-  // 1. 每个标签可以是1-63个字符
-  // 2. 标签由字母、数字、连字符组成
-  // 3. 标签不能以连字符开头或结尾
-  // 4. 顶级域名至少2个字符
-  // 5. 支持单字符子域名如 m.example.com
-  
-  // 更宽松的域名正则，支持单字符子域名
-  const domainRegex = /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.([a-zA-Z]{2,})$/
-  
-  // 简化版：直接检查基本格式
-  // 1. 不能以点或连字符开头结尾
-  // 2. 不能有连续的点
-  // 3. 每个标签不能以连字符开头或结尾
-  if (domain.startsWith('.') || domain.endsWith('.') || 
-      domain.startsWith('-') || domain.endsWith('-') ||
-      domain.includes('..')) {
-    return false
-  }
-  
-  // 分割成标签检查
-  const labels = domain.split('.')
-  if (labels.length < 2) {
-    return false // 至少要有一个子域和顶级域
-  }
-  
-  // 检查每个标签
-  for (let i = 0; i < labels.length; i++) {
-    const label = labels[i]
-    
-    // 标签长度1-63
-    if (label.length === 0 || label.length > 63) {
-      return false
-    }
-    
-    // 标签不能以连字符开头或结尾
-    if (label.startsWith('-') || label.endsWith('-')) {
-      return false
-    }
-    
-    // 标签只能包含字母、数字、连字符
-    if (!/^[a-zA-Z0-9\-]+$/.test(label)) {
-      return false
-    }
-  }
-  
-  // 顶级域名至少2个字符，且只能是字母
-  const tld = labels[labels.length - 1]
-  if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) {
-    return false
-  }
-  
-  return true
+  // 支持前置 *. 的泛解析，支持连字符和内部下划线，但必须以字母数字结尾
+  const domainRegex = /^(\*\.)?([a-zA-Z0-9_]([a-zA-Z0-9\-_]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/
+  return domainRegex.test(domain)
 }
 
 /**
@@ -406,6 +356,7 @@ function isValidDomain(domain) {
  * @returns {Array<{line: number, target: string, message: string}>} - 错误列表
  */
 export function validateTargets(targets) {
+  targets = normalizeTargetInput(targets)
   const errors = []
   const lines = targets.split('\n')
 
@@ -443,22 +394,55 @@ export function validateTargets(targets) {
  * @param {string} line - 一行目标字符串
  * @returns {string[]} - 分割后的目标数组
  */
+function normalizeTargetInput(input) {
+  // 1. 清理零宽字符和BOM
+  let out = input.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2060]/g, '')
+
+  // 2. 脱敏还原 (Defang -> Refang)
+  out = out.replace(/\[\.\]/g, '.')
+           .replace(/\(\.\)/g, '.')
+           .replace(/\[dot\]/gi, '.')
+           .replace(/\(dot\)/gi, '.')
+           .replace(/hxxps?:\/\//gi, match => match.toLowerCase().startsWith('hxxps') ? 'https://' : 'http://')
+           .replace(/h__ps?:\/\//gi, match => match.toLowerCase().startsWith('h__ps') ? 'https://' : 'http://')
+           .replace(/\[:\]/g, ':')
+           .replace(/\(:\)/g, ':')
+           .replace(/\r/g, '')
+
+  // 3. 保护 IP Range (192.168.1.1 - 192.168.1.255)
+  out = out.replace(/\s+-\s+/g, '-')
+
+  // 4. 将其他定界符统一转为换行符
+  out = out.replace(/[;\t]/g, '\n')
+
+  return out
+}
+
 function splitTargets(line) {
-  // 优先按逗号分割
-  if (line.includes(',')) {
-    return line.split(',').map(t => t.trim()).filter(t => t)
+  // 在这里接收到的 line 已经是被换行分割过的单行了（在 validateTargets 中处理）。
+  // 但 line 内部可能会有空格
+  let results = []
+  const words = line.split(/\s+/) // 按空格分割（IPv4-IPv4已经变成IPv4-IPv4无空格了）
+  
+  for (const word of words) {
+    if (!word) continue
+    // 检查多端口的使用 example.com:80,443
+    const multiPortMatch = word.match(/^([^:/]+):(\d+(?:,\d+)+)$/)
+    if (multiPortMatch) {
+      const host = multiPortMatch[1]
+      const ports = multiPortMatch[2].split(',')
+      for (const port of ports) {
+        results.push(`${host}:${port}`)
+      }
+    } else {
+      // 假如word里还有逗号
+      const parts = word.split(',')
+      for (const part of parts) {
+        if (part.trim()) results.push(part.trim())
+      }
+    }
   }
-  // 其次按分号分割
-  if (line.includes(';')) {
-    return line.split(';').map(t => t.trim()).filter(t => t)
-  }
-  // 最后按空格分割（但要注意不要分割带端口的目标如 192.168.1.1:8080）
-  // 空格分隔只在没有其他分隔符时使用，且要确保不是单个目标
-  if (line.includes(' ') && !line.includes(':')) {
-    return line.split(/\s+/).map(t => t.trim()).filter(t => t)
-  }
-  // 默认返回整行作为单个目标
-  return [line]
+  return results
 }
 
 /**

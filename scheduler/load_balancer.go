@@ -23,13 +23,13 @@ type LoadBalancer struct {
 
 // LoadBalancerConfig 负载均衡器配置
 type LoadBalancerConfig struct {
-	CacheTTL          time.Duration // 缓存过期时间
-	HeartbeatTimeout  time.Duration // 心跳超时时间
-	CPUThreshold      float64       // CPU阈值
-	MemThreshold      float64       // 内存阈值
-	TaskLoadWeight    float64       // 任务负载权重
-	CPUWeight         float64       // CPU权重
-	MemWeight         float64       // 内存权重
+	CacheTTL         time.Duration // 缓存过期时间
+	HeartbeatTimeout time.Duration // 心跳超时时间
+	CPUThreshold     float64       // CPU阈值
+	MemThreshold     float64       // 内存阈值
+	TaskLoadWeight   float64       // 任务负载权重
+	CPUWeight        float64       // CPU权重
+	MemWeight        float64       // 内存权重
 }
 
 // DefaultLoadBalancerConfig 默认配置

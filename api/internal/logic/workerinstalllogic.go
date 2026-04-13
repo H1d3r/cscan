@@ -122,7 +122,6 @@ func (l *WorkerInstallLogic) GetInstallCommand(req *types.WorkerInstallCommandRe
 	// 	serverAddrClean, installKey, serverAddrClean,
 	// )
 
-
 	// 注意：RpcAddr 和 RedisAddr 保留在响应中以保持向后兼容，但不再使用
 	return &types.WorkerInstallCommandResp{
 		Code:       0,

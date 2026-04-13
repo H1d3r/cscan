@@ -19,8 +19,8 @@ type FileListReq struct {
 
 // FileListResp 文件列表响应
 type FileListResp struct {
-	Code    int        `json:"code"`
-	Message string     `json:"message"`
+	Code    int           `json:"code"`
+	Message string        `json:"message"`
 	Data    *FileListData `json:"data,omitempty"`
 }
 
@@ -48,8 +48,8 @@ type FileDownloadReq struct {
 
 // FileDownloadResp 文件下载响应
 type FileDownloadResp struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
+	Code    int               `json:"code"`
+	Message string            `json:"message"`
 	Data    *FileDownloadData `json:"data,omitempty"`
 }
 

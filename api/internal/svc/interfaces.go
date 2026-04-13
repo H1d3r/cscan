@@ -15,7 +15,7 @@ import (
 type Storage interface {
 	// User management
 	UserModel() *model.UserModel
-	// Workspace management  
+	// Workspace management
 	WorkspaceModel() *model.WorkspaceModel
 	// Organization management
 	OrganizationModel() *model.OrganizationModel

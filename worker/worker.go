@@ -136,6 +136,55 @@ func (w *Worker) taskLog(taskId, level, format string, args ...interface{}) {
 }
 
 // VulnerabilityBuffer 批量缓冲保存漏洞
+// AssetBuffer 批量缓冲保存资产
+type AssetBuffer struct {
+	assets    []*scanner.Asset
+	mu        sync.Mutex
+	maxSize   int
+	flushChan chan struct{}
+}
+
+// NewAssetBuffer 创建资产缓冲区
+func NewAssetBuffer(maxSize int) *AssetBuffer {
+	return &AssetBuffer{
+		assets:    make([]*scanner.Asset, 0, maxSize),
+		maxSize:   maxSize,
+		flushChan: make(chan struct{}, 1),
+	}
+}
+
+// GetFlushChan 返回刷新信号通道，供外层 select 监听
+func (b *AssetBuffer) GetFlushChan() <-chan struct{} {
+	return b.flushChan
+}
+
+// Add 添加资产到缓冲区，如果达到 maxSize 则触发刷新
+func (b *AssetBuffer) Add(asset *scanner.Asset) {
+	b.mu.Lock()
+	b.assets = append(b.assets, asset)
+	shouldFlush := len(b.assets) >= b.maxSize
+	b.mu.Unlock()
+
+	if shouldFlush {
+		select {
+		case b.flushChan <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Flush 刷新缓冲区，批量保存
+func (b *AssetBuffer) Flush(ctx context.Context, saver func([]*scanner.Asset)) {
+	b.mu.Lock()
+	assets := b.assets
+	b.assets = nil
+	b.mu.Unlock()
+
+	if len(assets) > 0 {
+		saver(assets) // 批量保存
+	}
+}
+
 type VulnerabilityBuffer struct {
 	vuls      []*scanner.Vulnerability
 	mu        sync.Mutex

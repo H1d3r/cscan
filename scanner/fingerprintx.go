@@ -28,8 +28,8 @@ func NewFingerprintxScanner() *FingerprintxScanner {
 
 // FingerprintxOptions fingerprintx 扫描选项
 type FingerprintxOptions struct {
-	Timeout     int `json:"timeout"`     // 单个目标超时时间(秒)，默认10秒
-	Concurrency int `json:"concurrency"` // 并发数，默认10
+	Timeout     int  `json:"timeout"`     // 单个目标超时时间(秒)，默认10秒
+	Concurrency int  `json:"concurrency"` // 并发数，默认10
 	UDP         bool `json:"udp"`         // 是否扫描UDP端口
 	FastMode    bool `json:"fastMode"`    // 快速模式，减少探测深度
 }
@@ -94,9 +94,9 @@ func (s *FingerprintxScanner) Scan(ctx context.Context, config *ScanConfig) (*Sc
 		}, nil
 	}
 
-	logx.Infof("Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d", 
+	logx.Infof("Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d",
 		len(config.Assets), opts.Timeout, opts.Concurrency)
-	taskLog("INFO", "Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d", 
+	taskLog("INFO", "Fingerprintx: scanning %d assets, timeout=%ds, concurrency=%d",
 		len(config.Assets), opts.Timeout, opts.Concurrency)
 
 	// 执行扫描
@@ -140,7 +140,7 @@ func (s *FingerprintxScanner) runFingerprintx(
 				default:
 					// 执行单个资产扫描
 					result := s.scanSingleAsset(ctx, asset, opts, taskLog)
-					
+
 					mu.Lock()
 					identifiedAssets = append(identifiedAssets, result)
 					completed++
@@ -230,7 +230,7 @@ func (s *FingerprintxScanner) scanSingleAsset(
 	// 更新资产信息
 	if len(results) > 0 {
 		result := results[0]
-		
+
 		// 更新服务名称
 		if result.Protocol != "" {
 			asset.Service = result.Protocol
@@ -243,7 +243,7 @@ func (s *FingerprintxScanner) scanSingleAsset(
 			if result.Version != "" {
 				productInfo += ":" + result.Version
 			}
-			
+
 			// 添加到 App 列表（如果不存在）
 			found := false
 			for _, app := range asset.App {
@@ -281,7 +281,7 @@ func (s *FingerprintxScanner) scanSingleAsset(
 			}
 		}
 
-		logx.Debugf("Fingerprintx identified %s:%d: service=%s, version=%s", 
+		logx.Debugf("Fingerprintx identified %s:%d: service=%s, version=%s",
 			asset.Host, asset.Port, result.Protocol, result.Version)
 	}
 
@@ -302,12 +302,12 @@ func formatMetadata(metadata plugins.Metadata) string {
 	if err != nil {
 		return ""
 	}
-	
+
 	// 如果是空对象，返回空字符串
 	if string(data) == "{}" || string(data) == "null" {
 		return ""
 	}
-	
+
 	return string(data)
 }
 

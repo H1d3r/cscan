@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"cscan/model"
+	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
-	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // CustomFingerprintEngine 自定义指纹识别引擎
@@ -936,7 +936,6 @@ func CalculateMD5Hash(data []byte) string {
 	return fmt.Sprintf("%x", sum)
 }
 
-
 // ARLFingerJSON ARL finger.json格式的指纹规则
 type ARLFingerJSON struct {
 	CMS      string   `json:"cms"`
@@ -970,7 +969,7 @@ func ConvertARLFingerJSONToFingerprint(arl *ARLFingerJSON) *model.Fingerprint {
 	// 解析location字段，确定匹配类型
 	// 格式: "rule: body", "rule: title", "rule: icon_hash"
 	location := strings.ToLower(arl.Location)
-	
+
 	// 构建ARL格式的规则字符串
 	var rules []string
 	for _, kw := range arl.Keyword {
@@ -989,7 +988,7 @@ func ConvertARLFingerJSONToFingerprint(arl *ARLFingerJSON) *model.Fingerprint {
 			}
 		}
 	}
-	
+
 	// 多个关键字之间是OR关系
 	if len(rules) > 0 {
 		fp.Rule = strings.Join(rules, " || ")
@@ -1057,7 +1056,7 @@ func isNumeric(s string) bool {
 func BatchConvertARLFingerJSON(rules []ARLFingerJSON) []*model.Fingerprint {
 	var fps []*model.Fingerprint
 	seen := make(map[string]bool)
-	
+
 	for _, rule := range rules {
 		fp := ConvertARLFingerJSONToFingerprint(&rule)
 		// 合并同名规则（ARL中同一个CMS可能有多条规则）
@@ -1078,6 +1077,6 @@ func BatchConvertARLFingerJSON(rules []ARLFingerJSON) []*model.Fingerprint {
 			seen[fp.Name] = true
 		}
 	}
-	
+
 	return fps
 }

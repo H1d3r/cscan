@@ -37,7 +37,7 @@ type WorkerTaskCheckResp struct {
 // WorkerTaskUpdateReq 任务状态更新请求
 type WorkerTaskUpdateReq struct {
 	TaskId   string `json:"taskId"`
-	State    string `json:"state"`    // started, success, failure, paused
+	State    string `json:"state"` // started, success, failure, paused
 	Worker   string `json:"worker"`
 	Result   string `json:"result"`
 	Progress int    `json:"progress"` // 0-100
@@ -204,7 +204,6 @@ func WorkerTaskControlHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		})
 	}
 }
-
 
 // ==================== Task Recovery Handler ====================
 

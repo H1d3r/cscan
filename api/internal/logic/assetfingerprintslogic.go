@@ -28,7 +28,7 @@ func NewAssetFingerprintsListLogic(ctx context.Context, svcCtx *svc.ServiceConte
 func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFingerprintsListReq) (*types.AssetFingerprintsListResp, error) {
 	// 从资产集合中聚合获取所有不重复的指纹
 	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("assets")
-	
+
 	// 使用distinct获取所有不重复的指纹
 	fingerprints, err := collection.Distinct(l.ctx, "fingerprints", bson.M{})
 	if err != nil {
@@ -39,7 +39,7 @@ func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFinge
 			List: []string{},
 		}, nil
 	}
-	
+
 	// 转换为字符串列表
 	result := make([]string, 0, len(fingerprints))
 	for _, fp := range fingerprints {
@@ -47,12 +47,12 @@ func (l *AssetFingerprintsListLogic) AssetFingerprintsList(req *types.AssetFinge
 			result = append(result, s)
 		}
 	}
-	
+
 	// 限制返回数量
 	if req.Limit > 0 && len(result) > req.Limit {
 		result = result[:req.Limit]
 	}
-	
+
 	return &types.AssetFingerprintsListResp{
 		Code: 0,
 		Msg:  "success",
@@ -78,7 +78,7 @@ func NewAssetPortsStatsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *A
 func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, error) {
 	// 从资产集合中聚合端口统计
 	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("assets")
-	
+
 	// 聚合管道：按端口分组统计
 	pipeline := []bson.M{
 		{"$match": bson.M{"port": bson.M{"$gt": 0}}},
@@ -90,7 +90,7 @@ func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, er
 		{"$sort": bson.M{"count": -1}},
 		{"$limit": 200},
 	}
-	
+
 	cursor, err := collection.Aggregate(l.ctx, pipeline)
 	if err != nil {
 		l.Logger.Errorf("获取端口统计失败: %v", err)
@@ -101,13 +101,13 @@ func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, er
 		}, nil
 	}
 	defer cursor.Close(l.ctx)
-	
+
 	var results []struct {
 		Port    int    `bson:"_id"`
 		Service string `bson:"service"`
 		Count   int64  `bson:"count"`
 	}
-	
+
 	if err := cursor.All(l.ctx, &results); err != nil {
 		l.Logger.Errorf("解析端口统计失败: %v", err)
 		return &types.AssetPortsStatsResp{
@@ -116,7 +116,7 @@ func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, er
 			List: []types.PortStatItem{},
 		}, nil
 	}
-	
+
 	list := make([]types.PortStatItem, 0, len(results))
 	for _, r := range results {
 		list = append(list, types.PortStatItem{
@@ -125,7 +125,7 @@ func (l *AssetPortsStatsLogic) AssetPortsStats() (*types.AssetPortsStatsResp, er
 			Count:   r.Count,
 		})
 	}
-	
+
 	return &types.AssetPortsStatsResp{
 		Code: 0,
 		Msg:  "success",

@@ -15,7 +15,7 @@ type ScanTargetModel struct {
 // NewScanTargetModel creates a new ScanTargetModel
 func NewScanTargetModel(db *mongo.Database, workspaceId string) *ScanTargetModel {
 	coll := db.Collection(workspaceId + "_scantarget")
-	
+
 	// Create indexes
 	ctx := context.Background()
 	indexes := []mongo.IndexModel{
@@ -26,7 +26,7 @@ func NewScanTargetModel(db *mongo.Database, workspaceId string) *ScanTargetModel
 		{Keys: bson.D{{Key: "create_time", Value: -1}}},
 	}
 	coll.Indexes().CreateMany(ctx, indexes)
-	
+
 	return &ScanTargetModel{
 		BaseModel: NewBaseModel[ScanTarget](coll),
 	}
@@ -78,14 +78,14 @@ func (m *ScanTargetModel) BulkInsert(ctx context.Context, targets []ScanTarget) 
 	if len(targets) == 0 {
 		return nil
 	}
-	
+
 	// Prepare documents
 	docs := make([]interface{}, len(targets))
 	for i, target := range targets {
 		m.PrepareDocument(&target)
 		docs[i] = target
 	}
-	
+
 	_, err := m.Coll.InsertMany(ctx, docs)
 	return err
 }

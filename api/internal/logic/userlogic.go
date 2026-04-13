@@ -87,7 +87,7 @@ func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.Base
 	// 创建用户
 	user := &model.User{
 		Username: req.Username,
-		Password: req.Password, // 在model层会自动MD5加密
+		Password: req.Password, // 在model层会自动bcrypt加密
 		Status:   req.Status,
 	}
 
@@ -140,8 +140,8 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 
 	// 更新用户信息
 	updateData := bson.M{
-		"username": req.Username,
-		"status":   req.Status,
+		"username":    req.Username,
+		"status":      req.Status,
 		"update_time": time.Now(),
 	}
 
@@ -230,7 +230,6 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 
 	return &types.BaseResp{Code: 0, Msg: "密码重置成功"}, nil
 }
-
 
 // ScanConfigLogic 扫描配置逻辑
 type ScanConfigLogic struct {

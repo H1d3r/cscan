@@ -212,5 +212,3 @@ func (m *ScanTemplateModel) BatchInsert(ctx context.Context, templates []ScanTem
 	_, err := m.Coll.InsertMany(ctx, docs, options.InsertMany().SetOrdered(false))
 	return err
 }
-
-

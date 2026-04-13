@@ -151,6 +151,11 @@ func GenerateAssetsFromTargets(target string) []*Asset {
 	return generateAssetsFromTargetsWithResolver(target, &stdlibResolver{})
 }
 
+// GenerateAssetsFromTargetsWithoutDNS 从用户输入的目标生成资产列表，但不进行同步DNS解析
+func GenerateAssetsFromTargetsWithoutDNS(target string) []*Asset {
+	return generateAssetsFromTargetsWithResolver(target, nil)
+}
+
 func generateAssetsFromTargetsWithResolver(target string, resolver dnsResolver) []*Asset {
 	var assets []*Asset
 
@@ -388,12 +393,15 @@ func expandCIDR(cidr string) []string {
 		return ips
 	}
 	count := 0
-	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
+	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); {
 		count++
 		if count > MaxTargetCount {
 			break
 		}
 		ips = append(ips, ip.String())
+		if incIP(ip) {
+			break
+		}
 	}
 
 	// 移除网络地址和广播地址
@@ -403,14 +411,15 @@ func expandCIDR(cidr string) []string {
 	return ips
 }
 
-// incIP IP自增
-func incIP(ip net.IP) {
+// incIP IP自增, 如果溢出(达到 255.255.255.255 或 IPv6最大值)则返回 true
+func incIP(ip net.IP) bool {
 	for j := len(ip) - 1; j >= 0; j-- {
 		ip[j]++
 		if ip[j] > 0 {
-			break
+			return false
 		}
 	}
+	return true
 }
 
 // expandIPRange 展开IP范围
@@ -427,8 +436,11 @@ func expandIPRange(ipRange string) []string {
 		return ips
 	}
 
-	for ip := startIP; !ip.Equal(endIP); incIP(ip) {
+	for ip := startIP; !ip.Equal(endIP); {
 		ips = append(ips, ip.String())
+		if incIP(ip) {
+			break
+		}
 	}
 	ips = append(ips, endIP.String())
 

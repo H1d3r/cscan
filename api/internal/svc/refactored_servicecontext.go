@@ -22,10 +22,10 @@ import (
 // using interface-based dependency injection
 type RefactoredServiceContext struct {
 	Config    config.Config
-	Storage   Storage      // Single storage interface
-	Cache     Cache        // Single cache interface  
-	RPC       RPCClient    // Single RPC interface
-	Validator Validator    // Input validation
+	Storage   Storage   // Single storage interface
+	Cache     Cache     // Single cache interface
+	RPC       RPCClient // Single RPC interface
+	Validator Validator // Input validation
 	Scheduler *scheduler.Scheduler
 }
 

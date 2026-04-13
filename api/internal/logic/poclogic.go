@@ -418,11 +418,11 @@ func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateLi
 			{"description": bson.M{"$regex": req.Keyword, "$options": "i"}},
 		}
 	}
-	// 新增 - CVSS评分筛选 
+	// 新增 - CVSS评分筛选
 	if req.MinCvssScore > 0 {
 		filter["cvss_score"] = bson.M{"$gte": req.MinCvssScore}
 	}
-	// 新增 - CVE编号搜索 
+	// 新增 - CVE编号搜索
 	if req.CveId != "" {
 		filter["cve_ids"] = bson.M{"$regex": req.CveId, "$options": "i"}
 	}
@@ -451,7 +451,7 @@ func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateLi
 			Tags:        doc.Tags,
 			Category:    doc.Category,
 			FilePath:    doc.FilePath,
-			// 新增字段 - 漏洞知识库 
+			// 新增字段 - 漏洞知识库
 			CvssScore:   doc.CvssScore,
 			CvssMetrics: doc.CvssMetrics,
 			CveIds:      doc.CveIds,
@@ -512,7 +512,6 @@ func (l *NucleiTemplateCategoriesLogic) NucleiTemplateCategories() (resp *types.
 	}, nil
 }
 
-
 // ==================== Nuclei模板启用/禁用 ====================
 
 type NucleiTemplateUpdateEnabledLogic struct {
@@ -545,7 +544,6 @@ func (l *NucleiTemplateUpdateEnabledLogic) UpdateEnabled(req *types.NucleiTempla
 	}
 	return &types.BaseResp{Code: 0, Msg: action + "成功"}, nil
 }
-
 
 // ==================== Nuclei模板详情 ====================
 
@@ -585,7 +583,7 @@ func (l *NucleiTemplateDetailLogic) GetDetail(req *types.NucleiTemplateDetailReq
 			Tags:        doc.Tags,
 			FilePath:    doc.FilePath,
 			Content:     doc.Content,
-			// 新增字段 - 漏洞知识库 
+			// 新增字段 - 漏洞知识库
 			CvssScore:   doc.CvssScore,
 			CvssMetrics: doc.CvssMetrics,
 			CveIds:      doc.CveIds,
@@ -675,6 +673,7 @@ func (l *PocValidateLogic) PocValidate(req *types.PocValidateReq, workspaceId st
 		TaskId:   rpcResp.TaskId,
 	}, nil
 }
+
 // ==================== 批量POC验证 ====================
 
 type PocBatchValidateLogic struct {
@@ -745,6 +744,7 @@ func (l *PocBatchValidateLogic) PocBatchValidate(req *types.PocBatchValidateReq,
 		BatchId:   batchId,
 	}, nil
 }
+
 // ==================== POC验证结果查询 ====================
 
 type PocValidationResultQueryLogic struct {
@@ -811,7 +811,6 @@ func (l *PocValidationResultQueryLogic) PocValidationResultQuery(req *types.PocV
 	}, nil
 }
 
-
 // ==================== 清空所有自定义POC ====================
 
 type CustomPocClearAllLogic struct {
@@ -849,21 +848,21 @@ func (l *CustomPocClearAllLogic) CustomPocClearAll(req *types.CustomPocClearAllR
 
 	// 先获取符合条件的总数
 	total, _ := l.svcCtx.CustomPocModel.CountWithFilter(l.ctx, filter)
-	
+
 	if total == 0 {
 		return &types.CustomPocClearAllResp{Code: 0, Msg: "没有符合条件的POC", Deleted: 0}, nil
 	}
-	
+
 	// 按条件删除自定义POC
 	deleted, err := l.svcCtx.CustomPocModel.DeleteWithFilter(l.ctx, filter)
 	if err != nil {
 		return &types.CustomPocClearAllResp{Code: 500, Msg: "清空失败: " + err.Error()}, nil
 	}
-	
+
 	if deleted == 0 {
 		deleted = total
 	}
-	
+
 	return &types.CustomPocClearAllResp{
 		Code:    0,
 		Msg:     "清空成功",
@@ -907,7 +906,7 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 	wsIds := common.GetWorkspaceIds(l.ctx, l.svcCtx, workspaceId)
 	filter := bson.M{
 		"$or": []bson.M{
-			{"is_http": true},                                                  // is_http 标记为 true
+			{"is_http": true}, // is_http 标记为 true
 			{"service": bson.M{"$in": []string{"http", "https", "http-proxy"}}}, // service 为 http/https
 			{"port": bson.M{"$in": allHttpPorts}},                               // 常见 HTTP 端口
 			{"title": bson.M{"$exists": true, "$ne": ""}},                       // 有 title（说明是 HTTP 服务）
@@ -1196,7 +1195,7 @@ func parseTemplateId(content string) string {
 // parseTemplateContent 解析模板内容
 func parseTemplateContent(content string) (*templateInfoWrapper, error) {
 	var wrapper struct {
-		Id   string              `yaml:"id"`
+		Id   string               `yaml:"id"`
 		Info *templateInfoWrapper `yaml:"info"`
 	}
 	if err := yaml.Unmarshal([]byte(content), &wrapper); err != nil {
@@ -1210,14 +1209,14 @@ func parseTemplateContent(content string) (*templateInfoWrapper, error) {
 
 // templateInfoWrapper 模板信息包装
 type templateInfoWrapper struct {
-	Name           string                     `yaml:"name"`
-	Author         interface{}                `yaml:"author"` // 可能是string或[]string
-	Severity       string                     `yaml:"severity"`
-	Description    string                     `yaml:"description"`
-	Reference      []string                   `yaml:"reference"`
-	Remediation    string                     `yaml:"remediation"`
-	Classification *templateClassification    `yaml:"classification"`
-	Tags           string                     `yaml:"tags"`
+	Name           string                  `yaml:"name"`
+	Author         interface{}             `yaml:"author"` // 可能是string或[]string
+	Severity       string                  `yaml:"severity"`
+	Description    string                  `yaml:"description"`
+	Reference      []string                `yaml:"reference"`
+	Remediation    string                  `yaml:"remediation"`
+	Classification *templateClassification `yaml:"classification"`
+	Tags           string                  `yaml:"tags"`
 }
 
 type templateClassification struct {
@@ -1433,11 +1432,11 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesWithProgress(taskId strin
 
 	// 尝试多种下载方式
 	var downloadErr error
-	
+
 	// 方式1: 尝试使用 Nuclei SDK
 	logx.Info("[Nuclei Templates] Trying Nuclei SDK...")
 	updateDownloadStatus(taskId, "downloading", 15, 0, "")
-	
+
 	installer.HideProgressBar = true
 	installer.HideUpdateChangesTable = true
 	installer.HideReleaseNotes = true
@@ -1447,35 +1446,35 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesWithProgress(taskId strin
 	}
 
 	downloadErr = tm.FreshInstallIfNotExists()
-	
+
 	// 如果 SDK 失败，尝试使用 git clone
 	if downloadErr != nil {
 		logx.Errorf("[Nuclei Templates] SDK failed: %v, trying git clone...", downloadErr)
 		updateDownloadStatus(taskId, "downloading", 25, 0, "")
-		
+
 		// 清理可能的部分下载
 		_ = os.RemoveAll(templatesDir)
-		
+
 		// 尝试多个镜像源
 		mirrors := []string{
 			"https://github.com/projectdiscovery/nuclei-templates.git",
 			"https://ghproxy.com/https://github.com/projectdiscovery/nuclei-templates.git",
 			"https://mirror.ghproxy.com/https://github.com/projectdiscovery/nuclei-templates.git",
 		}
-		
+
 		for i, mirror := range mirrors {
 			logx.Infof("[Nuclei Templates] Trying mirror %d: %s", i+1, mirror)
 			updateDownloadStatus(taskId, "downloading", 30+i*15, 0, "")
-			
+
 			// 每次尝试前清理目录
 			_ = os.RemoveAll(templatesDir)
-			
+
 			cmd := exec.Command("git", "clone", "--depth", "1", mirror, templatesDir)
 			cmd.Env = append(os.Environ(),
 				"GIT_SSL_NO_VERIFY=true",
 				"GIT_TERMINAL_PROMPT=0",
 			)
-			
+
 			output, err := cmd.CombinedOutput()
 			if err == nil {
 				logx.Infof("[Nuclei Templates] Successfully cloned from %s", mirror)
@@ -1493,7 +1492,7 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesWithProgress(taskId strin
 		if info, err := os.Stat(builtinDir); err == nil && info.IsDir() {
 			logx.Info("[Nuclei Templates] Using builtin templates as fallback...")
 			updateDownloadStatus(taskId, "downloading", 80, 0, "")
-			
+
 			// 复制内置模板到目标目录
 			cmd := exec.Command("cp", "-r", builtinDir, templatesDir)
 			if output, err := cmd.CombinedOutput(); err == nil {
@@ -1538,8 +1537,6 @@ func (l *NucleiTemplateDownloadLogic) downloadTemplatesWithProgress(taskId strin
 		downloadTasksMu.Unlock()
 	}()
 }
-
-
 
 // countTemplates 统计模板文件数量
 func (l *NucleiTemplateDownloadLogic) countTemplates(dir string) int {

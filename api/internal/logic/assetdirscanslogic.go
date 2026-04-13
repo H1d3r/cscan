@@ -36,7 +36,7 @@ func (l *AssetDirScansLogic) AssetDirScans(req *types.AssetDirScansReq, workspac
 
 	// Create scan result service and fetch directory scan results
 	scanResultService := svc.NewScanResultService(l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName))
-	
+
 	scanReq := &svc.GetDirScanResultsReq{
 		WorkspaceId: workspaceId,
 		Authority:   asset.Authority,

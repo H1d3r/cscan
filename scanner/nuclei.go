@@ -21,8 +21,8 @@ import (
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 	"github.com/zeromicro/go-zero/core/logx"
-	"gopkg.in/yaml.v3"
 	yamlv2 "gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // MaxResponseSize 响应内容最大存储大小 (10KB)

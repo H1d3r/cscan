@@ -49,7 +49,7 @@ func TestProperty12_CrossViewDataConsistency(t *testing.T) {
 			// Simulate GetDirScanResults response (should have same count)
 			dirScanResp := &GetDirScanResultsResp{
 				Results:  make([]model.DirScanResult, 0), // Results array not important for count test
-				Total:    dirCount,                        // This should match summary.DirScanCount
+				Total:    dirCount,                       // This should match summary.DirScanCount
 				ScanTime: time.Now(),
 			}
 
@@ -85,7 +85,7 @@ func TestProperty12_CrossViewDataConsistency(t *testing.T) {
 			// Simulate GetVulnScanResults response (should have same count)
 			vulnScanResp := &GetVulnScanResultsResp{
 				Results:  make([]model.ScanResult, 0), // Results array not important for count test
-				Total:    vulnCount,                    // This should match summary.VulnScanCount
+				Total:    vulnCount,                   // This should match summary.VulnScanCount
 				ScanTime: time.Now(),
 			}
 
@@ -793,9 +793,9 @@ func TestBatchQueryOptimization_CorrectSummaryAggregation(t *testing.T) {
 		// Create expected summaries with varying counts
 		expectedSummaries[assetId] = ScanResultSummary{
 			AssetId:       assetId,
-			DirScanCount:  int64(i * 2),      // Varies by asset
-			VulnScanCount: int64(i),          // Varies by asset
-			HighRiskCount: int64(i / 2),      // Varies by asset
+			DirScanCount:  int64(i * 2), // Varies by asset
+			VulnScanCount: int64(i),     // Varies by asset
+			HighRiskCount: int64(i / 2), // Varies by asset
 			LastScanTime:  time.Now().Add(time.Duration(i) * time.Minute),
 		}
 	}

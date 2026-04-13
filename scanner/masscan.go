@@ -299,7 +299,7 @@ func optimizePortsForMasscan(portStr string) string {
 	// 检查是否包含大范围端口（如 1-65535）
 	// 如果是简单的范围格式，直接返回，让 masscan 自己处理
 	parts := strings.Split(portStr, ",")
-	
+
 	// 如果只有一个部分且是范围格式，直接返回
 	if len(parts) == 1 && strings.Contains(parts[0], "-") {
 		return portStr

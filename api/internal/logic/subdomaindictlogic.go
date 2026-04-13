@@ -66,7 +66,6 @@ func (l *SubdomainDictListLogic) SubdomainDictList(req *types.SubdomainDictListR
 	}, nil
 }
 
-
 // SubdomainDictSaveLogic 保存子域名字典逻辑
 type SubdomainDictSaveLogic struct {
 	logx.Logger

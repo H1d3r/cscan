@@ -41,6 +41,8 @@ type ScanConfig struct {
 	TaskLogger func(level, format string, args ...interface{}) `json:"-"`
 	// OnProgress 进度回调，参数为当前进度(0-100)和描述
 	OnProgress func(progress int, message string) `json:"-"`
+	// OnAssetUpdated 局部资产完成更新时的回调事件（用于流式结果更新）
+	OnAssetUpdated func(asset *Asset) `json:"-"`
 }
 
 // GetTypedOptions 从 ScanConfig 中提取类型安全的选项
@@ -87,10 +89,10 @@ type Asset struct {
 	IsCDN      bool     `json:"isCdn"`
 	CName      string   `json:"cname"`
 	IsCloud    bool     `json:"isCloud"`
-	IsHTTP     bool     `json:"isHttp"`   // 是否为HTTP服务
+	IsHTTP     bool     `json:"isHttp"` // 是否为HTTP服务
 	IPV4       []IPInfo `json:"ipv4"`
 	IPV6       []IPInfo `json:"ipv6"`
-	Source     string   `json:"source"`   // 资产来源: subfinder, portscan, urlfinder, etc.
+	Source     string   `json:"source"` // 资产来源: subfinder, portscan, urlfinder, etc.
 	// 目录扫描相关字段
 	Path          string `json:"path,omitempty"`          // 发现的路径
 	ContentLength int64  `json:"contentLength,omitempty"` // 响应内容长度

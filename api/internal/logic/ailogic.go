@@ -208,7 +208,6 @@ info:
 	return template
 }
 
-
 // AIConfigLogic AI配置逻辑
 type AIConfigLogic struct {
 	logx.Logger
@@ -277,7 +276,7 @@ func (l *AIConfigLogic) SaveConfig(req *types.AIConfigSaveReq, workspaceId strin
 
 	// 查找现有配置
 	existing, err := configModel.FindByPlatform(l.ctx, "ai")
-	
+
 	// Key 字段存储格式: protocol|baseUrl|model
 	keyValue := fmt.Sprintf("%s|%s|%s", req.Protocol, req.BaseUrl, req.Model)
 

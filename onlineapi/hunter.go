@@ -36,13 +36,13 @@ type HunterResponse struct {
 
 // HunterData Hunter数据
 type HunterData struct {
-	AccountType string        `json:"account_type"`
-	Total       int           `json:"total"`
-	Time        int           `json:"time"`
-	Arr         []HunterAsset `json:"arr"`
-	ConsumeQuota string       `json:"consume_quota"`
-	RestQuota    string       `json:"rest_quota"`
-	SyntaxPrompt string       `json:"syntax_prompt"`
+	AccountType  string        `json:"account_type"`
+	Total        int           `json:"total"`
+	Time         int           `json:"time"`
+	Arr          []HunterAsset `json:"arr"`
+	ConsumeQuota string        `json:"consume_quota"`
+	RestQuota    string        `json:"rest_quota"`
+	SyntaxPrompt string        `json:"syntax_prompt"`
 }
 
 // HunterAsset Hunter资产
@@ -61,17 +61,17 @@ type HunterAsset struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	} `json:"component"`
-	OS          string `json:"os"`
-	Company     string `json:"company"`
-	Number      string `json:"number"`
-	Country     string `json:"country"`
-	Province    string `json:"province"`
-	City        string `json:"city"`
-	UpdatedAt   string `json:"updated_at"`
-	IsWeb       string `json:"is_web"`
-	AsOrg       string `json:"as_org"`
-	ISP         string `json:"isp"`
-	Banner      string `json:"banner"`
+	OS        string `json:"os"`
+	Company   string `json:"company"`
+	Number    string `json:"number"`
+	Country   string `json:"country"`
+	Province  string `json:"province"`
+	City      string `json:"city"`
+	UpdatedAt string `json:"updated_at"`
+	IsWeb     string `json:"is_web"`
+	AsOrg     string `json:"as_org"`
+	ISP       string `json:"isp"`
+	Banner    string `json:"banner"`
 }
 
 // Search 搜索

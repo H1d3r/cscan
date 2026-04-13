@@ -21,12 +21,12 @@ type DirScanResultListReq struct {
 	Url        string `json:"url"`
 	Path       string `json:"path"`
 	StatusCode int    `json:"statusCode"`
-	SizeMin    *int64 `json:"sizeMin"`    // 响应大小最小值
-	SizeMax    *int64 `json:"sizeMax"`    // 响应大小最大值
+	SizeMin    *int64 `json:"sizeMin"` // 响应大小最小值
+	SizeMax    *int64 `json:"sizeMax"` // 响应大小最大值
 	Page       int    `json:"page"`
 	PageSize   int    `json:"pageSize"`
-	SortField  string `json:"sortField"`  // 排序字段: statusCode, contentLength, contentWords, contentLines, duration
-	SortOrder  string `json:"sortOrder"`  // 排序方向: asc, desc
+	SortField  string `json:"sortField"`      // 排序字段: statusCode, contentLength, contentWords, contentLines, duration
+	SortOrder  string `json:"sortOrder"`      // 排序方向: asc, desc
 	Query      string `json:"query,optional"` // 全局搜索关键词
 }
 

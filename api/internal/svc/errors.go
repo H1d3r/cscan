@@ -94,7 +94,7 @@ type BaseHandler struct{}
 // WriteError writes an error response in a consistent format
 func (h *BaseHandler) WriteError(w http.ResponseWriter, err error) {
 	var apiErr *APIError
-	
+
 	// Convert different error types to APIError
 	switch e := err.(type) {
 	case *APIError:

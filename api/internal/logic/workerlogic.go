@@ -62,9 +62,9 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 	list := make([]types.Worker, 0, len(keys))
 	for _, key := range keys {
 		// 跳过非Worker状态的键（如 cscan:worker:control:*, cscan:worker:install_key 等）
-		if key == "cscan:worker:install_key" || 
-		   strings.Contains(key, ":control:") ||
-		   strings.Contains(key, ":register:") {
+		if key == "cscan:worker:install_key" ||
+			strings.Contains(key, ":control:") ||
+			strings.Contains(key, ":register:") {
 			continue
 		}
 

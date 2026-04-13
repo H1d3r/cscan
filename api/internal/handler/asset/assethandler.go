@@ -140,7 +140,6 @@ func AssetImportHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-
 // AssetFingerprintsListHandler 获取资产中已识别的指纹列表
 func AssetFingerprintsListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

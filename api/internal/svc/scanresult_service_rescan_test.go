@@ -381,7 +381,6 @@ func TestRescanScenario_ExistingResultsArchived(t *testing.T) {
 		}
 	})
 
-
 	t.Run("Rescan after long time period", func(t *testing.T) {
 		// Simulate first scan long ago
 		firstScan := &SaveScanResultsReq{
@@ -527,13 +526,13 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 	t.Run("Merge preserves user-modified labels", func(t *testing.T) {
 		// Simulate existing asset with user-modified labels
 		existingAsset := &model.Asset{
-			Id:        primitive.NewObjectID(),
-			Authority: "https://example.com:443",
-			Host:      "example.com",
-			Port:      443,
-			Labels:    []string{"production", "critical", "monitored"},
-			Memo:      "Important production server",
-			ColorTag:  "red",
+			Id:         primitive.NewObjectID(),
+			Authority:  "https://example.com:443",
+			Host:       "example.com",
+			Port:       443,
+			Labels:     []string{"production", "critical", "monitored"},
+			Memo:       "Important production server",
+			ColorTag:   "red",
 			UpdateTime: time.Now().Add(-24 * time.Hour),
 		}
 
@@ -575,13 +574,13 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 	t.Run("Merge preserves empty user-modified fields", func(t *testing.T) {
 		// Simulate existing asset with empty user-modified fields
 		existingAsset := &model.Asset{
-			Id:        primitive.NewObjectID(),
-			Authority: "https://api.example.com:443",
-			Host:      "api.example.com",
-			Port:      443,
-			Labels:    []string{},  // Empty labels
-			Memo:      "",          // Empty memo
-			ColorTag:  "",          // Empty color tag
+			Id:         primitive.NewObjectID(),
+			Authority:  "https://api.example.com:443",
+			Host:       "api.example.com",
+			Port:       443,
+			Labels:     []string{}, // Empty labels
+			Memo:       "",         // Empty memo
+			ColorTag:   "",         // Empty color tag
 			UpdateTime: time.Now().Add(-48 * time.Hour),
 		}
 
@@ -682,7 +681,6 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 		}
 	})
 
-
 	t.Run("Merge preserves risk assessment fields", func(t *testing.T) {
 		// Simulate existing asset with risk assessment
 		existingAsset := &model.Asset{
@@ -775,9 +773,9 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 	})
 
 	t.Run("Merge preserves timestamp fields except update_time", func(t *testing.T) {
-		createTime := time.Now().Add(-365 * 24 * time.Hour)        // 1 year ago
-		lastStatusChange := time.Now().Add(-30 * 24 * time.Hour)   // 30 days ago
-		lastUpdateTime := time.Now().Add(-7 * 24 * time.Hour)      // 7 days ago
+		createTime := time.Now().Add(-365 * 24 * time.Hour)      // 1 year ago
+		lastStatusChange := time.Now().Add(-30 * 24 * time.Hour) // 30 days ago
+		lastUpdateTime := time.Now().Add(-7 * 24 * time.Hour)    // 7 days ago
 
 		// Simulate existing asset with various timestamps
 		existingAsset := &model.Asset{
@@ -822,11 +820,11 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 		// Simulate existing asset with memo containing special characters
 		specialMemo := "Server with special chars: <script>alert('test')</script> & \"quotes\" 'apostrophes' 中文字符"
 		existingAsset := &model.Asset{
-			Id:        primitive.NewObjectID(),
-			Authority: "https://special.example.com:443",
-			Host:      "special.example.com",
-			Port:      443,
-			Memo:      specialMemo,
+			Id:         primitive.NewObjectID(),
+			Authority:  "https://special.example.com:443",
+			Host:       "special.example.com",
+			Port:       443,
+			Memo:       specialMemo,
 			UpdateTime: time.Now().Add(-24 * time.Hour),
 		}
 
@@ -868,11 +866,11 @@ func TestRescanScenario_MergeBehavior(t *testing.T) {
 			"backup:enabled",
 		}
 		existingAsset := &model.Asset{
-			Id:        primitive.NewObjectID(),
-			Authority: "https://complex.example.com:443",
-			Host:      "complex.example.com",
-			Port:      443,
-			Labels:    complexLabels,
+			Id:         primitive.NewObjectID(),
+			Authority:  "https://complex.example.com:443",
+			Host:       "complex.example.com",
+			Port:       443,
+			Labels:     complexLabels,
 			UpdateTime: time.Now().Add(-24 * time.Hour),
 		}
 

@@ -18,11 +18,11 @@ type CronTask struct {
 	CronSpec     string       `json:"cronSpec"`     // Cron表达式 (scheduleType=cron时使用)
 	ScheduleTime string       `json:"scheduleTime"` // 指定执行时间 (scheduleType=once时使用)
 	WorkspaceId  string       `json:"workspaceId"`
-	MainTaskId   string       `json:"mainTaskId"`  // 关联的任务ID
-	TaskName     string       `json:"taskName"`    // 关联的任务名称
-	Target       string       `json:"target"`      // 扫描目标（从任务复制）
-	Config       string       `json:"config"`      // 任务配置（从任务复制）
-	Status       string       `json:"status"`      // enable/disable
+	MainTaskId   string       `json:"mainTaskId"` // 关联的任务ID
+	TaskName     string       `json:"taskName"`   // 关联的任务名称
+	Target       string       `json:"target"`     // 扫描目标（从任务复制）
+	Config       string       `json:"config"`     // 任务配置（从任务复制）
+	Status       string       `json:"status"`     // enable/disable
 	LastRunTime  string       `json:"lastRunTime"`
 	NextRunTime  string       `json:"nextRunTime"`
 	EntryId      cron.EntryID `json:"-"`
@@ -174,12 +174,12 @@ func (m *CronManager) startTask(task *CronTask) {
 		if err != nil {
 			return
 		}
-		
+
 		// 如果时间已过，不启动
 		if scheduleTime.Before(time.Now()) {
 			return
 		}
-		
+
 		// 使用定时器在指定时间执行
 		duration := time.Until(scheduleTime)
 		go func(t *CronTask) {

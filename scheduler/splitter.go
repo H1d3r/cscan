@@ -1,8 +1,8 @@
 package scheduler
 
 import (
+	"cscan/scanner"
 	"fmt"
-	"net"
 	"strings"
 )
 
@@ -17,7 +17,7 @@ type ChunkConfig struct {
 // DefaultChunkConfig 默认分片配置
 func DefaultChunkConfig() *ChunkConfig {
 	return &ChunkConfig{
-		MaxTargetsPerChunk: 30,  // 默认每个分片30个目标
+		MaxTargetsPerChunk: 30, // 默认每个分片30个目标
 		EnableChunking:     true,
 		MinChunkSize:       10,  // 最小10个目标
 		MaxChunkSize:       100, // 最大100个目标
@@ -34,7 +34,7 @@ func NewTaskSplitter(config *ChunkConfig) *TaskSplitter {
 	if config == nil {
 		config = DefaultChunkConfig()
 	}
-	
+
 	// 验证配置参数
 	if config.MaxTargetsPerChunk <= 0 {
 		config.MaxTargetsPerChunk = 30
@@ -48,7 +48,7 @@ func NewTaskSplitter(config *ChunkConfig) *TaskSplitter {
 	if config.MinChunkSize > config.MaxChunkSize {
 		config.MinChunkSize = config.MaxChunkSize
 	}
-	
+
 	return &TaskSplitter{config: config}
 }
 
@@ -80,7 +80,7 @@ func (s *TaskSplitter) SplitTask(taskId, target string, taskConfig map[string]in
 	}
 
 	totalTargets := len(allTargets)
-	
+
 	// 检查是否需要拆分
 	needSplit := s.config.EnableChunking && totalTargets > s.config.MaxTargetsPerChunk
 
@@ -225,137 +225,12 @@ func (s *TaskSplitter) estimateExecutionTime(targetCount int, taskConfig map[str
 
 // parseAllTargets 解析所有目标（展开CIDR和IP范围）
 func (s *TaskSplitter) parseAllTargets(target string) ([]string, error) {
-	var targets []string
-	var errors []string
-	
-	lines := strings.Split(target, "\n")
-
-	for lineNum, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		// CIDR格式
-		if strings.Contains(line, "/") {
-			ips, err := s.expandCIDR(line)
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("行%d: CIDR解析失败 '%s': %v", lineNum+1, line, err))
-				continue
-			}
-			targets = append(targets, ips...)
-		} else if s.isIPRange(line) {
-			// IP范围格式
-			ips, err := s.expandIPRange(line)
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("行%d: IP范围解析失败 '%s': %v", lineNum+1, line, err))
-				continue
-			}
-			targets = append(targets, ips...)
-		} else {
-			// 单个IP或域名
-			targets = append(targets, line)
-		}
+	parser := scanner.NewTargetParser()
+	targets := parser.ExpandAll(target)
+	if len(targets) == 0 {
+		return []string{}, fmt.Errorf("没有在此输入中解析到有效的扫描目标或IP")
 	}
-
-	if len(errors) > 0 {
-		return targets, fmt.Errorf("目标解析错误: %s", strings.Join(errors, "; "))
-	}
-
 	return targets, nil
-}
-
-// isIPRange 判断是否是IP范围格式
-func (s *TaskSplitter) isIPRange(line string) bool {
-	if !strings.Contains(line, "-") {
-		return false
-	}
-	
-	parts := strings.Split(line, "-")
-	if len(parts) != 2 {
-		return false
-	}
-	
-	// 检查两部分都是有效的IP地址
-	return net.ParseIP(strings.TrimSpace(parts[0])) != nil && 
-		   net.ParseIP(strings.TrimSpace(parts[1])) != nil
-}
-
-// expandCIDR 展开CIDR
-func (s *TaskSplitter) expandCIDR(cidr string) ([]string, error) {
-	var ips []string
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil, fmt.Errorf("无效的CIDR格式: %v", err)
-	}
-
-	// 限制CIDR展开的最大IP数量，防止内存溢出
-	maxIPs := 10000
-	count := 0
-
-	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip) && count < maxIPs; s.incIP(ip) {
-		ips = append(ips, ip.String())
-		count++
-	}
-
-	// 移除网络地址和广播地址
-	if len(ips) > 2 {
-		ips = ips[1 : len(ips)-1]
-	}
-
-	if count >= maxIPs {
-		return ips, fmt.Errorf("CIDR %s 包含的IP数量过多（>%d），已截断", cidr, maxIPs)
-	}
-
-	return ips, nil
-}
-
-// expandIPRange 展开IP范围
-func (s *TaskSplitter) expandIPRange(ipRange string) ([]string, error) {
-	var ips []string
-	parts := strings.Split(ipRange, "-")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("无效的IP范围格式")
-	}
-
-	startIP := net.ParseIP(strings.TrimSpace(parts[0]))
-	endIP := net.ParseIP(strings.TrimSpace(parts[1]))
-	if startIP == nil || endIP == nil {
-		return nil, fmt.Errorf("无效的IP地址")
-	}
-
-	// 限制IP范围展开的最大数量
-	maxIPs := 10000
-	count := 0
-
-	// 复制起始IP，避免修改原始值
-	ip := make(net.IP, len(startIP))
-	copy(ip, startIP)
-
-	for ; !ip.Equal(endIP) && count < maxIPs; s.incIP(ip) {
-		ips = append(ips, ip.String())
-		count++
-	}
-	
-	if count < maxIPs {
-		ips = append(ips, endIP.String())
-	}
-
-	if count >= maxIPs {
-		return ips, fmt.Errorf("IP范围 %s 包含的IP数量过多（>%d），已截断", ipRange, maxIPs)
-	}
-
-	return ips, nil
-}
-
-// incIP IP自增
-func (s *TaskSplitter) incIP(ip net.IP) {
-	for j := len(ip) - 1; j >= 0; j-- {
-		ip[j]++
-		if ip[j] > 0 {
-			break
-		}
-	}
 }
 
 // GetSplitPreview 获取拆分预览（不实际拆分）
@@ -367,7 +242,7 @@ func (s *TaskSplitter) GetSplitPreview(target string, taskConfig map[string]inte
 
 	totalTargets := len(allTargets)
 	needSplit := s.config.EnableChunking && totalTargets > s.config.MaxTargetsPerChunk
-	
+
 	chunkSize := s.calculateOptimalChunkSize(totalTargets)
 	chunkCount := 1
 	if needSplit {
@@ -421,27 +296,27 @@ func ValidateChunkConfig(config *ChunkConfig) error {
 	if config == nil {
 		return fmt.Errorf("分片配置不能为空")
 	}
-	
+
 	if config.MaxTargetsPerChunk <= 0 {
 		return fmt.Errorf("每个分片的最大目标数必须大于0")
 	}
-	
+
 	if config.MinChunkSize <= 0 {
 		return fmt.Errorf("最小分片大小必须大于0")
 	}
-	
+
 	if config.MaxChunkSize <= 0 {
 		return fmt.Errorf("最大分片大小必须大于0")
 	}
-	
+
 	if config.MinChunkSize > config.MaxChunkSize {
 		return fmt.Errorf("最小分片大小不能大于最大分片大小")
 	}
-	
+
 	if config.MaxTargetsPerChunk > config.MaxChunkSize {
 		return fmt.Errorf("每个分片的最大目标数不能大于最大分片大小")
 	}
-	
+
 	return nil
 }
 
@@ -467,19 +342,19 @@ func (s *TargetSplitter) SplitTargets(target string) []string {
 		MinChunkSize:       10,
 		MaxChunkSize:       s.batchSize * 2,
 	}
-	
+
 	splitter := NewTaskSplitter(config)
 	result, err := splitter.SplitTask("", target, nil)
 	if err != nil || !result.NeedSplit {
 		return []string{target}
 	}
-	
+
 	var batches []string
 	for _, chunk := range result.Chunks {
 		batch := strings.Join(chunk.Targets, "\n")
 		batches = append(batches, batch)
 	}
-	
+
 	return batches
 }
 

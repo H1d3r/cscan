@@ -16,7 +16,7 @@ type ScanJobModel struct {
 // NewScanJobModel creates a new ScanJobModel
 func NewScanJobModel(db *mongo.Database, workspaceId string) *ScanJobModel {
 	coll := db.Collection(workspaceId + "_scanjob")
-	
+
 	// Create indexes
 	ctx := context.Background()
 	indexes := []mongo.IndexModel{
@@ -26,7 +26,7 @@ func NewScanJobModel(db *mongo.Database, workspaceId string) *ScanJobModel {
 		{Keys: bson.D{{Key: "org_id", Value: 1}}},
 	}
 	coll.Indexes().CreateMany(ctx, indexes)
-	
+
 	return &ScanJobModel{
 		BaseModel: NewBaseModel[ScanJob](coll),
 	}

@@ -408,7 +408,7 @@ func TestProperty7_APIEndpointBackwardCompatibility(t *testing.T) {
 			}
 
 			endpoint := ExpectedEndpoints[endpointIndex]
-			
+
 			// Verify endpoint has valid HTTP method
 			validMethods := map[string]bool{
 				http.MethodGet:    true,

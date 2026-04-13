@@ -1,8 +1,8 @@
 package scanner
 
 import (
-	"cscan/pkg/utils"
 	"context"
+	"cscan/pkg/utils"
 	"fmt"
 	"net"
 	"sync"
@@ -23,7 +23,7 @@ func NewPortScanner() *PortScanner {
 
 // PortScanOptions 端口扫描选项
 type PortScanOptions struct {
-	Tool          string `json:"tool"`          // tcp, masscan, nmap
+	Tool          string `json:"tool"` // tcp, masscan, nmap
 	Ports         string `json:"ports"`
 	Rate          int    `json:"rate"`
 	Timeout       int    `json:"timeout"`

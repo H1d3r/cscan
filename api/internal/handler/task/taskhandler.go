@@ -259,7 +259,7 @@ func TaskStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// MainTaskUpdateHandler 更新任务 
+// MainTaskUpdateHandler 更新任务
 func MainTaskUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.MainTaskUpdateReq
@@ -279,7 +279,7 @@ func MainTaskUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// GetTaskLogsHandler 获取任务日志 
+// GetTaskLogsHandler 获取任务日志
 func GetTaskLogsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.GetTaskLogsReq
@@ -298,7 +298,7 @@ func GetTaskLogsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// TaskLogsStreamHandler SSE实时任务日志推送 
+// TaskLogsStreamHandler SSE实时任务日志推送
 func TaskLogsStreamHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskId := r.URL.Query().Get("taskId")

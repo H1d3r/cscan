@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
-	"strconv"
 
 	"github.com/ffuf/ffuf/v2/pkg/ffuf"
 	"github.com/ffuf/ffuf/v2/pkg/filter"
@@ -160,18 +160,18 @@ func newCscanOutput(conf *ffuf.Config) *cscanOutput {
 	}
 }
 
-func (o *cscanOutput) Banner()                                   {}
-func (o *cscanOutput) Finalize() error                           { return nil }
-func (o *cscanOutput) Progress(status ffuf.Progress)             {}
-func (o *cscanOutput) Info(infostring string)                    {}
-func (o *cscanOutput) Error(errstring string)                    {}
-func (o *cscanOutput) Raw(output string)                         {}
-func (o *cscanOutput) Warning(warnstring string)                 {}
-func (o *cscanOutput) PrintResult(res ffuf.Result)               {}
-func (o *cscanOutput) SaveFile(filename, format string) error    { return nil }
-func (o *cscanOutput) Reset()                                    {}
-func (o *cscanOutput) Cycle()                                    {}
-func (o *cscanOutput) SetCurrentResults(results []ffuf.Result)   { o.results = results }
+func (o *cscanOutput) Banner()                                 {}
+func (o *cscanOutput) Finalize() error                         { return nil }
+func (o *cscanOutput) Progress(status ffuf.Progress)           {}
+func (o *cscanOutput) Info(infostring string)                  {}
+func (o *cscanOutput) Error(errstring string)                  {}
+func (o *cscanOutput) Raw(output string)                       {}
+func (o *cscanOutput) Warning(warnstring string)               {}
+func (o *cscanOutput) PrintResult(res ffuf.Result)             {}
+func (o *cscanOutput) SaveFile(filename, format string) error  { return nil }
+func (o *cscanOutput) Reset()                                  {}
+func (o *cscanOutput) Cycle()                                  {}
+func (o *cscanOutput) SetCurrentResults(results []ffuf.Result) { o.results = results }
 
 func (o *cscanOutput) Result(resp ffuf.Response) {
 	o.mu.Lock()

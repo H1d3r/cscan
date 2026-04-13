@@ -32,12 +32,12 @@ func NewHighRiskFilterConfigGetLogic(ctx context.Context, svcCtx *svc.ServiceCon
 func (l *HighRiskFilterConfigGetLogic) HighRiskFilterConfigGet() (*types.HighRiskFilterConfigResp, error) {
 	// 从系统配置集合中获取高危过滤配置
 	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("system_config")
-	
+
 	var result struct {
-		Key    string                    `bson:"key"`
+		Key    string                     `bson:"key"`
 		Config types.HighRiskFilterConfig `bson:"config"`
 	}
-	
+
 	err := collection.FindOne(l.ctx, bson.M{"key": highRiskFilterConfigKey}).Decode(&result)
 	if err != nil {
 		// 如果没有配置，返回默认配置
@@ -53,7 +53,7 @@ func (l *HighRiskFilterConfigGetLogic) HighRiskFilterConfigGet() (*types.HighRis
 			},
 		}, nil
 	}
-	
+
 	return &types.HighRiskFilterConfigResp{
 		Code:   0,
 		Msg:    "success",
@@ -78,7 +78,7 @@ func NewHighRiskFilterConfigSaveLogic(ctx context.Context, svcCtx *svc.ServiceCo
 
 func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.HighRiskFilterConfigSaveReq) (*types.HighRiskFilterConfigResp, error) {
 	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("system_config")
-	
+
 	config := types.HighRiskFilterConfig{
 		Enabled:               req.Enabled,
 		HighRiskFingerprints:  req.HighRiskFingerprints,
@@ -87,7 +87,7 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 		NewAssetNotify:        req.NewAssetNotify,
 		UpdateTime:            time.Now().Format("2006-01-02 15:04:05"),
 	}
-	
+
 	// 确保数组不为nil
 	if config.HighRiskFingerprints == nil {
 		config.HighRiskFingerprints = []string{}
@@ -98,7 +98,7 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 	if config.HighRiskPocSeverities == nil {
 		config.HighRiskPocSeverities = []string{}
 	}
-	
+
 	// 使用upsert更新或插入配置
 	filter := bson.M{"key": highRiskFilterConfigKey}
 	update := bson.M{
@@ -107,7 +107,7 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 			"config": config,
 		},
 	}
-	
+
 	opts := options.Update().SetUpsert(true)
 	_, err := collection.UpdateOne(l.ctx, filter, update, opts)
 	if err != nil {
@@ -116,7 +116,7 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 			Msg:  "保存失败: " + err.Error(),
 		}, nil
 	}
-	
+
 	return &types.HighRiskFilterConfigResp{
 		Code:   0,
 		Msg:    "保存成功",

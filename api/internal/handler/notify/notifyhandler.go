@@ -93,7 +93,6 @@ func NotifyProviderListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-
 // HighRiskFilterConfigGetHandler 获取高危过滤配置
 func HighRiskFilterConfigGetHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

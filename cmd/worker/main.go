@@ -78,7 +78,9 @@ func validateInstallKey(apiServer, key, name string) error {
 			Valid bool   `json:"valid"`
 		}
 		json.Unmarshal(body, &result)
-		if result.Code != 0 || !result.Valid { return fmt.Errorf("validation failed: %s", result.Msg) }
+		if result.Code != 0 || !result.Valid {
+			return fmt.Errorf("validation failed: %s", result.Msg)
+		}
 		return nil
 	}
 	return fmt.Errorf("validation failed after 3 attempts")
@@ -87,12 +89,12 @@ func validateInstallKey(apiServer, key, name string) error {
 func main() {
 	flag.Parse()
 	logx.MustSetup(logx.LogConf{
-			ServiceName: "cscan-worker",
-			Mode:        "console",            // 开启控制台颜色
-			Encoding:    "plain",              // 纯文本格式
-			TimeFormat:  "15:04:05",           // 简洁时间格式
-			Level:       "info",               // 日志级别
-			Stat:        false,                // 关闭资源统计
+		ServiceName: "cscan-worker",
+		Mode:        "console",  // 开启控制台颜色
+		Encoding:    "plain",    // 纯文本格式
+		TimeFormat:  "15:04:05", // 简洁时间格式
+		Level:       "info",     // 日志级别
+		Stat:        false,      // 关闭资源统计
 	})
 	// 禁用额外的统计输出
 	stat.DisableLog()
@@ -133,7 +135,7 @@ func main() {
 
 	// 验证安装密钥
 	if err := validateInstallKey(apiServer, *installKey, name); err != nil {
-	logx.Errorf("❌ Authentication failed: %v", err)
+		logx.Errorf("❌ Authentication failed: %v", err)
 		os.Exit(1)
 	}
 	logx.Info("✅ Identity verified successfully")

@@ -413,8 +413,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		server.AddRoutes(adminRoutes)
 	}
 
-	server.AddRoutes(adminRoutes)
-
 	// Worker控制台路由（需要认证 + 管理员权限）
 	consoleAuthMiddleware := middleware.NewConsoleAuthMiddleware(svcCtx.RedisClient)
 	consoleRoutes := []rest.Route{

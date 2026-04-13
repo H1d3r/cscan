@@ -349,13 +349,13 @@ func truncateError(err error, maxLen int) string {
 
 // 为了兼容性，在ServiceContext中添加这些方法的包装
 type SyncMethods struct {
-	nucleiSync           *NucleiSyncService
-	fingerprintSync      *FingerprintSyncService
-	customImport         *CustomImportService
-	dirscanDictModel     *model.DirScanDictModel
-	subdomainDictModel   *model.SubdomainDictModel
-	httpServiceModel     *model.HttpServiceModel
-	blacklistModel       *model.BlacklistConfigModel
+	nucleiSync         *NucleiSyncService
+	fingerprintSync    *FingerprintSyncService
+	customImport       *CustomImportService
+	dirscanDictModel   *model.DirScanDictModel
+	subdomainDictModel *model.SubdomainDictModel
+	httpServiceModel   *model.HttpServiceModel
+	blacklistModel     *model.BlacklistConfigModel
 }
 
 func NewSyncMethods(nucleiModel *model.NucleiTemplateModel, fpModel *model.FingerprintModel, pocModel *model.CustomPocModel, afpModel *model.ActiveFingerprintModel, dirscanDictModel *model.DirScanDictModel, subdomainDictModel *model.SubdomainDictModel) *SyncMethods {
@@ -574,7 +574,6 @@ func (s *SyncMethods) initBuiltinSubdomainDicts(ctx context.Context) {
 
 	logx.Infof("[SyncMethods] Builtin subdomain dicts initialized: %d imported, %d skipped", totalImported, totalSkipped)
 }
-
 
 // importHttpServiceMappings 从 poc/custom-http 目录导入HTTP服务映射配置
 func (s *SyncMethods) importHttpServiceMappings(ctx context.Context) {

@@ -29,7 +29,6 @@ func main() {
 
 	var c config.Config
 
-	
 	conf.MustLoad(*configFile, &c)
 
 	logx.MustSetup(c.Log)
@@ -57,11 +56,7 @@ func main() {
 	handler.RegisterHandlers(server, svcCtx)
 
 	// 创建任务调度器服务
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     c.Redis.Host,
-		Password: c.Redis.Pass,
-	})
-	schedulerSvc := scheduler.NewSchedulerService(rdb, svcCtx.SyncMethods)
+	schedulerSvc := scheduler.NewSchedulerService(svcCtx.RedisClient, svcCtx.SyncMethods)
 	go schedulerSvc.Start()
 
 	// 启动定时任务执行消息订阅
@@ -133,13 +128,13 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 	// 创建新的 MainTask
 	taskModel := svcCtx.GetMainTaskModel(workspaceId)
 	newTask := &model.MainTask{
-		TaskId:      newTaskId,
-		Name:        fmt.Sprintf("%s (定时)", msg.TaskName),
-		Target:      msg.Target,
-		Config:      msg.Config,
-		Status:      model.TaskStatusCreated,
-		IsCron:      true,
-		CronRule:    msg.CronTaskId,
+		TaskId:   newTaskId,
+		Name:     fmt.Sprintf("%s (定时)", msg.TaskName),
+		Target:   msg.Target,
+		Config:   msg.Config,
+		Status:   model.TaskStatusCreated,
+		IsCron:   true,
+		CronRule: msg.CronTaskId,
 	}
 
 	if err := taskModel.Insert(ctx, newTask); err != nil {
@@ -289,7 +284,6 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 	logx.Infof("Cron task created and pushed: taskId=%s, batches=%d, subTaskCount=%d", newTaskId, len(batches), subTaskCount)
 	return nil
 }
-
 
 // startOrphanedTaskRecovery 启动孤儿任务恢复后台任务
 // 定期检查并恢复卡住的任务（状态为 STARTED 但长时间没有更新的任务）

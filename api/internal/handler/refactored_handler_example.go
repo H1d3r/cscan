@@ -76,7 +76,7 @@ func (h *RefactoredUserHandler) CreateUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	userModel := h.svcCtx.GetStorage().UserModel()
-	
+
 	// Check if user already exists
 	existing, _ := userModel.FindByUsername(r.Context(), req.Username)
 	if existing != nil {
@@ -142,7 +142,7 @@ func (h *RefactoredUserHandler) UpdateUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	userModel := h.svcCtx.GetStorage().UserModel()
-	
+
 	// Find existing user to verify it exists
 	_, err := userModel.FindById(r.Context(), req.Id)
 	if err != nil {
@@ -178,7 +178,7 @@ func (h *RefactoredUserHandler) DeleteUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	userModel := h.svcCtx.GetStorage().UserModel()
-	
+
 	// Verify user exists
 	_, err := userModel.FindById(r.Context(), req.Id)
 	if err != nil {

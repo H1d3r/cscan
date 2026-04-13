@@ -2,25 +2,25 @@ package xerr
 
 // 错误码定义
 const (
-	OK          = 0
-	ParamError  = 400
+	OK           = 0
+	ParamError   = 400
 	Unauthorized = 401
-	Forbidden   = 403
-	NotFound    = 404
-	ServerError = 500
+	Forbidden    = 403
+	NotFound     = 404
+	ServerError  = 500
 
 	// 业务错误码 10000+
-	UserNotFound       = 10001
-	UserPasswordError  = 10002
-	UserDisabled       = 10003
-	TaskNotFound       = 10101
-	ProfileNotFound    = 10102
-	TaskStatusError    = 10103
-	WorkspaceNotFound  = 10201
-	AssetNotFound      = 10301
-	VulNotFound        = 10401
+	UserNotFound        = 10001
+	UserPasswordError   = 10002
+	UserDisabled        = 10003
+	TaskNotFound        = 10101
+	ProfileNotFound     = 10102
+	TaskStatusError     = 10103
+	WorkspaceNotFound   = 10201
+	AssetNotFound       = 10301
+	VulNotFound         = 10401
 	FingerprintNotFound = 10501
-	PocNotFound        = 10601
+	PocNotFound         = 10601
 )
 
 var codeMsg = map[int]string{

@@ -39,13 +39,13 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 1: Create test asset
 	assetModel := model.NewAssetModel(db, workspaceId)
 	testAsset := &model.Asset{
-		Id:        primitive.NewObjectID(),
-		Authority: "example.com:443",
-		Host:      "example.com",
-		Port:      443,
-		Service:   "https",
-		Title:     "Example Site",
-		App:       []string{"nginx"},
+		Id:         primitive.NewObjectID(),
+		Authority:  "example.com:443",
+		Host:       "example.com",
+		Port:       443,
+		Service:    "https",
+		Title:      "Example Site",
+		App:        []string{"nginx"},
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
@@ -94,18 +94,18 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 3: Create vulnerability scan results
 	scanResultModel := model.NewScanResultModel(db, workspaceId)
 	vulnResult := &model.ScanResult{
-		ID:          primitive.NewObjectID(),
-		JobID:       "test-job-1",
-		TargetID:    testAsset.Id.Hex(),
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		RiskScore:   8.5,
-		RiskLevel:   "high",
-		ScanTime:    time.Now(),
-		Version:     1,
-		Created:     time.Now(),
-		Completed:   time.Now(),
+		ID:        primitive.NewObjectID(),
+		JobID:     "test-job-1",
+		TargetID:  testAsset.Id.Hex(),
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		RiskScore: 8.5,
+		RiskLevel: "high",
+		ScanTime:  time.Now(),
+		Version:   1,
+		Created:   time.Now(),
+		Completed: time.Now(),
 		Findings: []model.Finding{
 			{
 				ID:          "CVE-2023-1234",
@@ -200,12 +200,12 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	// Step 1: Create test asset
 	assetModel := model.NewAssetModel(db, workspaceId)
 	testAsset := &model.Asset{
-		Id:        primitive.NewObjectID(),
-		Authority: "rescan.example.com:443",
-		Host:      "rescan.example.com",
-		Port:      443,
-		Service:   "https",
-		Title:     "Rescan Test Site",
+		Id:         primitive.NewObjectID(),
+		Authority:  "rescan.example.com:443",
+		Host:       "rescan.example.com",
+		Port:       443,
+		Service:    "https",
+		Title:      "Rescan Test Site",
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
@@ -330,11 +330,11 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	// Create test asset with scan results
 	assetModel := model.NewAssetModel(db, workspaceId)
 	testAsset := &model.Asset{
-		Id:        primitive.NewObjectID(),
-		Authority: "consistency.example.com:443",
-		Host:      "consistency.example.com",
-		Port:      443,
-		Service:   "https",
+		Id:         primitive.NewObjectID(),
+		Authority:  "consistency.example.com:443",
+		Host:       "consistency.example.com",
+		Port:       443,
+		Service:    "https",
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
@@ -420,11 +420,11 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	// Create test asset
 	assetModel := model.NewAssetModel(db, workspaceId)
 	testAsset := &model.Asset{
-		Id:        primitive.NewObjectID(),
-		Authority: "legacy.example.com:443",
-		Host:      "legacy.example.com",
-		Port:      443,
-		Service:   "https",
+		Id:         primitive.NewObjectID(),
+		Authority:  "legacy.example.com:443",
+		Host:       "legacy.example.com",
+		Port:       443,
+		Service:    "https",
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}

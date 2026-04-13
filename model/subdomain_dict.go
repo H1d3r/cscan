@@ -66,7 +66,6 @@ func (m *SubdomainDictModel) FindAll(ctx context.Context, page, pageSize int) ([
 	return docs, nil
 }
 
-
 func (m *SubdomainDictModel) Count(ctx context.Context) (int64, error) {
 	return m.coll.CountDocuments(ctx, bson.M{})
 }

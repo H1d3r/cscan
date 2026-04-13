@@ -49,9 +49,9 @@ func (l *NotifyConfigListLogic) NotifyConfigList() (resp *types.NotifyConfigList
 		// 转换高危过滤配置
 		if c.HighRiskFilter != nil {
 			item.HighRiskFilter = &types.HighRiskFilter{
-				Enabled:              c.HighRiskFilter.Enabled,
-				HighRiskFingerprints: c.HighRiskFilter.HighRiskFingerprints,
-				HighRiskPorts:        c.HighRiskFilter.HighRiskPorts,
+				Enabled:               c.HighRiskFilter.Enabled,
+				HighRiskFingerprints:  c.HighRiskFilter.HighRiskFingerprints,
+				HighRiskPorts:         c.HighRiskFilter.HighRiskPorts,
 				HighRiskPocSeverities: c.HighRiskFilter.HighRiskPocSeverities,
 			}
 		}
@@ -89,9 +89,9 @@ func (l *NotifyConfigSaveLogic) NotifyConfigSave(req *types.NotifyConfigSaveReq)
 	var highRiskFilter *model.HighRiskFilter
 	if req.HighRiskFilter != nil {
 		highRiskFilter = &model.HighRiskFilter{
-			Enabled:              req.HighRiskFilter.Enabled,
-			HighRiskFingerprints: req.HighRiskFilter.HighRiskFingerprints,
-			HighRiskPorts:        req.HighRiskFilter.HighRiskPorts,
+			Enabled:               req.HighRiskFilter.Enabled,
+			HighRiskFingerprints:  req.HighRiskFilter.HighRiskFingerprints,
+			HighRiskPorts:         req.HighRiskFilter.HighRiskPorts,
 			HighRiskPocSeverities: req.HighRiskFilter.HighRiskPocSeverities,
 		}
 	}

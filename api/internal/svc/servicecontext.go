@@ -33,13 +33,13 @@ type ServiceContext struct {
 	CustomPocModel          *model.CustomPocModel
 	NucleiTemplateModel     *model.NucleiTemplateModel
 	FingerprintModel        *model.FingerprintModel
-	HttpServiceMappingModel  *model.HttpServiceMappingModel
-	HttpServiceModel         *model.HttpServiceModel // 新的HTTP服务设置模型
-	ActiveFingerprintModel   *model.ActiveFingerprintModel
-	CommandHistoryModel      *model.CommandHistoryModel
-	AuditLogModel            *model.AuditLogModel
-	NotifyConfigModel        *model.NotifyConfigModel
-	ScanTemplateModel        *model.ScanTemplateModel
+	HttpServiceMappingModel *model.HttpServiceMappingModel
+	HttpServiceModel        *model.HttpServiceModel // 新的HTTP服务设置模型
+	ActiveFingerprintModel  *model.ActiveFingerprintModel
+	CommandHistoryModel     *model.CommandHistoryModel
+	AuditLogModel           *model.AuditLogModel
+	NotifyConfigModel       *model.NotifyConfigModel
+	ScanTemplateModel       *model.ScanTemplateModel
 
 	// 调度器
 	Scheduler *scheduler.Scheduler
@@ -66,12 +66,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	// 配置MongoDB连接池和超时
 	clientOptions := options.Client().
 		ApplyURI(c.Mongo.Uri).
-		SetMaxPoolSize(100).                    // 最大连接数
-		SetMinPoolSize(10).                     // 最小连接数
-		SetMaxConnIdleTime(30 * time.Second).   // 空闲连接超时
-		SetConnectTimeout(10 * time.Second).    // 连接超时
+		SetMaxPoolSize(100).                         // 最大连接数
+		SetMinPoolSize(10).                          // 最小连接数
+		SetMaxConnIdleTime(30 * time.Second).        // 空闲连接超时
+		SetConnectTimeout(10 * time.Second).         // 连接超时
 		SetServerSelectionTimeout(10 * time.Second). // 服务器选择超时
-		SetSocketTimeout(30 * time.Second)      // Socket超时
+		SetSocketTimeout(30 * time.Second)           // Socket超时
 
 	mongoClient, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
@@ -92,13 +92,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Addr:         c.Redis.Host,
 		Password:     c.Redis.Pass,
 		DB:           0,
-		PoolSize:     100,                    // 连接池大小
-		MinIdleConns: 10,                     // 最小空闲连接数
-		MaxRetries:   3,                      // 最大重试次数
-		DialTimeout:  5 * time.Second,        // 连接超时
-		ReadTimeout:  3 * time.Second,        // 读超时
-		WriteTimeout: 3 * time.Second,        // 写超时
-		PoolTimeout:  4 * time.Second,        // 连接池超时
+		PoolSize:     100,             // 连接池大小
+		MinIdleConns: 10,              // 最小空闲连接数
+		MaxRetries:   3,               // 最大重试次数
+		DialTimeout:  5 * time.Second, // 连接超时
+		ReadTimeout:  3 * time.Second, // 读超时
+		WriteTimeout: 3 * time.Second, // 写超时
+		PoolTimeout:  4 * time.Second, // 连接池超时
 	})
 
 	// 测试 Redis 连接
@@ -131,13 +131,13 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CustomPocModel:          model.NewCustomPocModel(mongoDB),
 		NucleiTemplateModel:     model.NewNucleiTemplateModel(mongoDB),
 		FingerprintModel:        model.NewFingerprintModel(mongoDB),
-		HttpServiceMappingModel:  model.NewHttpServiceMappingModel(mongoDB),
-		HttpServiceModel:         model.NewHttpServiceModel(mongoDB),
-		ActiveFingerprintModel:   model.NewActiveFingerprintModel(mongoDB),
-		CommandHistoryModel:      model.NewCommandHistoryModel(mongoDB),
-		AuditLogModel:            model.NewAuditLogModel(mongoDB),
-		NotifyConfigModel:        model.NewNotifyConfigModel(mongoDB),
-		ScanTemplateModel:        model.NewScanTemplateModel(mongoDB),
+		HttpServiceMappingModel: model.NewHttpServiceMappingModel(mongoDB),
+		HttpServiceModel:        model.NewHttpServiceModel(mongoDB),
+		ActiveFingerprintModel:  model.NewActiveFingerprintModel(mongoDB),
+		CommandHistoryModel:     model.NewCommandHistoryModel(mongoDB),
+		AuditLogModel:           model.NewAuditLogModel(mongoDB),
+		NotifyConfigModel:       model.NewNotifyConfigModel(mongoDB),
+		ScanTemplateModel:       model.NewScanTemplateModel(mongoDB),
 		Scheduler:               scheduler.NewScheduler(rdb),
 		ScanResultService:       NewScanResultService(mongoDB),
 		HistoryService:          NewHistoryService(mongoDB),
@@ -223,7 +223,6 @@ func (s *ServiceContext) RefreshTemplateCache() {
 
 	logx.Infof("[NucleiCache] Refreshed: %d categories, stats: %v", len(s.TemplateCategories), s.TemplateStats)
 }
-
 
 // SyncNucleiTemplates 同步Nuclei模板
 func (s *ServiceContext) SyncNucleiTemplates() {

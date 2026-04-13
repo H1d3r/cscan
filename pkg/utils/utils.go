@@ -5,7 +5,6 @@ import (
 	"net"
 	"regexp"
 	"strings"
-	"time"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -50,7 +49,8 @@ func GetRootDomain(domain string) string {
 
 // IsValidDomain 检查是否是有效的域名
 func IsValidDomain(domain string) bool {
-	domainRegex := regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+	// 支持前置 *. 的泛解析，支持连字符和内部下划线，但必须以字母数字结尾（下划线可作为非TLD标签开头）
+	domainRegex := regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9_]([a-zA-Z0-9\-_]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
 	return domainRegex.MatchString(domain)
 }
 
@@ -69,7 +69,6 @@ func UniqueStrings(slice []string) []string {
 
 // RandomInt 生成指定范围内的随机整数 [min, max]
 func RandomInt(min, max int) int {
-	rand.Seed(time.Now().UnixNano())
 	return rand.Intn(max-min+1) + min
 }
 

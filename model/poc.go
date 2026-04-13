@@ -14,10 +14,10 @@ import (
 // 用于基于Wappalyzer识别的应用自动选择对应的POC
 type TagMapping struct {
 	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	AppName     string             `bson:"app_name" json:"appName"`         // Wappalyzer识别的应用名称
-	NucleiTags  []string           `bson:"nuclei_tags" json:"nucleiTags"`   // 对应的Nuclei标签
-	Description string             `bson:"description" json:"description"`  // 描述
-	Enabled     bool               `bson:"enabled" json:"enabled"`          // 是否启用
+	AppName     string             `bson:"app_name" json:"appName"`        // Wappalyzer识别的应用名称
+	NucleiTags  []string           `bson:"nuclei_tags" json:"nucleiTags"`  // 对应的Nuclei标签
+	Description string             `bson:"description" json:"description"` // 描述
+	Enabled     bool               `bson:"enabled" json:"enabled"`         // 是否启用
 	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
 }
@@ -337,25 +337,25 @@ func (m *CustomPocModel) FindByIds(ctx context.Context, ids []string) ([]CustomP
 // NucleiTemplate Nuclei默认模板（从模板目录同步）
 type NucleiTemplate struct {
 	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TemplateId  string             `bson:"template_id" json:"templateId"`   // 模板ID
-	Name        string             `bson:"name" json:"name"`                // 模板名称
-	Author      string             `bson:"author" json:"author"`            // 作者
-	Severity    string             `bson:"severity" json:"severity"`        // 严重级别: critical/high/medium/low/info/unknown
-	Description string             `bson:"description" json:"description"`  // 描述
-	Tags        []string           `bson:"tags" json:"tags"`                // 标签
-	Category    string             `bson:"category" json:"category"`        // 分类(目录名)
-	FilePath    string             `bson:"file_path" json:"filePath"`       // 相对文件路径
-	Content     string             `bson:"content" json:"content"`          // YAML内容
-	Enabled     bool               `bson:"enabled" json:"enabled"`          // 是否启用
-	SyncTime    time.Time          `bson:"sync_time" json:"syncTime"`       // 同步时间
+	TemplateId  string             `bson:"template_id" json:"templateId"`  // 模板ID
+	Name        string             `bson:"name" json:"name"`               // 模板名称
+	Author      string             `bson:"author" json:"author"`           // 作者
+	Severity    string             `bson:"severity" json:"severity"`       // 严重级别: critical/high/medium/low/info/unknown
+	Description string             `bson:"description" json:"description"` // 描述
+	Tags        []string           `bson:"tags" json:"tags"`               // 标签
+	Category    string             `bson:"category" json:"category"`       // 分类(目录名)
+	FilePath    string             `bson:"file_path" json:"filePath"`      // 相对文件路径
+	Content     string             `bson:"content" json:"content"`         // YAML内容
+	Enabled     bool               `bson:"enabled" json:"enabled"`         // 是否启用
+	SyncTime    time.Time          `bson:"sync_time" json:"syncTime"`      // 同步时间
 
 	// 漏洞知识库字段
 	CvssScore   float64  `bson:"cvss_score,omitempty" json:"cvssScore,omitempty"`     // CVSS评分
 	CvssMetrics string   `bson:"cvss_metrics,omitempty" json:"cvssMetrics,omitempty"` // CVSS向量
 	CveIds      []string `bson:"cve_ids,omitempty" json:"cveIds,omitempty"`           // CVE编号列表
 	CweIds      []string `bson:"cwe_ids,omitempty" json:"cweIds,omitempty"`           // CWE编号列表
-	References  []string `bson:"references,omitempty" json:"references,omitempty"`   // 参考链接
-	Remediation string   `bson:"remediation,omitempty" json:"remediation,omitempty"` // 修复建议
+	References  []string `bson:"references,omitempty" json:"references,omitempty"`    // 参考链接
+	Remediation string   `bson:"remediation,omitempty" json:"remediation,omitempty"`  // 修复建议
 }
 
 // NucleiTemplateModel Nuclei模板模型
@@ -384,7 +384,7 @@ func (m *NucleiTemplateModel) Upsert(ctx context.Context, doc *NucleiTemplate) e
 		doc.Id = primitive.NewObjectID()
 	}
 	doc.SyncTime = time.Now()
-	
+
 	filter := bson.M{"template_id": doc.TemplateId}
 	update := bson.M{"$set": doc}
 	opts := options.Update().SetUpsert(true)
@@ -396,7 +396,7 @@ func (m *NucleiTemplateModel) BulkUpsert(ctx context.Context, docs []*NucleiTemp
 	if len(docs) == 0 {
 		return nil
 	}
-	
+
 	var models []mongo.WriteModel
 	now := time.Now()
 	for _, doc := range docs {
@@ -404,12 +404,12 @@ func (m *NucleiTemplateModel) BulkUpsert(ctx context.Context, docs []*NucleiTemp
 			doc.Id = primitive.NewObjectID()
 		}
 		doc.SyncTime = now
-		
+
 		filter := bson.M{"template_id": doc.TemplateId}
 		update := bson.M{"$set": doc}
 		models = append(models, mongo.NewUpdateOneModel().SetFilter(filter).SetUpdate(update).SetUpsert(true))
 	}
-	
+
 	opts := options.BulkWrite().SetOrdered(false)
 	_, err := m.coll.BulkWrite(ctx, models, opts)
 	return err
@@ -472,18 +472,18 @@ func (m *NucleiTemplateModel) GetTags(ctx context.Context, limit int) ([]string,
 		{"$group": bson.M{"_id": "$tags", "count": bson.M{"$sum": 1}}},
 		{"$sort": bson.M{"count": -1}},
 	}
-	
+
 	// 只有当limit > 0时才添加限制
 	if limit > 0 {
 		pipeline = append(pipeline, bson.M{"$limit": limit})
 	}
-	
+
 	cursor, err := m.coll.Aggregate(ctx, pipeline)
 	if err != nil {
 		return nil, err
 	}
 	defer cursor.Close(ctx)
-	
+
 	var results []struct {
 		Id    string `bson:"_id"`
 		Count int    `bson:"count"`
@@ -491,7 +491,7 @@ func (m *NucleiTemplateModel) GetTags(ctx context.Context, limit int) ([]string,
 	if err = cursor.All(ctx, &results); err != nil {
 		return nil, err
 	}
-	
+
 	tags := make([]string, 0, len(results))
 	for _, r := range results {
 		if r.Id != "" { // 过滤空标签

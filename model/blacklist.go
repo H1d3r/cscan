@@ -13,8 +13,8 @@ import (
 // BlacklistConfig 全局黑名单配置
 type BlacklistConfig struct {
 	Id         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Rules      string             `bson:"rules" json:"rules"`           // 黑名单规则，每行一条
-	Status     string             `bson:"status" json:"status"`         // enable/disable
+	Rules      string             `bson:"rules" json:"rules"`   // 黑名单规则，每行一条
+	Status     string             `bson:"status" json:"status"` // enable/disable
 	CreateTime time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime time.Time          `bson:"update_time" json:"updateTime"`
 }

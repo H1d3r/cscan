@@ -52,6 +52,31 @@
         </el-form-item>
       </el-form>
     </div>
+
+    <!-- 首次登录强制修改密码弹窗 -->
+    <el-dialog
+      v-model="resetDialogVisible"
+      :title="$t('auth.forceResetTitle', '首次登录请修改密码')"
+      width="400px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+      destroy-on-close
+    >
+      <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-width="auto" label-position="top">
+        <el-form-item :label="$t('auth.newPassword', '新密码')" prop="newPassword">
+          <el-input v-model="resetForm.newPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item :label="$t('auth.confirmPassword', '确认密码')" prop="confirmPassword">
+          <el-input v-model="resetForm.confirmPassword" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button type="primary" :loading="resetLoading" @click="handleResetSubmit" style="width: 100%;">
+          {{ $t('common.confirm', '确认修改进入系统') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -64,6 +89,7 @@ import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
 import { Sunny, Moon, Position } from '@element-plus/icons-vue'
+import { resetUserPassword } from '@/api/auth'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -83,12 +109,46 @@ const rules = computed(() => ({
   password: [{ required: true, message: t('auth.pleaseEnterPassword'), trigger: 'blur' }]
 }))
 
+// 强制修密码逻辑
+const resetDialogVisible = ref(false)
+const resetLoading = ref(false)
+const resetFormRef = ref()
+const resetForm = reactive({
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const resetRules = computed(() => {
+  const validatePass2 = (rule, value, callback) => {
+    if (value === '') {
+      callback(new Error(t('auth.pleaseConfirmPassword', '请再次输入密码')))
+    } else if (value !== resetForm.newPassword) {
+      callback(new Error(t('auth.passwordMismatch', '两次输入密码不一致')))
+    } else {
+      callback()
+    }
+  }
+  return {
+    newPassword: [
+      { required: true, message: t('auth.pleaseEnterNewPassword', '请输入新密码'), trigger: 'blur' },
+      { min: 6, message: t('auth.passwordMinLengths', '密码长度不能小于6位'), trigger: 'blur' }
+    ],
+    confirmPassword: [
+      { required: true, validator: validatePass2, trigger: 'blur' }
+    ]
+  }
+})
+
 async function handleLogin() {
   await formRef.value.validate()
   loading.value = true
   try {
     const res = await userStore.login(form)
     if (res.code === 0) {
+      if (res.needChangePwd) {
+        resetDialogVisible.value = true
+        return // 中断后续的弹窗和页面跳转，等待密码重置
+      }
       ElMessage.success(t('auth.loginSuccess'))
       router.push('/dashboard')
     } else {
@@ -96,6 +156,29 @@ async function handleLogin() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+async function handleResetSubmit() {
+  await resetFormRef.value.validate()
+  resetLoading.value = true
+  try {
+    const res = await resetUserPassword({
+      id: userStore.userId,
+      newPassword: resetForm.newPassword
+    })
+    if (res.code === 0) {
+      ElMessage.success(t('auth.passwordResetSuccess', '密码修改成功，欢迎进入系统'))
+      resetDialogVisible.value = false
+      router.push('/dashboard')
+    } else {
+      ElMessage.error(res.msg || t('auth.passwordResetFailed', '密码修改失败'))
+    }
+  } catch (error) {
+    console.error(error)
+    ElMessage.error(t('auth.passwordResetFailed', '请求失败'))
+  } finally {
+    resetLoading.value = false
   }
 }
 </script>

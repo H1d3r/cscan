@@ -13,12 +13,12 @@ import (
 // NotifyConfig 通知配置
 type NotifyConfig struct {
 	Id              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name            string             `bson:"name" json:"name"`                         // 配置名称
-	Provider        string             `bson:"provider" json:"provider"`                 // 提供者类型: smtp, feishu, dingtalk, wecom, slack, discord, telegram, teams, gotify, webhook
-	Config          string             `bson:"config" json:"config"`                     // JSON格式的配置详情
-	Status          string             `bson:"status" json:"status"`                     // enable/disable
-	MessageTemplate string             `bson:"message_template" json:"messageTemplate"`  // 自定义消息模板
-	WebURL          string             `bson:"web_url" json:"webUrl"`                    // 前端URL，用于生成报告链接
+	Name            string             `bson:"name" json:"name"`                        // 配置名称
+	Provider        string             `bson:"provider" json:"provider"`                // 提供者类型: smtp, feishu, dingtalk, wecom, slack, discord, telegram, teams, gotify, webhook
+	Config          string             `bson:"config" json:"config"`                    // JSON格式的配置详情
+	Status          string             `bson:"status" json:"status"`                    // enable/disable
+	MessageTemplate string             `bson:"message_template" json:"messageTemplate"` // 自定义消息模板
+	WebURL          string             `bson:"web_url" json:"webUrl"`                   // 前端URL，用于生成报告链接
 	CreateTime      time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime      time.Time          `bson:"update_time" json:"updateTime"`
 	// 高危过滤配置
@@ -27,11 +27,11 @@ type NotifyConfig struct {
 
 // HighRiskFilter 高危过滤配置
 type HighRiskFilter struct {
-	Enabled            bool     `bson:"enabled" json:"enabled"`                         // 是否启用高危过滤，false时全部通知
-	HighRiskFingerprints []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"` // 高危指纹列表
-	HighRiskPorts        []int    `bson:"high_risk_ports" json:"highRiskPorts"`               // 高危端口列表
+	Enabled               bool     `bson:"enabled" json:"enabled"`                                // 是否启用高危过滤，false时全部通知
+	HighRiskFingerprints  []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"`    // 高危指纹列表
+	HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`                  // 高危端口列表
 	HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"` // 高危POC严重级别: critical, high
-	NewAssetNotify       bool     `bson:"new_asset_notify" json:"newAssetNotify"`             // 新资产发现时通知
+	NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`                // 新资产发现时通知
 }
 
 // NotifyConfigModel 通知配置模型

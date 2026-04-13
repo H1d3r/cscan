@@ -167,7 +167,7 @@ func TestIconListReturnsIconDataScreenshotAndUpdateTime(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = db.Collection(workspaceId + "_asset").UpdateOne(ctx, bson.M{"_id": assetId}, bson.M{"$set": bson.M{
+	_, err = db.Collection(workspaceId+"_asset").UpdateOne(ctx, bson.M{"_id": assetId}, bson.M{"$set": bson.M{
 		"create_time": createTime,
 		"update_time": updateTime,
 	}})
@@ -503,7 +503,7 @@ func cleanupCollections(t *testing.T, db *mongo.Database, workspaceIds ...string
 	for _, workspaceId := range workspaceIds {
 		_, err := db.Collection("workspace").DeleteMany(context.Background(), bson.M{"_id": mustObjectID(t, workspaceId)})
 		require.NoError(t, err)
-		_, err = db.Collection(workspaceId + "_asset").DeleteMany(context.Background(), bson.M{})
+		_, err = db.Collection(workspaceId+"_asset").DeleteMany(context.Background(), bson.M{})
 		require.NoError(t, err)
 	}
 	_, _ = db.Collection("all_asset").DeleteMany(context.Background(), bson.M{})
