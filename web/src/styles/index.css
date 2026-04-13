@@ -865,6 +865,59 @@ html.dark .el-tabs--border-card {
   color: var(--el-color-primary) !important;
 }
 
+/* ============================================ */
+/* 资产页面左侧标签页左对齐修复 */
+/* ============================================ */
+.el-tabs.asset-left-tabs .el-tabs__header.is-left {
+  margin-right: 0 !important;
+  background-color: hsl(var(--muted) / 0.3) !important;
+  padding: 16px 0 !important;
+  border-right: 1px solid hsl(var(--border)) !important;
+  min-width: auto !important;
+  width: auto !important;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__item.is-left {
+  text-align: left !important;
+  justify-content: flex-start !important;
+  height: 48px !important;
+  line-height: 48px !important;
+  padding: 0 16px 0 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  transition: all 0.2s;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__item.is-left.is-active {
+  background-color: hsl(var(--primary) / 0.1) !important;
+  font-weight: 600 !important;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__item.is-left:hover:not(.is-active) {
+  background-color: hsl(var(--muted) / 0.8) !important;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__active-bar.is-left {
+  right: 0 !important;
+  left: auto !important;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__item.is-left .left-tab-label {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 10px;
+  font-size: 14px;
+  width: 100%;
+}
+
+.el-tabs.asset-left-tabs .el-tabs__item.is-left .left-tab-label .el-icon {
+  font-size: 18px !important;
+}
+
+
+
 .el-tabs__active-bar {
   background-color: var(--el-color-primary) !important;
 }
