@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -190,41 +189,42 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 
 	// 解析目标
-	targets := parseTargets(config.Target)
-	if len(config.Targets) > 0 {
-		targets = append(targets, config.Targets...)
+	targetParseResult := ParseTargetsForPortScan(config.Target)
+	for _, t := range config.Targets {
+		res := ParseTargetsForPortScan(t)
+		targetParseResult.WithPort = append(targetParseResult.WithPort, res.WithPort...)
+		targetParseResult.WithoutPort = append(targetParseResult.WithoutPort, res.WithoutPort...)
 	}
 
-	// 优化对nmap的目标支持：去除带有端口的目标（如47.97.246.253:5601）和不必要的schema/路径
 	var cleanTargets []string
 	seenTarget := make(map[string]bool)
-	for _, t := range targets {
-		// 移除 schema
-		if strings.HasPrefix(t, "http://") {
-			t = t[7:]
-		} else if strings.HasPrefix(t, "https://") {
-			t = t[8:]
-		}
 
-		// 移除路径
-		if idx := strings.Index(t, "/"); idx != -1 {
-			t = t[:idx]
-		}
-
-		// 去除端口
-		if host, _, err := net.SplitHostPort(t); err == nil {
-			t = host
-		} else if strings.Contains(t, ":") && !strings.Contains(t, "]") {
-			// 简单的IPv4带端口处理
-			t = strings.Split(t, ":")[0]
-		}
-
-		if t != "" && !seenTarget[t] {
-			seenTarget[t] = true
-			cleanTargets = append(cleanTargets, t)
+	for _, host := range targetParseResult.WithoutPort {
+		if !seenTarget[host] {
+			seenTarget[host] = true
+			cleanTargets = append(cleanTargets, host)
 		}
 	}
-	targets = cleanTargets
+
+	ports := parsePorts(opts.Ports)
+	portSet := make(map[int]bool)
+	for _, p := range ports {
+		portSet[p] = true
+	}
+
+	for _, taskWithPort := range targetParseResult.WithPort {
+		if !seenTarget[taskWithPort.Host] {
+			seenTarget[taskWithPort.Host] = true
+			cleanTargets = append(cleanTargets, taskWithPort.Host)
+		}
+		if !portSet[taskWithPort.Port] {
+			portSet[taskWithPort.Port] = true
+			ports = append(ports, taskWithPort.Port)
+		}
+	}
+
+	targets := cleanTargets
+	opts.Ports = portsToString(ports)
 
 	// 执行nmap扫描
 	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnProgress, logInfo, logWarn, logError)
