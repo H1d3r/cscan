@@ -7,6 +7,8 @@ import (
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
 
+	"cscan/pkg/response"
+
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
@@ -16,9 +18,9 @@ func NotifyConfigListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		l := logic.NewNotifyConfigListLogic(r.Context(), svcCtx)
 		resp, err := l.NotifyConfigList()
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -28,16 +30,16 @@ func NotifyConfigSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.NotifyConfigSaveReq
 		if err := httpx.Parse(r, &req); err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.ParamError(w, err.Error())
 			return
 		}
 
 		l := logic.NewNotifyConfigSaveLogic(r.Context(), svcCtx)
 		resp, err := l.NotifyConfigSave(&req)
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -47,16 +49,16 @@ func NotifyConfigDeleteHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.NotifyConfigDeleteReq
 		if err := httpx.Parse(r, &req); err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.ParamError(w, err.Error())
 			return
 		}
 
 		l := logic.NewNotifyConfigDeleteLogic(r.Context(), svcCtx)
 		resp, err := l.NotifyConfigDelete(&req)
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -66,16 +68,16 @@ func NotifyConfigTestHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.NotifyConfigTestReq
 		if err := httpx.Parse(r, &req); err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.ParamError(w, err.Error())
 			return
 		}
 
 		l := logic.NewNotifyConfigTestLogic(r.Context(), svcCtx)
 		resp, err := l.NotifyConfigTest(&req)
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -86,9 +88,9 @@ func NotifyProviderListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		l := logic.NewNotifyProviderListLogic(r.Context(), svcCtx)
 		resp, err := l.NotifyProviderList()
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -99,9 +101,9 @@ func HighRiskFilterConfigGetHandler(svcCtx *svc.ServiceContext) http.HandlerFunc
 		l := logic.NewHighRiskFilterConfigGetLogic(r.Context(), svcCtx)
 		resp, err := l.HighRiskFilterConfigGet()
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
@@ -111,16 +113,16 @@ func HighRiskFilterConfigSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req types.HighRiskFilterConfigSaveReq
 		if err := httpx.Parse(r, &req); err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.ParamError(w, err.Error())
 			return
 		}
 
 		l := logic.NewHighRiskFilterConfigSaveLogic(r.Context(), svcCtx)
 		resp, err := l.HighRiskFilterConfigSave(&req)
 		if err != nil {
-			httpx.ErrorCtx(r.Context(), w, err)
+			response.Error(w, err)
 		} else {
-			httpx.OkJsonCtx(r.Context(), w, resp)
+			response.Success(w, resp)
 		}
 	}
 }
