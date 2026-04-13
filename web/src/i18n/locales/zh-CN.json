@@ -241,7 +241,7 @@
     "domainManagement": "域名管理",
     "ipManagement": "IP管理",
     "vulManagement": "漏洞管理",
-    "dirManagement": "目录管理",
+    "dirManagement": "目录",
     "dirScanHint": "基于字典的目录路径发现",
     "assetGroups": "资产分组",
     "assetInventory": "资产清单",
@@ -575,7 +575,7 @@
       "version": "版本",
       "detailedComparison": "详细比较信息"
     },
-    "comprehensive": "综合资产",
+    "comprehensive": "综合",
     "ips": "IP",
     "sites": "站点",
     "loadFailed": "加载失败",
