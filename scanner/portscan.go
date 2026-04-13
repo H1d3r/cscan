@@ -64,13 +64,44 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 
 	// 解析目标
-	targets := parseTargets(config.Target)
-	if len(config.Targets) > 0 {
-		targets = append(targets, config.Targets...)
+	targetParseResult := ParseTargetsForPortScan(config.Target)
+	for _, t := range config.Targets {
+		res := ParseTargetsForPortScan(t)
+		targetParseResult.WithPort = append(targetParseResult.WithPort, res.WithPort...)
+		targetParseResult.WithoutPort = append(targetParseResult.WithoutPort, res.WithoutPort...)
 	}
 
-	// 解析端口
+	var cleanTargets []string
+	seenHost := make(map[string]bool)
+
+	for _, host := range targetParseResult.WithoutPort {
+		if !seenHost[host] {
+			seenHost[host] = true
+			cleanTargets = append(cleanTargets, host)
+		}
+	}
+
+	// 解析配置自带的端口
 	ports := parsePorts(opts.Ports)
+	portSet := make(map[int]bool)
+	for _, p := range ports {
+		portSet[p] = true
+	}
+
+	// 合并附带口
+	for _, taskWithPort := range targetParseResult.WithPort {
+		if !seenHost[taskWithPort.Host] {
+			seenHost[taskWithPort.Host] = true
+			cleanTargets = append(cleanTargets, taskWithPort.Host)
+		}
+		if !portSet[taskWithPort.Port] {
+			portSet[taskWithPort.Port] = true
+			ports = append(ports, taskWithPort.Port)
+		}
+	}
+
+	targets := cleanTargets
+	opts.Ports = portsToString(ports)
 
 	// 执行扫描
 	assets := s.scanPorts(ctx, targets, ports, opts)
