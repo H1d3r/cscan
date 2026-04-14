@@ -90,7 +90,11 @@
           <div class="stat-title">App</div>
           <div v-for="item in stat.topApp" :key="'app-'+item.name" class="stat-item" @click="quickFilter('app', item.name)">
             <span class="stat-count">{{ item.count }}</span>
-            <span class="stat-name">{{ item.name }}</span>
+            <span class="stat-name">
+              <el-tooltip :content="item.name.match(/\((.*)\)/)?.[1] || ''" placement="top" :disabled="!item.name.includes('(')">
+                <span class="app-main">{{ item.name.replace(/\((.*)\)/, '') }}</span>
+              </el-tooltip>
+            </span>
           </div>
         </div>
         <div class="stat-column">
@@ -104,7 +108,7 @@
               :title="item.iconHash"
               @error="handleIconError($event)"
             />
-            <span class="stat-name" :title="item.iconHash">{{ item.iconHash }}</span>
+            <span v-else class="stat-icon-placeholder"></span>
           </div>
         </div>
       </div>
@@ -1249,6 +1253,10 @@ function querySearch(queryString, cb, ...fields) {
           height: 16px;
           color: hsl(var(--muted-foreground));
           font-size: 14px;
+        }
+
+        .app-main {
+          cursor: pointer;
         }
       }
     }

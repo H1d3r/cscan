@@ -192,18 +192,8 @@
           <div class="form-hint">{{ $t('cronTask.onceExecHint') }}</div>
         </el-form-item>
 
-        <!-- 新建时提示：复用关联任务配置 -->
-        <el-alert
-          v-if="!isEdit && form.mainTaskId"
-          :title="$t('cronTask.reuseConfigHint')"
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 15px"
-        />
-
-        <!-- 扫描配置折叠面板 - 仅编辑时显示 -->
-        <el-collapse v-if="isEdit" v-model="activeCollapse" class="config-collapse">
+        <!-- 扫描配置折叠面板 -->
+        <el-collapse v-if="form.mainTaskId" v-model="activeCollapse" class="config-collapse">
           <!-- 子域名扫描 -->
           <el-collapse-item name="domainscan">
             <template #title>
@@ -1293,6 +1283,15 @@ function onTaskSelect(taskId) {
     // 自动取个名字（如果没有名字的话）
     if (!form.name && task.name) {
       form.name = `${task.name}-定时扫描`
+    }
+    // 解析并回填关联任务的扫描配置
+    if (task.config) {
+      try {
+        const configObj = JSON.parse(task.config)
+        applyConfig(configObj)
+      } catch (e) {
+        console.error('parseTaskConfigFailed', e)
+      }
     }
   }
 }

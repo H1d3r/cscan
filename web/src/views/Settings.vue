@@ -909,7 +909,7 @@ async function loadNotifyProviders() {
   try {
     const res = await getNotifyProviders()
     if (res.code === 0) {
-      notifyProviders.value = res.list || []
+      notifyProviders.value = res.data?.list || res.list || []
     }
   } catch (error) {
     console.error('加载通知提供者失败', error)
@@ -921,7 +921,8 @@ async function loadNotifyConfigList() {
   try {
     const res = await getNotifyConfigList()
     if (res.code === 0) {
-      notifyConfigList.value = (res.list || []).map(item => ({ ...item, testing: false }))
+      const list = res.data?.list || res.list || []
+      notifyConfigList.value = list.map(item => ({ ...item, testing: false }))
     }
   } finally {
     notifyLoading.value = false

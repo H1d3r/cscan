@@ -310,7 +310,7 @@ const showFilters = ref(false)
 const showMoreFilters = ref(false)
 const activeTab = ref('all')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(5)
 const selectedAssets = ref([])
 
 // 高级过滤器（暂存，点击"应用"后才生效）

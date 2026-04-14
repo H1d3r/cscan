@@ -167,14 +167,16 @@ async function loadExistingFingerprints() {
   try {
     // 获取扫描结果中已识别的指纹
     const res = await request.post('/asset/fingerprints/list', { limit: 500 })
-    if (res.code === 0 && res.list) {
-      existingFingerprints.value = [...new Set(res.list.map(item => item.name || item))]
+    const fingerprintList = res.data?.list || res.list || []
+    if (res.code === 0 && fingerprintList.length > 0) {
+      existingFingerprints.value = [...new Set(fingerprintList.map(item => item.name || item))]
     }
     
     // 获取指纹库中的指纹名称
     const fpRes = await request.post('/fingerprint/list', { page: 1, pageSize: 500 })
-    if (fpRes.code === 0 && fpRes.list) {
-      customFingerprints.value = [...new Set(fpRes.list.map(item => item.name))]
+    const fpList = fpRes.data?.list || fpRes.list || []
+    if (fpRes.code === 0 && fpList.length > 0) {
+      customFingerprints.value = [...new Set(fpList.map(item => item.name))]
     }
   } catch (e) {
     console.error('Load fingerprints error:', e)
@@ -188,8 +190,9 @@ async function loadExistingPorts() {
   portLoading.value = true
   try {
     const res = await request.post('/asset/ports/stats', {})
-    if (res.code === 0 && res.list) {
-      existingPorts.value = res.list.map(item => ({
+    const portList = res.data?.list || res.list || []
+    if (res.code === 0 && portList.length > 0) {
+      existingPorts.value = portList.map(item => ({
         label: `${item.port} (${item.service || '未知'}) - ${item.count}个`,
         value: item.port
       }))
@@ -205,12 +208,13 @@ async function loadExistingPorts() {
 async function loadFilterConfig() {
   try {
     const res = await request.post('/notify/highrisk/config/get', {})
-    if (res.code === 0 && res.config) {
-      filterConfig.enabled = res.config.enabled || false
-      filterConfig.highRiskFingerprints = res.config.highRiskFingerprints || []
-      filterConfig.highRiskPorts = res.config.highRiskPorts || []
-      filterConfig.highRiskPocSeverities = res.config.highRiskPocSeverities || []
-      filterConfig.newAssetNotify = res.config.newAssetNotify || false
+    const config = res.data?.config || res.config
+    if (res.code === 0 && config) {
+      filterConfig.enabled = config.enabled || false
+      filterConfig.highRiskFingerprints = config.highRiskFingerprints || []
+      filterConfig.highRiskPorts = config.highRiskPorts || []
+      filterConfig.highRiskPocSeverities = config.highRiskPocSeverities || []
+      filterConfig.newAssetNotify = config.newAssetNotify || false
     }
   } catch (e) {
     console.error('Load filter config error:', e)
@@ -230,6 +234,7 @@ async function saveConfig() {
     })
     if (res.code === 0) {
       ElMessage.success(t('common.operationSuccess'))
+      loadFilterConfig()
     } else {
       ElMessage.error(res.msg || t('common.operationFailed'))
     }

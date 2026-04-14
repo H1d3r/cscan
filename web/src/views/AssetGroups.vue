@@ -226,7 +226,7 @@ const loadAssetGroups = async () => {
   try {
     const response = await getAssetGroups({
       page: 1,
-      pageSize: 100
+      pageSize: 5
     })
     if (response.code === 0) {
       assetGroups.value = response.list || []
