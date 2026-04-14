@@ -225,6 +225,20 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 		}
 		// ===============================================
 
+		// ========= 当保存带端口的域名资产时，删除同名的无端口资产 =========
+		// 这样可以避免同一个域名出现"www.example.com"和"www.example.com:80"两条记录
+		if asset.Port > 0 && !utils.IsIPAddress(asset.Host) {
+			// 查找同名的无端口资产
+			noPortAsset, err := assetModel.FindByAuthorityOnly(l.ctx, asset.Host)
+			if err == nil && noPortAsset != nil {
+				// 删除无端口的同名资产
+				if deleteErr := assetModel.Delete(l.ctx, noPortAsset.Id.Hex()); deleteErr == nil {
+					l.Logger.Infof("已删除同名无端口资产: %s (被 %s:%d 替代)", asset.Host, asset.Host, asset.Port)
+				}
+			}
+		}
+		// ===============================================
+
 		// 检查是否已存在
 		var existing *model.Asset
 		var err error

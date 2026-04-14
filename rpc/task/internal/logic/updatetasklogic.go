@@ -278,6 +278,16 @@ func (l *UpdateTaskLogic) sendTaskNotification(workspaceId, mainTaskId, status s
 		}
 	}
 
+	// 加载全局高危过滤配置并合并到没有自带 HighRiskFilter 的配置项
+	globalHighRiskFilter := l.loadGlobalHighRiskFilter()
+	if globalHighRiskFilter != nil && globalHighRiskFilter.Enabled {
+		for i := range configItems {
+			if configItems[i].HighRiskFilter == nil {
+				configItems[i].HighRiskFilter = globalHighRiskFilter
+			}
+		}
+	}
+
 	// 构建报告URL
 	reportURL := ""
 	if webURL != "" {
@@ -412,4 +422,40 @@ func (l *UpdateTaskLogic) collectHighRiskInfo(workspaceId, mainTaskId string, co
 	}
 
 	return info
+}
+
+// loadGlobalHighRiskFilter 从 system_config 集合加载全局高危过滤配置
+func (l *UpdateTaskLogic) loadGlobalHighRiskFilter() *notify.HighRiskFilter {
+	collection := l.svcCtx.MongoDB.Collection("system_config")
+
+	var result struct {
+		Key    string        `bson:"key"`
+		Config bson.Raw      `bson:"config"`
+	}
+
+	err := collection.FindOne(l.ctx, bson.M{"key": "high_risk_filter_config"}).Decode(&result)
+	if err != nil {
+		return nil
+	}
+
+	var config struct {
+		Enabled               bool     `bson:"enabled" json:"enabled"`
+		HighRiskFingerprints  []string `bson:"high_risk_fingerprints" json:"highRiskFingerprints"`
+		HighRiskPorts         []int    `bson:"high_risk_ports" json:"highRiskPorts"`
+		HighRiskPocSeverities []string `bson:"high_risk_poc_severities" json:"highRiskPocSeverities"`
+		NewAssetNotify        bool     `bson:"new_asset_notify" json:"newAssetNotify"`
+	}
+
+	if err := bson.Unmarshal(result.Config, &config); err != nil {
+		l.Logger.Errorf("loadGlobalHighRiskFilter: failed to unmarshal config: %v", err)
+		return nil
+	}
+
+	return &notify.HighRiskFilter{
+		Enabled:               config.Enabled,
+		HighRiskFingerprints:  config.HighRiskFingerprints,
+		HighRiskPorts:         config.HighRiskPorts,
+		HighRiskPocSeverities: config.HighRiskPocSeverities,
+		NewAssetNotify:        config.NewAssetNotify,
+	}
 }
