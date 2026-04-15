@@ -1,23 +1,32 @@
-# CSCAN
+<div align="center">
+  <img src="images/logo.png" width="80" alt="CSCAN" />
+</div>
 
-**企业级分布式网络资产扫描平台** | Go-Zero + Vue3
+<div align="center">
 
-[中文](README.md) | [English](README_EN.md)
+**CSCAN-企业级分布式网络资产扫描平台**
 
-[![Go](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat&logo=go)](https://golang.org)
-[![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat&logo=vue.js)](https://vuejs.org)
+[![Go](https://img.shields.io/badge/Go-1.25.1-00ADD8?style=flat-square&logo=go)](https://golang.org)
+[![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-2.32-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-2.33-green)](VERSION)
 
-## 平台展示
+[中文](README.md) · [English](README_EN.md)
 
-|               控制台                |             资产检索              | 指纹管理 |            漏洞库             |             节点监控              |             通知订阅              |
-|:--------------------------------:|:-----------------------------:| :---: |:--------------------------:|:-----------------------------:|:-----------------------------:|
-| <img src="images/dashboard.png"> | <img src="images/filter.png"> | <img src="images/finger.png"> | <img src="images/poc.png"> | <img src="images/worker.png"> | <img src="images/notice.png"> |
+</div>
+
+---
+
+| 控制台 | 资产检索 | 指纹管理 | 漏洞库 | 节点监控 | 通知订阅 |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| <img src="images/dashboard.png" width="200"> | <img src="images/filter.png" width="200"> | <img src="images/finger.png" width="200"> | <img src="images/poc.png" width="200"> | <img src="images/worker.png" width="200"> | <img src="images/notice.png" width="200"> |
+
+---
 
 ## 快速开始
 
 ```bash
+# 克隆项目
 git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 
@@ -28,9 +37,11 @@ chmod +x cscan.sh && ./cscan.sh
 .\cscan.bat
 ```
 
-访问 `https://ip:3443`，默认账号 `admin / 123456`
+> 访问 `https://ip:3443`，默认账号 `admin / 123456`
+> 
+> 执行扫描前需先部署 Worker 节点
 
-> ⚠️ 执行扫描前需先部署 Worker 节点
+---
 
 ## 本地开发
 
@@ -49,6 +60,8 @@ cd web ; npm install ; npm run dev
 go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 ```
 
+---
+
 ## Worker 部署
 
 ```bash
@@ -58,6 +71,8 @@ go run cmd/worker/main.go -k <install_key> -s http://localhost:8888
 # Windows
 cscan-worker.exe -k <install_key> -s http://<api_host>:8888
 ```
+
+---
 
 ## License
 
