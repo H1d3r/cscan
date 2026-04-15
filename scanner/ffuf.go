@@ -545,7 +545,7 @@ func (s *FFufScanner) convertResults(target string, results []ffuf.Result) []*As
 func (s *FFufScanner) collectTargets(config *ScanConfig, logInfo, logDebug func(string, ...interface{})) []string {
 	var targets []string
 
-	if config.Assets != nil && len(config.Assets) > 0 {
+	if len(config.Assets) > 0 {
 		for _, asset := range config.Assets {
 			if asset.IsHTTP && IsHTTPService(asset.Service, asset.Port) {
 				scheme := "http"

@@ -113,7 +113,7 @@ func (s *URLFinderScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanR
 
 	// 获取目标列表
 	var targets []string
-	if config.Assets != nil && len(config.Assets) > 0 {
+	if len(config.Assets) > 0 {
 		for _, asset := range config.Assets {
 			// 同时检查 IsHTTP 字段和端口是否为常见HTTP端口
 			if asset.IsHTTP && IsHTTPService(asset.Service, asset.Port) {

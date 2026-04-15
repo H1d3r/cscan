@@ -553,9 +553,10 @@ func extractQuotedValue(s string) string {
 // unescapeQuotes 将转义的引号还原
 // 例如：id=\"swagger-ui 还原为 id="swagger-ui
 func unescapeQuotes(s string, quoteChar byte) string {
-	if quoteChar == '"' {
+	switch quoteChar {
+	case '"':
 		return strings.ReplaceAll(s, `\"`, `"`)
-	} else if quoteChar == '\'' {
+	case '\'':
 		return strings.ReplaceAll(s, `\'`, `'`)
 	}
 	return s

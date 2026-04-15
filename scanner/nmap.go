@@ -1,8 +1,10 @@
 package scanner
 
 import (
-	"context"
 	"bytes"
+	"cscan/pkg/geolocation"
+	"cscan/pkg/utils"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -238,7 +240,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 
 // runNmapWithLogger 运行nmap（带日志回调）
 // 优化为每个端口一个进程，通过并发控制降低扫描影响
-func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, opts *NmapOptions, onProgress func(int, string), logInfo, logWarn, logError logFunc) []*Asset {
+func (s *NmapScanner) runNmapWithLogger(ctx context.Context, targets []string, opts *NmapOptions, onProgress func(int, string), logInfo, _ logFunc, logError logFunc) []*Asset {
 	var assets []*Asset
 	var mu sync.Mutex
 
@@ -400,6 +402,22 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 					Port:      nmapPort.PortID,
 					Category:  category,
 					Service:   nmapPort.Service.Name,
+				}
+
+				// 填充已解析的 IP 和地理位置
+				if ip != "" && !utils.IsIPAddress(hostStr) {
+					locStr, _ := ipLocator.Locate(ip)
+					location := geolocation.NormalizeLocation(locStr)
+					if strings.Contains(ip, ":") {
+						asset.IPV6 = []IPInfo{{IP: ip, Location: location}}
+					} else {
+						asset.IPV4 = []IPInfo{{IP: ip, Location: location}}
+					}
+				} else if ip != "" && utils.IsIPAddress(hostStr) {
+					// 原始目标本身就是 IP
+					locStr, _ := ipLocator.Locate(ip)
+					location := geolocation.NormalizeLocation(locStr)
+					asset.IPV4 = []IPInfo{{IP: ip, Location: location}}
 				}
 				// 如果有产品信息，添加到App
 				if nmapPort.Service.Product != "" {

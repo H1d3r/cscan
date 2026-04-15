@@ -369,6 +369,18 @@ func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, p
 			// Host 字段：保持原始输入（域名或 IP）
 			host := originalHost
 
+			// 预先查询 IP 地理位置（同一 IP 只查询一次，避免多端口重复查询）
+			var resolvedLocation string
+			if resolvedIP != "" {
+				locStr, err := ipLocator.Locate(resolvedIP)
+				resolvedLocation = geolocation.NormalizeLocation(locStr)
+				logInfo("IP地理位置查询: ip=%s, raw=%s, normalized=%s, err=%v", resolvedIP, locStr, resolvedLocation, err)
+			} else if originalIsIP {
+				locStr, err := ipLocator.Locate(originalHost)
+				resolvedLocation = geolocation.NormalizeLocation(locStr)
+				logInfo("IP地理位置查询(originalIP): ip=%s, raw=%s, normalized=%s, err=%v", originalHost, locStr, resolvedLocation, err)
+			}
+
 			for _, port := range hr.Ports {
 				asset := &Asset{
 					Authority: utils.BuildTargetWithPort(host, port.Port),
@@ -377,25 +389,17 @@ func (s *NaabuScanner) scanSingleTargetWithLogger(ctx context.Context, target, p
 					Category:  getCategory(host),
 				}
 
-				// 填充 IP 信息
+				// 填充 IP 信息（使用预先查询的地理位置结果）
 				if resolvedIP != "" {
-					// 查询 IP 地理位置
-					locStr, err := ipLocator.Locate(resolvedIP)
-					location := geolocation.NormalizeLocation(locStr)
-					logInfo("IP地理位置查询: ip=%s, raw=%s, normalized=%s, err=%v", resolvedIP, locStr, location, err)
 					if strings.Contains(resolvedIP, ":") {
 						// IPv6
-						asset.IPV6 = []IPInfo{{IP: resolvedIP, Location: location}}
+						asset.IPV6 = []IPInfo{{IP: resolvedIP, Location: resolvedLocation}}
 					} else {
 						// IPv4
-						asset.IPV4 = []IPInfo{{IP: resolvedIP, Location: location}}
+						asset.IPV4 = []IPInfo{{IP: resolvedIP, Location: resolvedLocation}}
 					}
 				} else if originalIsIP {
-					// 原始输入本身就是 IP，直接使用
-					locStr, err := ipLocator.Locate(originalHost)
-					location := geolocation.NormalizeLocation(locStr)
-					logInfo("IP地理位置查询(originalIP): ip=%s, raw=%s, normalized=%s, err=%v", originalHost, locStr, location, err)
-					asset.IPV4 = []IPInfo{{IP: originalHost, Location: location}}
+					asset.IPV4 = []IPInfo{{IP: originalHost, Location: resolvedLocation}}
 				}
 
 				assets = append(assets, asset)

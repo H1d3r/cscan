@@ -46,11 +46,12 @@ func ParseTargetsForPortScan(target string) *TargetParseResult {
 			port := info.Port
 			if port == 0 {
 				// 根据协议推断端口
-				if info.Protocol == "https" {
-					port = 443
-				} else if info.Protocol == "http" {
-					port = 80
-				}
+			switch info.Protocol {
+			case "https":
+				port = 443
+			case "http":
+				port = 80
+			}
 			}
 			if port > 0 {
 				result.WithPort = append(result.WithPort, &ParsedTarget{
@@ -113,11 +114,12 @@ func ParseTargetsForFingerprint(target string) []*ParsedTarget {
 
 		// 如果没有端口，根据协议推断
 		if port == 0 {
-			if protocol == "https" {
+			switch protocol {
+			case "https":
 				port = 443
-			} else if protocol == "http" {
+			case "http":
 				port = 80
-			} else {
+			default:
 				// 默认使用 80 端口
 				port = 80
 				protocol = "http"

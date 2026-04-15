@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"cscan/pkg/geolocation"
 	"fmt"
 	"net"
 	"strings"
@@ -84,7 +85,7 @@ func parseDomains(target string) []string {
 }
 
 // enumerateSubdomains 子域名枚举
-func (s *DomainScanner) enumerateSubdomains(ctx context.Context, domain string, opts *DomainScanOptions) []string {
+func (s *DomainScanner) enumerateSubdomains(_ context.Context, domain string, _ *DomainScanOptions) []string {
 	var subdomains []string
 
 	// 常见子域名前缀
@@ -141,12 +142,16 @@ func (s *DomainScanner) resolveDomains(ctx context.Context, domains []string, co
 						Category:  "domain",
 					}
 
-					// 分类IPv4和IPv6
+					// 分类IPv4和IPv6，并查询地理位置
 					for _, ip := range ips {
 						if ip4 := ip.To4(); ip4 != nil {
-							asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String()})
+							locStr, _ := ipLocator.Locate(ip4.String())
+							location := geolocation.NormalizeLocation(locStr)
+							asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: location})
 						} else {
-							asset.IPV6 = append(asset.IPV6, IPInfo{IP: ip.String()})
+							locStr, _ := ipLocator.Locate(ip.String())
+							location := geolocation.NormalizeLocation(locStr)
+							asset.IPV6 = append(asset.IPV6, IPInfo{IP: ip.String(), Location: location})
 						}
 					}
 

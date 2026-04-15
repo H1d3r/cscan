@@ -2,9 +2,11 @@ package scanner
 
 import (
 	"context"
+	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -119,6 +121,45 @@ func (s *PortScanner) scanPorts(ctx context.Context, targets []string, ports []i
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// 预先解析域名的 IP 和地理位置（避免每个端口重复解析）
+	type targetInfo struct {
+		target string
+		ipv4   []IPInfo
+		ipv6   []IPInfo
+	}
+	targetIPMap := make(map[string]*targetInfo)
+	for _, target := range targets {
+		if utils.IsIPAddress(target) {
+			// 目标本身就是 IP
+			locStr, _ := ipLocator.Locate(target)
+			location := geolocation.NormalizeLocation(locStr)
+			if strings.Contains(target, ":") {
+				targetIPMap[target] = &targetInfo{target: target, ipv6: []IPInfo{{IP: target, Location: location}}}
+			} else {
+				targetIPMap[target] = &targetInfo{target: target, ipv4: []IPInfo{{IP: target, Location: location}}}
+			}
+			continue
+		}
+		// 域名：DNS 解析
+		ips, err := net.LookupIP(target)
+		if err != nil || len(ips) == 0 {
+			continue
+		}
+		info := &targetInfo{target: target}
+		for _, ip := range ips {
+			if ip4 := ip.To4(); ip4 != nil {
+				locStr, _ := ipLocator.Locate(ip4.String())
+				location := geolocation.NormalizeLocation(locStr)
+				info.ipv4 = append(info.ipv4, IPInfo{IP: ip4.String(), Location: location})
+			} else {
+				locStr, _ := ipLocator.Locate(ip.String())
+				location := geolocation.NormalizeLocation(locStr)
+				info.ipv6 = append(info.ipv6, IPInfo{IP: ip.String(), Location: location})
+			}
+		}
+		targetIPMap[target] = info
+	}
+
 	// 创建任务通道
 	taskChan := make(chan struct {
 		target string
@@ -141,6 +182,11 @@ func (s *PortScanner) scanPorts(ctx context.Context, targets []string, ports []i
 							Host:      task.target,
 							Port:      task.port,
 							Category:  getCategory(task.target),
+						}
+						// 填充预解析的 IP 和地理位置
+						if info, ok := targetIPMap[task.target]; ok {
+							asset.IPV4 = info.ipv4
+							asset.IPV6 = info.ipv6
 						}
 						mu.Lock()
 						assets = append(assets, asset)
@@ -175,7 +221,7 @@ func (s *PortScanner) scanPorts(ctx context.Context, targets []string, ports []i
 
 // isPortOpen 检查端口是否开放
 func isPortOpen(host string, port int, timeout int) bool {
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	conn, err := net.DialTimeout("tcp", address, time.Duration(timeout)*time.Second)
 	if err != nil {
 		return false

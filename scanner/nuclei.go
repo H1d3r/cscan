@@ -239,7 +239,7 @@ func logScanError(err *nucleiScanError, taskLogger func(level, format string, ar
 }
 
 // scanSingleTarget 扫描单个目标
-func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opts *NucleiOptions, customTemplatePaths []string, templateNames []string, taskLogger func(level, format string, args ...interface{})) []*Vulnerability {
+func (s *NucleiScanner) scanSingleTarget(ctx context.Context, target string, opts *NucleiOptions, customTemplatePaths []string, _ []string, taskLogger func(level, format string, args ...interface{})) []*Vulnerability {
 	var vuls []*Vulnerability
 	startTime := time.Now()
 
@@ -356,7 +356,7 @@ func (s *NucleiScanner) executeNucleiScan(ctx, engineCtx context.Context, ne *nu
 }
 
 // handleScanResult 处理扫描结果 - 统一错误处理
-func (s *NucleiScanner) handleScanResult(err error, engineCtx context.Context, target string, opts *NucleiOptions, taskLogger func(level, format string, args ...interface{}), scannedCount, templateCount, foundCount int, startTime time.Time) {
+func (s *NucleiScanner) handleScanResult(err error, engineCtx context.Context, target string, _ *NucleiOptions, taskLogger func(level, format string, args ...interface{}), scannedCount, _, foundCount int, startTime time.Time) {
 	elapsed := int(time.Since(startTime).Seconds())
 
 	if err != nil || engineCtx.Err() == context.DeadlineExceeded {
@@ -1135,7 +1135,7 @@ func (s *NucleiScanner) isolateBadTemplates(ctx context.Context, paths []string,
 
 // tryLoadTemplates 尝试用给定路径创建 Nuclei 引擎并加载模板，成功返回 true
 // 内部 recover panic，不会向上传播
-func (s *NucleiScanner) tryLoadTemplates(ctx context.Context, paths []string, opts *NucleiOptions) (ok bool) {
+func (s *NucleiScanner) tryLoadTemplates(ctx context.Context, paths []string, _ *NucleiOptions) (ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logx.Errorf("[Nuclei] tryLoadTemplates panic recovered: %v", r)

@@ -40,6 +40,8 @@ type HttpxLibResult struct {
 }
 
 // RunHttpxLib 使用httpx库进行批量HTTP探测
+// 注意：此函数使用同步阻塞方式执行，确保所有 httpx 回调完成后才返回
+// 内部使用 mutex 保护对共享 asset 对象的并发访问
 func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) error {
 	if len(assets) == 0 {
 		return nil
@@ -48,6 +50,9 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 	// 构建目标列表
 	var targets []string
 	targetMap := make(map[string]*Asset)
+	// 用于快速查找 asset 的指针地址
+	assetPtrSet := make(map[*Asset]bool)
+
 	for _, asset := range assets {
 		target := fmt.Sprintf("%s:%d", asset.Host, asset.Port)
 		targets = append(targets, target)
@@ -55,11 +60,15 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 		// 同时添加带协议的目标，提高匹配率
 		targetMap[fmt.Sprintf("http://%s:%d", asset.Host, asset.Port)] = asset
 		targetMap[fmt.Sprintf("https://%s:%d", asset.Host, asset.Port)] = asset
+		// 记录所有 asset 指针
+		assetPtrSet[asset] = true
 	}
 
-	// 结果处理锁
+	// 结果处理锁 - 保护对共享 asset 的所有访问
 	var mu sync.Mutex
-	var processedTargets sync.Map
+	// 已处理的资产指针集合 - 用于防止同一资产被多次处理
+	// 使用资产指针作为 key，因为多个 key 可能指向同一个 asset
+	processedAssets := make(map[*Asset]bool)
 
 	// 配置httpx选项
 	httpxOpts := runner.Options{
@@ -86,11 +95,10 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 		LeaveDefaultPorts:  false,
 		HostMaxErrors:      30,
 		// 设置结果回调
+		// 注意：httpx SDK 的 OnResult 回调可能由多个内部协程并发调用
+		// 因此所有对共享资源（asset）的访问都必须加锁保护
 		OnResult: func(result runner.Result) {
-			mu.Lock()
-			defer mu.Unlock()
-
-			// 检查错误
+			// 关键修复：先检查错误，再获取锁，保持锁内逻辑最小化
 			if result.Err != nil {
 				if taskLog != nil {
 					taskLog("DEBUG", "httpx error for %s: %v", result.Input, result.Err)
@@ -141,15 +149,26 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 				return
 			}
 
-			// 防止同一个资产被并发的 httpx 回调多次更新，形成Data Race
-			if result.URL != "" {
-				if _, exists := processedTargets.Load(result.URL); exists {
-					return
-				}
-				processedTargets.Store(result.URL, true)
+			// ========== 关键修复：线程安全的资产更新逻辑 ==========
+			// 修复说明：
+			// 1. 将 processedAssets 检查移到锁内，防止竞态条件
+			// 2. 使用 asset 指针作为 key，即使不同 URL 指向同一 asset 也能正确去重
+			// 3. 在锁内完成所有对 asset 的写入操作，确保原子性
+
+			mu.Lock()
+
+			// 检查该资产是否已被处理过
+			// 注意：由于 targetMap 可能将多个 key 指向同一个 asset，
+			// 使用指针比较可以正确处理这种情况
+			if processedAssets[asset] {
+				mu.Unlock()
+				return
 			}
 
-			// 更新资产信息
+			// 标记为已处理
+			processedAssets[asset] = true
+
+			// 更新资产信息 - 所有写操作都在锁内完成
 			asset.Title = result.Title
 			asset.HttpStatus = fmt.Sprintf("%d", result.StatusCode)
 
@@ -212,6 +231,8 @@ func (s *FingerprintScanner) RunHttpxLib(ctx context.Context, assets []*Asset, o
 			if len(result.ScreenshotBytes) > 0 {
 				asset.Screenshot = base64.StdEncoding.EncodeToString(result.ScreenshotBytes)
 			}
+
+			mu.Unlock()
 
 			if taskLog != nil {
 				taskLog("DEBUG", "httpx lib matched: %s -> title=%s, status=%d, techs=%v", key, result.Title, result.StatusCode, result.Technologies)

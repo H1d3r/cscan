@@ -28,11 +28,17 @@ import (
 )
 
 // FingerprintScanner 指纹扫描器
+// 使用 assetMutex 保护对共享 asset 数据的并发访问
 type FingerprintScanner struct {
 	BaseScanner
 	client                  *http.Client
 	wappalyzerClient        *wappalyzer.Wappalyze
 	customFingerprintEngine *CustomFingerprintEngine
+	// assetMutex 保护 httpx 回调和主循环对同一 asset 的并发访问
+	assetMutex sync.Mutex
+	// httpxDone 标记 httpx 扫描是否完成，用于主循环等待
+	httpxDone   bool
+	httpxDoneMu sync.Mutex
 }
 
 // AppDetectionResult 应用检测结果，用于合并多个来源的识别结果
@@ -671,7 +677,7 @@ func (s *FingerprintScanner) getIconHashWithData(baseUrl string, htmlBody string
 
 // parseFaviconFromHTML 从HTML内容中解析favicon路径
 // 支持 <link rel="icon" href="..."> 和 <link rel="shortcut icon" href="...">
-func parseFaviconFromHTML(htmlBody string, baseUrl string) []string {
+func parseFaviconFromHTML(htmlBody string, _ string) []string {
 	var paths []string
 	seen := make(map[string]bool)
 
@@ -1286,7 +1292,7 @@ func formatHttpxHeaders(headers map[string]string) string {
 }
 
 // formatHttpxHeadersWithStatus 格式化httpx返回的响应头
-func formatHttpxHeadersWithStatus(headers map[string]string, statusCode int) string {
+func formatHttpxHeadersWithStatus(headers map[string]string, _ int) string {
 	var sb strings.Builder
 	// 添加headers（不添加状态行，因为无法获取实际的协议版本）
 	for key, value := range headers {

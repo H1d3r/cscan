@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"cscan/pkg/geolocation"
 	"cscan/pkg/utils"
 
 	"github.com/projectdiscovery/dnsx/libs/dnsx"
@@ -678,7 +679,7 @@ func (s *SubdomainBruteforceScanner) crawlSubdomains(ctx context.Context, subdom
 }
 
 // extractSubdomainsFromURL 从URL响应中提取子域名
-func (s *SubdomainBruteforceScanner) extractSubdomainsFromURL(ctx context.Context, client *http.Client, url string, patterns []*regexp.Regexp, taskLog func(level, format string, args ...interface{})) []string {
+func (s *SubdomainBruteforceScanner) extractSubdomainsFromURL(ctx context.Context, client *http.Client, url string, patterns []*regexp.Regexp, _ func(level, format string, args ...interface{})) []string {
 	var subdomains []string
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -992,9 +993,13 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 							continue
 						}
 						if ip4 := parsedIP.To4(); ip4 != nil {
-							asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String()})
+							locStr, _ := ipLocator.Locate(ip4.String())
+							location := geolocation.NormalizeLocation(locStr)
+							asset.IPV4 = append(asset.IPV4, IPInfo{IP: ip4.String(), Location: location})
 						} else {
-							asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String()})
+							locStr, _ := ipLocator.Locate(parsedIP.String())
+							location := geolocation.NormalizeLocation(locStr)
+							asset.IPV6 = append(asset.IPV6, IPInfo{IP: parsedIP.String(), Location: location})
 						}
 					}
 
@@ -1318,10 +1323,12 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 		if ipStr != "" {
 			ip := net.ParseIP(ipStr)
 			if ip != nil {
+				locStr, _ := ipLocator.Locate(ipStr)
+				location := geolocation.NormalizeLocation(locStr)
 				if ip4 := ip.To4(); ip4 != nil {
-					asset.IPV4 = []IPInfo{{IP: ip4.String()}}
+					asset.IPV4 = []IPInfo{{IP: ip4.String(), Location: location}}
 				} else {
-					asset.IPV6 = []IPInfo{{IP: ip.String()}}
+					asset.IPV6 = []IPInfo{{IP: ip.String(), Location: location}}
 				}
 			}
 		}
