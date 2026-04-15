@@ -223,14 +223,71 @@ func (l *SaveTaskResultLogic) SaveTaskResult(in *pb.SaveTaskResultReq) (*pb.Save
 				}
 			}
 		}
+
+		// ========= 将新资产的 IP/Location 回填到基础域名资产 =========
+		// 当端口扫描（如 Naabu）发现了域名对应的 IP 和 Location，
+		// 而基础域名资产（由子域名扫描创建）的 Location 为空时，
+		// 将 Location 回填到基础域名资产，使前端能立即显示地理位置
+		if asset.Port > 0 && (len(asset.Ip.IpV4) > 0 || len(asset.Ip.IpV6) > 0) && !utils.IsIPAddress(asset.Host) {
+			baseAsset, _ := assetModel.FindByAuthorityOnly(l.ctx, asset.Host)
+			if baseAsset != nil {
+				needsUpdate := false
+				// 检查是否有 Location 需要回填（基础域名资产的 IP 缺少 Location）
+				for i, ipv4 := range baseAsset.Ip.IpV4 {
+					if ipv4.Location == "" {
+						// 在新资产的 IP 列表中查找匹配的 IP
+						for _, newIpv4 := range asset.Ip.IpV4 {
+							if newIpv4.IPName == ipv4.IPName && newIpv4.Location != "" {
+								baseAsset.Ip.IpV4[i].Location = newIpv4.Location
+								needsUpdate = true
+								break
+							}
+						}
+					}
+				}
+				for i, ipv6 := range baseAsset.Ip.IpV6 {
+					if ipv6.Location == "" {
+						for _, newIpv6 := range asset.Ip.IpV6 {
+							if newIpv6.IPName == ipv6.IPName && newIpv6.Location != "" {
+								baseAsset.Ip.IpV6[i].Location = newIpv6.Location
+								needsUpdate = true
+								break
+							}
+						}
+					}
+				}
+				if needsUpdate {
+					if err := assetModel.UpdateWithRaw(l.ctx, baseAsset.Id.Hex(), bson.M{
+						"$set": bson.M{"ip": baseAsset.Ip},
+					}); err == nil {
+						l.Logger.Infof("已回填Location到基础域名资产: %s", asset.Host)
+					}
+				}
+			}
+		}
 		// ===============================================
 
 		// ========= 当保存带端口的域名资产时，删除同名的无端口资产 =========
 		// 这样可以避免同一个域名出现"www.example.com"和"www.example.com:80"两条记录
+		// 删除前先合并基础资产的特有字段（CName/Domain/OrgId/IP），防止数据丢失
 		if asset.Port > 0 && !utils.IsIPAddress(asset.Host) {
 			// 查找同名的无端口资产
 			noPortAsset, err := assetModel.FindByAuthorityOnly(l.ctx, asset.Host)
 			if err == nil && noPortAsset != nil {
+				// 合并基础资产的特有字段到新资产（仅当新资产没有这些字段时）
+				if asset.CName == "" && noPortAsset.CName != "" {
+					asset.CName = noPortAsset.CName
+				}
+				if asset.Domain == "" && noPortAsset.Domain != "" {
+					asset.Domain = noPortAsset.Domain
+				}
+				if asset.OrgId == "" && noPortAsset.OrgId != "" {
+					asset.OrgId = noPortAsset.OrgId
+				}
+				// 如果新资产没有 IP 信息，从基础资产继承
+				if len(asset.Ip.IpV4) == 0 && len(asset.Ip.IpV6) == 0 && (len(noPortAsset.Ip.IpV4) > 0 || len(noPortAsset.Ip.IpV6) > 0) {
+					asset.Ip = noPortAsset.Ip
+				}
 				// 删除无端口的同名资产
 				if deleteErr := assetModel.Delete(l.ctx, noPortAsset.Id.Hex()); deleteErr == nil {
 					l.Logger.Infof("已删除同名无端口资产: %s (被 %s:%d 替代)", asset.Host, asset.Host, asset.Port)
