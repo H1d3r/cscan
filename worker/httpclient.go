@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // WorkerHTTPClient Worker HTTP 客户端
@@ -467,8 +469,7 @@ func (c *WorkerHTTPClient) doRequestWithRetry(ctx context.Context, method, path 
 
 		// 记录重试日志
 		if attempt < retryConfig.MaxRetries {
-			fmt.Printf("[HTTPClient] Request failed (attempt %d/%d): %v, retrying in %v...\n",
-				attempt+1, retryConfig.MaxRetries+1, err, backoff)
+			logx.Infof("[HTTPClient] Request failed (attempt %d/%d): %v, retrying in %v...", attempt+1, retryConfig.MaxRetries+1, err, backoff)
 		}
 	}
 
