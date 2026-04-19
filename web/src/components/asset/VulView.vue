@@ -71,6 +71,7 @@
         </el-descriptions-item>
         <el-descriptions-item :label="$t('vul.source')">{{ currentVul.source }}</el-descriptions-item>
         <el-descriptions-item :label="$t('vul.discoveryTime')">{{ currentVul.createTime }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.updateTime')">{{ currentVul.updateTime }}</el-descriptions-item>
         <el-descriptions-item :label="$t('vul.verifyResult')" :span="2">
           <pre class="result-pre">{{ currentVul.result }}</pre>
         </el-descriptions-item>
@@ -128,6 +129,7 @@ const vulColumns = computed(() => [
   { label: t('vul.tags'), prop: 'tags', slot: 'tags', minWidth: 150 },
   { label: t('vul.source'), prop: 'source', width: 100 },
   { label: t('vul.discoveryTime'), prop: 'createTime', width: 160 },
+  { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('common.operation'), slot: 'operation', width: 120, fixed: 'right' }
 ])
 
@@ -239,7 +241,7 @@ async function handleExport(command) {
 
     if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
-    const headers = ['VulName', 'Severity', 'Target', 'URL', 'POC', 'Tags', 'Source', 'Result', 'CreateTime']
+    const headers = ['VulName', 'Severity', 'Target', 'URL', 'POC', 'Tags', 'Source', 'Result', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       csvRows.push([
@@ -251,7 +253,8 @@ async function handleExport(command) {
         escapeCsvField((row.tags || []).join(';')),
         escapeCsvField(row.source || ''),
         escapeCsvField(row.result || ''),
-        escapeCsvField(row.createTime || '')
+        escapeCsvField(row.createTime || ''),
+        escapeCsvField(row.updateTime || '')
       ].join(','))
     }
     const BOM = '\uFEFF'

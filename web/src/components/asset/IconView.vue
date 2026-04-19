@@ -70,31 +70,7 @@
         <span v-else class="text-gray-400">-</span>
       </template>
 
-      <template #screenshot="{ row }">
-        <div class="screenshot-cell">
-          <el-popover
-            v-if="row.screenshot && getScreenshotUrl(row.screenshot)"
-            placement="left"
-            trigger="hover"
-            width="auto"
-            :show-after="200"
-          >
-            <template #reference>
-              <img
-                :src="getScreenshotUrl(row.screenshot)"
-                class="screenshot-image"
-                :alt="row.iconHash"
-                @error="handleImageError($event)"
-              />
-            </template>
-            <img :src="getScreenshotUrl(row.screenshot)" style="max-width: 600px; max-height: 600px; object-fit: contain;" />
-          </el-popover>
-          <span v-else class="text-gray-400">-</span>
-        </div>
-      </template>
-
       <template #operation="{ row }">
-        <el-button type="primary" link size="small" @click="viewAssets(row)">{{ t('asset.iconView.viewAssets') }}</el-button>
         <el-button type="danger" link size="small" @click="handleDelete(row, $emit)">{{ $t('common.delete') || '删除' }}</el-button>
       </template>
     </ProTable>
@@ -105,7 +81,6 @@
 import { computed } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import ProTable from '@/components/common/ProTable.vue'
-import { formatScreenshotUrl } from '@/utils/screenshot'
 import { useAssetView } from '@/composables/useAssetView'
 
 const emit = defineEmits(['data-changed'])
@@ -117,12 +92,13 @@ const {
   apiPrefix: '/asset/icon',
   viewType: 'iconHash',
   localePrefix: 'icon',
-  exportHeaders: ['IconHash', 'IconHashFile', 'Assets', 'CreateTime'],
+  exportHeaders: ['IconHash', 'IconHashFile', 'Assets', 'CreateTime', 'UpdateTime'],
   exportRowFormatter: row => [
     row.iconHash || '',
     row.iconHashFile || '',
     (row.assets || []).join(';'),
-    row.createTime || ''
+    row.createTime || '',
+    row.updateTime || ''
   ]
 })
 
@@ -130,19 +106,14 @@ const iconColumns = computed(() => [
   { label: t('asset.iconView.columns.iconImage'), prop: 'iconData', slot: 'iconImage', width: 90 },
   { label: t('asset.iconView.columns.iconHash'), prop: 'iconHash', slot: 'iconHash', minWidth: 240 },
   { label: t('asset.iconView.columns.assets'), prop: 'assets', slot: 'assets', minWidth: 250 },
-  { label: t('asset.iconView.columns.screenshot'), prop: 'screenshot', slot: 'screenshot', width: 90 },
   { label: t('asset.iconView.columns.createTime'), prop: 'createTime', width: 160 },
   { label: t('asset.iconView.columns.updateTime'), prop: 'updateTime', width: 160 },
-  { label: t('asset.iconView.columns.operation'), slot: 'operation', width: 140, fixed: 'right' }
+  { label: t('asset.iconView.columns.operation'), slot: 'operation', width: 100, fixed: 'right' }
 ])
 
 const searchItems = computed(() => [
   { label: t('asset.iconView.filters.iconHash'), prop: 'icon_hash', type: 'input' }
 ])
-
-function viewAssets(row) {
-  window.location.href = `/asset-management?tab=inventory&subTab=port&iconHash=${encodeURIComponent(row.iconHash)}`
-}
 
 function getIconDataUrl(iconData) {
   if (!iconData || iconData.length === 0) return ''
@@ -173,10 +144,6 @@ function getIconDataUrl(iconData) {
   } catch (e) { return '' }
 }
 
-function getScreenshotUrl(screenshot) {
-  return formatScreenshotUrl(screenshot)
-}
-
 function handleImageError(event) {
   event.target.style.display = 'none'
 }
@@ -190,8 +157,7 @@ defineExpose({
 .icon-view {
   height: 100%;
 }
-.icon-image-cell,
-.screenshot-cell {
+.icon-image-cell {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -199,8 +165,7 @@ defineExpose({
 .hash-text {
   font-family: monospace;
 }
-.icon-image,
-.screenshot-image {
+.icon-image {
   width: 40px;
   height: 40px;
   object-fit: cover;

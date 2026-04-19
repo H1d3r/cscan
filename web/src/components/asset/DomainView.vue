@@ -113,6 +113,7 @@ const domainColumns = computed(() => [
   { label: t('domain.source'), prop: 'source', slot: 'source', width: 100 },
   { label: t('domain.organization'), prop: 'orgName', slot: 'org', width: 120 },
   { label: t('domain.discoveryTime'), prop: 'createTime', width: 160 },
+  { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('common.operation'), slot: 'operation', width: 80, fixed: 'right' }
 ])
 
@@ -225,7 +226,7 @@ async function handleExport(command) {
   if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
   if (command === 'csv') {
-    const headers = ['Domain', 'RootDomain', 'IPs', 'CNAME', 'Source', 'Organization', 'CreateTime']
+    const headers = ['Domain', 'RootDomain', 'IPs', 'CNAME', 'Source', 'Organization', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       csvRows.push([
@@ -235,7 +236,8 @@ async function handleExport(command) {
         escapeCsvField(row.cname || ''),
         escapeCsvField(row.source || ''),
         escapeCsvField(row.orgName || ''),
-        escapeCsvField(row.createTime || '')
+        escapeCsvField(row.createTime || ''),
+        escapeCsvField(row.updateTime || '')
       ].join(','))
     }
     const BOM = '\uFEFF'

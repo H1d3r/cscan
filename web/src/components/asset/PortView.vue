@@ -83,13 +83,14 @@ const {
 } = useAssetView({
   apiPrefix: '/asset/port',
   viewType: 'port',
-  exportHeaders: ['Port', 'AssetCount', 'Services', 'Hosts', 'Organization', 'UpdateTime'],
+  exportHeaders: ['Port', 'AssetCount', 'Services', 'Hosts', 'Organization', 'CreateTime', 'UpdateTime'],
   exportRowFormatter: row => [
     row.port || '',
     row.assetCount || 0,
     (row.services || []).join(';'),
     (row.hosts || []).join(';'),
     row.orgName || '',
+    row.createTime || '',
     row.updateTime || ''
   ]
 })
@@ -102,6 +103,7 @@ const portColumns = computed(() => [
   { label: '关联服务', prop: 'services', slot: 'services', width: 180 },
   { label: '关联主机', prop: 'hosts', slot: 'hosts', minWidth: 250 },
   { label: t('domain.organization'), prop: 'orgName', slot: 'org', width: 120 },
+  { label: t('common.createTime'), prop: 'createTime', width: 160 },
   { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('common.operation'), slot: 'operation', width: 100, fixed: 'right' }
 ])

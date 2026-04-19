@@ -75,13 +75,14 @@ const {
 } = useAssetView({
   apiPrefix: '/asset/app',
   viewType: 'app',
-  exportHeaders: ['App', 'Category', 'Assets', 'Organization', 'CreateTime'],
+  exportHeaders: ['App', 'Category', 'Assets', 'Organization', 'CreateTime', 'UpdateTime'],
   exportRowFormatter: row => [
     row.app || '',
     row.category || '',
     (row.assets || []).join(';'),
     row.orgName || '',
-    row.createTime || ''
+    row.createTime || '',
+    row.updateTime || ''
   ]
 })
 
@@ -90,6 +91,7 @@ const appColumns = computed(() => [
   { label: t('asset.appView.columns.assets'), prop: 'assets', slot: 'assets', minWidth: 250 },
   { label: t('asset.appView.columns.organization'), prop: 'orgName', slot: 'org', width: 120 },
   { label: t('asset.appView.columns.createTime'), prop: 'createTime', width: 160 },
+  { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('asset.appView.columns.operation'), slot: 'operation', width: 140, fixed: 'right' }
 ])
 

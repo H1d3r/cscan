@@ -127,6 +127,7 @@ const ipColumns = computed(() => [
   { label: t('ip.openPorts'), prop: 'ports', slot: 'ports', minWidth: 300 },
   { label: t('ip.relatedDomains'), prop: 'domains', slot: 'domains', minWidth: 200 },
   { label: t('ip.organization'), prop: 'orgName', slot: 'org', width: 120 },
+  { label: t('common.createTime'), prop: 'createTime', width: 160 },
   { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('common.operation'), slot: 'operation', width: 100, fixed: 'right' }
 ])
@@ -254,7 +255,7 @@ async function handleExport(command) {
   if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
   if (command === 'csv') {
-    const headers = ['IP', 'Location', 'Ports', 'Domains', 'Organization', 'UpdateTime']
+    const headers = ['IP', 'Location', 'Ports', 'Domains', 'Organization', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       csvRows.push([
@@ -263,6 +264,7 @@ async function handleExport(command) {
         escapeCsvField((row.ports || []).map(p => p.port + (p.service ? '/' + p.service : '')).join(';')),
         escapeCsvField((row.domains || []).join(';')),
         escapeCsvField(row.orgName || ''),
+        escapeCsvField(row.createTime || ''),
         escapeCsvField(row.updateTime || '')
       ].join(','))
     }

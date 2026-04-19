@@ -56,6 +56,11 @@
         {{ formatTime(row.createTime) }}
       </template>
 
+      <!-- 更新时间 -->
+      <template #updateTime="{ row }">
+        {{ formatTime(row.scanTime) }}
+      </template>
+
       <!-- 操作 -->
       <template #operation="{ row }">
         <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('common.delete') }}</el-button>
@@ -97,7 +102,8 @@ const dirColumns = computed(() => [
   { label: t('dirscan.title'), prop: 'title', minWidth: 100, showOverflowTooltip: true },
   { label: t('dirscan.contentType'), prop: 'contentType', width: 130, showOverflowTooltip: true },
   { label: t('dirscan.redirectUrl'), prop: 'redirectUrl', minWidth: 120, showOverflowTooltip: true },
-  { label: t('dirscan.discoveryTime'), prop: 'createTime', slot: 'createTime', width: 150 },
+  { label: t('common.createTime'), prop: 'createTime', slot: 'createTime', width: 150 },
+  { label: t('common.updateTime'), prop: 'scanTime', slot: 'updateTime', width: 150 },
   { label: t('common.operation'), slot: 'operation', width: 70, fixed: 'right', align: 'center' }
 ])
 
@@ -190,7 +196,7 @@ async function handleExport(command) {
   if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
   if (command === 'csv') {
-    const headers = ['URL', 'Path', 'StatusCode', 'ContentLength', 'ContentWords', 'ContentLines', 'Duration(ms)', 'ContentType', 'Title', 'RedirectUrl', 'Host', 'Port', 'Authority', 'CreateTime']
+    const headers = ['URL', 'Path', 'StatusCode', 'ContentLength', 'ContentWords', 'ContentLines', 'Duration(ms)', 'ContentType', 'Title', 'RedirectUrl', 'Host', 'Port', 'Authority', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       csvRows.push([
@@ -207,7 +213,8 @@ async function handleExport(command) {
         escapeCsvField(row.host || ''),
         row.port || '',
         escapeCsvField(row.authority || ''),
-        escapeCsvField(row.createTime || '')
+        escapeCsvField(row.createTime || ''),
+        escapeCsvField(row.scanTime || '')
       ].join(','))
     }
     const BOM = '\uFEFF'

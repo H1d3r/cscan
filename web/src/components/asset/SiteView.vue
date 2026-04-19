@@ -96,6 +96,7 @@
         <el-descriptions-item label="IP">{{ currentSite.ip || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$t('site.location')">{{ currentSite.location || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$t('site.organization')">{{ currentSite.orgName || $t('common.defaultOrganization') }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('common.createTime')">{{ currentSite.createTime }}</el-descriptions-item>
         <el-descriptions-item :label="$t('common.updateTime')">{{ currentSite.updateTime }}</el-descriptions-item>
         <el-descriptions-item :label="$t('site.fingerprint')" :span="2">
           <el-tag v-for="app in (currentSite.app || [])" :key="app" size="small" type="success" style="margin: 2px">
@@ -154,6 +155,7 @@ const siteColumns = computed(() => [
   { label: t('site.statusCode'), prop: 'httpStatus', slot: 'statusCode', width: 80, align: 'center' },
   { label: t('site.fingerprint'), prop: 'app', slot: 'fingerprint', minWidth: 180 },
   { label: t('site.screenshot'), prop: 'screenshot', slot: 'screenshot', width: 100, align: 'center' },
+  { label: t('common.createTime'), prop: 'createTime', width: 160 },
   { label: t('common.updateTime'), prop: 'updateTime', width: 160 },
   { label: t('common.operation'), slot: 'operation', width: 120, fixed: 'right' }
 ])
@@ -268,7 +270,7 @@ async function handleExport(command) {
 
     if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
-    const headers = ['Site', 'Title', 'StatusCode', 'Server', 'IP', 'Location', 'Apps', 'Organization', 'UpdateTime']
+    const headers = ['Site', 'Title', 'StatusCode', 'Server', 'IP', 'Location', 'Apps', 'Organization', 'CreateTime', 'UpdateTime']
     const csvRows = [headers.join(',')]
     for (const row of data) {
       const values = [
@@ -280,6 +282,7 @@ async function handleExport(command) {
         escapeCsvField(row.location || ''),
         escapeCsvField((row.app || []).join(';')),
         escapeCsvField(row.orgName || ''),
+        escapeCsvField(row.createTime || ''),
         escapeCsvField(row.updateTime || '')
       ]
       csvRows.push(values.join(','))
