@@ -181,9 +181,10 @@ func (l *GeneratePocLogic) generateBasicTemplate(req *types.GeneratePocReq) stri
 
 	// 组装完整模板
 	severity := "medium"
-	if req.VulnType == "rce" || req.VulnType == "sqli" {
+	switch req.VulnType {
+	case "rce", "sqli":
 		severity = "high"
-	} else if req.VulnType == "info-disclosure" {
+	case "info-disclosure":
 		severity = "low"
 	}
 
