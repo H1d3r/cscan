@@ -144,15 +144,16 @@ func smartHttpRequest(baseUrl, path, originalScheme string) (*http.Response, str
 	var urls []string
 	fullUrl := baseUrl + path
 
-	if originalScheme == "https" {
+	switch originalScheme {
+	case "https":
 		// 用户指定HTTPS，先尝试HTTPS，失败后尝试HTTP
 		urls = append(urls, fullUrl)
 		httpUrl := strings.Replace(fullUrl, "https://", "http://", 1)
 		urls = append(urls, httpUrl)
-	} else if originalScheme == "http" {
+	case "http":
 		// 用户指定HTTP，只尝试HTTP
 		urls = append(urls, fullUrl)
-	} else {
+	default:
 		// 未指定协议，先HTTP后HTTPS
 		urls = append(urls, fullUrl)
 		if strings.HasPrefix(fullUrl, "http://") {
