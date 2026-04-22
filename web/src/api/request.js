@@ -36,10 +36,18 @@ request.interceptors.request.use(
 // 响应拦截器
 let isRelogin = false
 
+const isLoginRequest = (config) => {
+  const url = config?.url || ''
+  return url === '/login' || url.endsWith('/login')
+}
+
 request.interceptors.response.use(
   response => {
     const res = response.data
     if (res.code === 401) {
+      if (isLoginRequest(response.config)) {
+        return res
+      }
       if (!isRelogin) {
         isRelogin = true
         const userStore = useUserStore()
@@ -61,6 +69,13 @@ request.interceptors.response.use(
   },
   error => {
     if (error.response && error.response.status === 401) {
+      if (isLoginRequest(error.config)) {
+        const data = error.response.data
+        if (data && typeof data === 'object') {
+          return Promise.resolve(data)
+        }
+        return Promise.reject(error)
+      }
       if (!isRelogin) {
         isRelogin = true
         const userStore = useUserStore()
