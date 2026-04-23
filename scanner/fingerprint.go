@@ -28,17 +28,11 @@ import (
 )
 
 // FingerprintScanner 指纹扫描器
-// 使用 assetMutex 保护对共享 asset 数据的并发访问
 type FingerprintScanner struct {
 	BaseScanner
 	client                  *http.Client
 	wappalyzerClient        *wappalyzer.Wappalyze
 	customFingerprintEngine *CustomFingerprintEngine
-	// assetMutex 保护 httpx 回调和主循环对同一 asset 的并发访问
-	assetMutex sync.Mutex
-	// httpxDone 标记 httpx 扫描是否完成，用于主循环等待
-	httpxDone   bool
-	httpxDoneMu sync.Mutex
 }
 
 // AppDetectionResult 应用检测结果，用于合并多个来源的识别结果
@@ -57,6 +51,7 @@ func NewFingerprintScanner() *FingerprintScanner {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
+				// 扫描场景需探测自签名/过期证书站点，故跳过 TLS 证书验证
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -159,8 +154,8 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	}
 
 	// 限制最大并发数，避免过度并发
-	if opts.Concurrency > 5 {
-		opts.Concurrency = 5
+	if opts.Concurrency > 10 {
+		opts.Concurrency = 10
 	}
 
 	// 日志辅助函数
@@ -868,13 +863,14 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 	}
 
 	// 如果HTTP探测失败，标记为非HTTP服务
-	if !httpDetected && asset.Service == "" {
+	if !httpDetected {
 		if taskLog != nil {
 			taskLog("DEBUG", "HTTP probe failed for %s:%d, marking as non-http", asset.Host, asset.Port)
 		} else {
 			logx.Debugf("HTTP probe failed for %s:%d, marking as non-http", asset.Host, asset.Port)
 		}
 		asset.Service = "unknown"
+		asset.IsHTTP = false
 	}
 }
 
