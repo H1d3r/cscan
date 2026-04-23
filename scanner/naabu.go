@@ -28,13 +28,25 @@ var ipLocator = geolocation.NewIPLocator()
 // NaabuScanner Naabu端口扫描器
 type NaabuScanner struct {
 	BaseScanner
+	skippedHosts []string // 因端口阈值超限被跳过的主机
+	mu           sync.Mutex
 }
 
 // NewNaabuScanner 创建Naabu扫描器
 func NewNaabuScanner() *NaabuScanner {
 	return &NaabuScanner{
-		BaseScanner: BaseScanner{name: "naabu"},
+		BaseScanner:  BaseScanner{name: "naabu"},
+		skippedHosts: make([]string, 0),
 	}
+}
+
+// collectSkippedHosts 收集因端口阈值超限被跳过的主机列表
+func (s *NaabuScanner) collectSkippedHosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]string, len(s.skippedHosts))
+	copy(result, s.skippedHosts)
+	return result
 }
 
 // NaabuOptions Naabu扫描选项
@@ -73,6 +85,11 @@ func (o *NaabuOptions) Validate() error {
 
 // Scan 执行Naabu扫描
 func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
+	// 重置跳过主机列表（扫描器可能被复用）
+	s.mu.Lock()
+	s.skippedHosts = s.skippedHosts[:0]
+	s.mu.Unlock()
+
 	// 默认配置 - 使用自适应参数，根据系统硬件自动调整
 	adaptive := GetGlobalAdaptiveConfig()
 	opts := &NaabuOptions{
@@ -225,16 +242,18 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 
 	if thresholdExceeded {
 		return &ScanResult{
-			WorkspaceId: config.WorkspaceId,
-			MainTaskId:  config.MainTaskId,
-			Assets:      assets,
+			WorkspaceId:  config.WorkspaceId,
+			MainTaskId:   config.MainTaskId,
+			Assets:       assets,
+			SkippedHosts: s.collectSkippedHosts(),
 		}, ErrPortThresholdExceeded
 	}
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
-		Assets:      assets,
+		WorkspaceId:  config.WorkspaceId,
+		MainTaskId:   config.MainTaskId,
+		Assets:       assets,
+		SkippedHosts: s.collectSkippedHosts(),
 	}, nil
 }
 
@@ -294,6 +313,9 @@ func (s *NaabuScanner) runNaabuWithLogger(ctx context.Context, targets []string,
 		if thresholdExceeded {
 			// 单个目标超过阈值，记录并跳过该目标，继续扫描其他目标
 			anyThresholdExceeded = true
+			s.mu.Lock()
+			s.skippedHosts = append(s.skippedHosts, target)
+			s.mu.Unlock()
 			logWarn("Naabu: %s skipped due to port threshold, continuing with next target", target)
 			continue
 		}
