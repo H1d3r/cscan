@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -15,13 +16,25 @@ import (
 // MasscanScanner Masscan扫描器
 type MasscanScanner struct {
 	BaseScanner
+	skippedHosts []string   // 因端口阈值超限被跳过的主机
+	mu           sync.Mutex // 保护 skippedHosts
 }
 
 // NewMasscanScanner 创建Masscan扫描器
 func NewMasscanScanner() *MasscanScanner {
 	return &MasscanScanner{
-		BaseScanner: BaseScanner{name: "masscan"},
+		BaseScanner:  BaseScanner{name: "masscan"},
+		skippedHosts: make([]string, 0),
 	}
+}
+
+// collectSkippedHosts 收集因端口阈值超限被跳过的主机列表
+func (s *MasscanScanner) collectSkippedHosts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]string, len(s.skippedHosts))
+	copy(result, s.skippedHosts)
+	return result
 }
 
 // MasscanOptions Masscan扫描选项
@@ -61,6 +74,11 @@ type MasscanResult struct {
 
 // Scan 执行Masscan扫描
 func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
+	// 重置跳过主机列表（扫描器可能被复用）
+	s.mu.Lock()
+	s.skippedHosts = s.skippedHosts[:0]
+	s.mu.Unlock()
+
 	// 默认配置
 	opts := &MasscanOptions{
 		Ports:         "21,22,23,25,80,443,3306,3389,6379,8080",
@@ -120,8 +138,6 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 
 	logx.Infof("Masscan Scan config - Ports: %s, Rate: %d, Timeout: %d, PortThreshold: %d, ExcludeHosts: %s", opts.Ports, opts.Rate, opts.Timeout, opts.PortThreshold, opts.ExcludeHosts)
 
-	logx.Infof("Masscan Scan config - Ports: %s, Rate: %d, Timeout: %d, PortThreshold: %d, ExcludeHosts: %s", opts.Ports, opts.Rate, opts.Timeout, opts.PortThreshold, opts.ExcludeHosts)
-
 	// 检查masscan是否安装
 	if !checkMasscanInstalled() {
 		logx.Error("masscan not installed, falling back to tcp scan")
@@ -140,9 +156,10 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 	assets := s.runMasscan(ctx, targets, opts)
 
 	return &ScanResult{
-		WorkspaceId: config.WorkspaceId,
-		MainTaskId:  config.MainTaskId,
-		Assets:      assets,
+		WorkspaceId:  config.WorkspaceId,
+		MainTaskId:   config.MainTaskId,
+		Assets:       assets,
+		SkippedHosts: s.collectSkippedHosts(),
 	}, nil
 }
 
@@ -229,14 +246,22 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 				// 实时检测端口阈值
 				hostPortCount[hostKey]++
 				if opts.PortThreshold > 0 && hostPortCount[hostKey] > opts.PortThreshold {
-					// 第一次超过阈值时记录日志并立即结束扫描
+					// 第一次超过阈值时记录日志并标记跳过，继续处理其他主机
 					if !skippedHosts[hostKey] {
 						skippedHosts[hostKey] = true
-						logx.Infof("Host %s exceeded port threshold (%d > %d), stopping scan",
+						s.mu.Lock()
+						s.skippedHosts = append(s.skippedHosts, hostKey)
+						s.mu.Unlock()
+						logx.Infof("Host %s exceeded port threshold (%d > %d), discarding all results for this host",
 							hostKey, hostPortCount[hostKey], opts.PortThreshold)
-						// 终止masscan进程
-						cmd.Process.Kill()
-						return nil // 返回空结果，表示扫描被终止
+						// 移除该主机已有的资产
+						var filtered []*Asset
+						for _, a := range assets {
+							if a.Host != hostKey {
+								filtered = append(filtered, a)
+							}
+						}
+						assets = filtered
 					}
 					continue
 				}
@@ -263,7 +288,13 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 		}
 	}
 
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			logx.Infof("Masscan cancelled for targets")
+		} else {
+			logx.Errorf("Masscan command failed: %v", err)
+		}
+	}
 
 	return assets
 }
