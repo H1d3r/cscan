@@ -82,8 +82,8 @@ func (l *HighRiskFilterConfigSaveLogic) HighRiskFilterConfigSave(req *types.High
 	config := types.HighRiskFilterConfig{
 		Enabled:               req.Enabled,
 		HighRiskFingerprints:  req.HighRiskFingerprints,
-		HighRiskPorts:         req.HighRiskPorts,
-		HighRiskPocSeverities: req.HighRiskPocSeverities,
+		HighRiskPorts:         convertPortsToIntSlice(req.HighRiskPorts),
+		HighRiskPocSeverities: convertSeveritiesToEnglish(req.HighRiskPocSeverities),
 		NewAssetNotify:        req.NewAssetNotify,
 		UpdateTime:            time.Now().Format("2006-01-02 15:04:05"),
 	}
