@@ -33,7 +33,7 @@
 | 端口扫描 | 全端口/指定端口快速扫描 | Naabu / Masscan |
 | 端口识别 | 服务版本识别 | Nmap / Fingerprintx |
 | 指纹识别 | Web 指纹与 Icon Hash 识别 | HTTPX / 内置引擎 |
-| 弱口令扫描 | 多服务弱口令爆破（SSH/MySQL/Redis/MongoDB/PostgreSQL/MSSQL/FTP/SNMP/Oracle/SMB/MQTT） | 内置引擎 |
+| 弱口令扫描 | 多服务弱口令爆破 | 内置引擎 |
 | 目录扫描 | 目录与文件枚举 | FFUF |
 | 漏洞扫描 | POC 漏洞验证与扫描 | Nuclei |
 
