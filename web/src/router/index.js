@@ -199,7 +199,7 @@ const routes = [
         name: 'Settings',
         component: lazyLoad(() => import('@/views/Settings.vue')),
         meta: { title: '系统配置', icon: 'Setting' }
-      }
+      },
     ]
   }
 ]

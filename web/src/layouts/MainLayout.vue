@@ -63,7 +63,7 @@
                 <Search />
               </el-icon>
               <template #title>{{ $t('navigation.subdomainConfig') }}</template>
-          </el-menu-item>
+            </el-menu-item>
 
           <!-- 分割线 -->
           <div class="menu-divider"></div>
