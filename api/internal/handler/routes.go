@@ -18,6 +18,7 @@ import (
 	"cscan/api/internal/handler/task"
 	"cscan/api/internal/handler/user"
 	"cscan/api/internal/handler/vul"
+	"cscan/api/internal/handler/weakpass"
 	"cscan/api/internal/handler/worker"
 	"cscan/api/internal/handler/workspace"
 	"cscan/api/internal/middleware"
@@ -98,6 +99,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/poc", Handler: worker.WorkerConfigPocHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/dirscandict", Handler: worker.WorkerConfigDirScanDictHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/subdomaindict", Handler: worker.WorkerConfigSubdomainDictHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/worker/config/weakpassdict", Handler: worker.WorkerConfigWeakpassDictHandler(svcCtx)},
 		// 黑名单规则（供Worker使用）
 		{Method: http.MethodPost, Path: "/api/v1/worker/config/blacklist", Handler: blacklist.BlacklistRulesHandler(svcCtx)},
 	}
@@ -358,6 +360,17 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/subdomain/dict/delete", Handler: subdomain.SubdomainDictDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/subdomain/dict/clear", Handler: subdomain.SubdomainDictClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/subdomain/dict/enabled", Handler: subdomain.SubdomainDictEnabledListHandler(svcCtx)},
+
+		// 弱口令字典
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/list", Handler: weakpass.WeakpassDictListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/save", Handler: weakpass.WeakpassDictSaveHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/delete", Handler: weakpass.WeakpassDictDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/clear", Handler: weakpass.WeakpassDictClearHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/enabled", Handler: weakpass.WeakpassDictEnabledListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/import", Handler: weakpass.WeakpassDictImportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/export", Handler: weakpass.WeakpassDictExportHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/parse", Handler: weakpass.WeakpassDictParseHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/weakpass/dict/stats", Handler: weakpass.WeakpassDictServiceStatsHandler(svcCtx)},
 
 		// 目录扫描结果
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/result/list", Handler: dirscan.DirScanResultListHandler(svcCtx)},
