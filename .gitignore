@@ -12,3 +12,4 @@ docs/
 .claude/
 .worktrees/
 /data
+.codebuddy/
