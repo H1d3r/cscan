@@ -17,9 +17,24 @@
 
 ---
 
-| 控制台 | 资产检索 | 指纹管理 | 漏洞库 | 节点监控 | 通知订阅 |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| <img src="images/dashboard.png" width="200"> | <img src="images/filter.png" width="200"> | <img src="images/finger.png" width="200"> | <img src="images/poc.png" width="200"> | <img src="images/worker.png" width="200"> | <img src="images/notice.png" width="200"> |
+<table width="100%">
+  <tr>
+    <td align="center"><b>控制台</b></td>
+    <td align="center"><b>资产检索</b></td>
+    <td align="center"><b>指纹管理</b></td>
+    <td align="center"><b>漏洞库</b></td>
+    <td align="center"><b>节点监控</b></td>
+    <td align="center"><b>通知订阅</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="images/dashboard.png"></td>
+    <td align="center"><img src="images/filter.png"></td>
+    <td align="center"><img src="images/finger.png"></td>
+    <td align="center"><img src="images/poc.png"></td>
+    <td align="center"><img src="images/worker.png"></td>
+    <td align="center"><img src="images/notice.png"></td>
+  </tr>
+</table>
 
 ---
 
@@ -27,15 +42,48 @@
 
 ### 扫描引擎
 
-| 扫描阶段 | 说明 | 工具 |
-|:---|:---|:---|
-| 子域名扫描 | 子域名枚举与发现 | Subfinder / Ksubdomain |
-| 端口扫描 | 全端口/指定端口快速扫描 | Naabu / Masscan |
-| 端口识别 | 服务版本识别 | Nmap / Fingerprintx |
-| 指纹识别 | Web 指纹与 Icon Hash 识别 | HTTPX / 内置引擎 |
-| 弱口令扫描 | 多服务弱口令爆破 | 内置引擎 |
-| 目录扫描 | 目录与文件枚举 | FFUF |
-| 漏洞扫描 | POC 漏洞验证与扫描 | Nuclei |
+<table width="100%">
+  <tr>
+    <th align="left">扫描阶段</th>
+    <th align="left">说明</th>
+    <th align="left">工具</th>
+  </tr>
+  <tr>
+    <td>子域名扫描</td>
+    <td>子域名枚举与发现</td>
+    <td>Subfinder / Ksubdomain</td>
+  </tr>
+  <tr>
+    <td>端口扫描</td>
+    <td>全端口/指定端口快速扫描</td>
+    <td>Naabu / Masscan</td>
+  </tr>
+  <tr>
+    <td>端口识别</td>
+    <td>服务版本识别</td>
+    <td>Nmap / Fingerprintx</td>
+  </tr>
+  <tr>
+    <td>指纹识别</td>
+    <td>Web 指纹与 Icon Hash 识别</td>
+    <td>HTTPX / 内置引擎</td>
+  </tr>
+  <tr>
+    <td>弱口令扫描</td>
+    <td>多服务弱口令爆破</td>
+    <td>内置引擎</td>
+  </tr>
+  <tr>
+    <td>目录扫描</td>
+    <td>目录与文件枚举</td>
+    <td>FFUF</td>
+  </tr>
+  <tr>
+    <td>漏洞扫描</td>
+    <td>POC 漏洞验证与扫描</td>
+    <td>Nuclei</td>
+  </tr>
+</table>
 
 ### 核心能力
 
