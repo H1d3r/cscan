@@ -1035,6 +1035,60 @@ func (e *DirScanExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
 	return &PhaseResult{}, nil
 }
 
+// JSFinderExecutor JS 敏感信息与未授权检测阶段执行器
+type JSFinderExecutor struct {
+	worker *Worker
+}
+
+// NewJSFinderExecutor 创建 JSFinder 执行器
+func NewJSFinderExecutor(worker *Worker) *JSFinderExecutor {
+	return &JSFinderExecutor{worker: worker}
+}
+
+// CanExecute 检查是否可以执行
+func (e *JSFinderExecutor) CanExecute(ctx *TaskContext) bool {
+	return ctx.Config.JSFinder != nil && ctx.Config.JSFinder.Enable
+}
+
+// Execute 执行 JSFinder 扫描
+func (e *JSFinderExecutor) Execute(ctx *TaskContext) (*PhaseResult, error) {
+	w := e.worker
+	task := ctx.Task
+	config := ctx.Config.JSFinder
+
+	// 没有资产时尝试从用户输入目标生成（与 dirscan 一致）
+	assets := ctx.Assets
+	if len(assets) == 0 && ctx.Target != "" {
+		generatedAssets := scanner.GenerateAssetsFromTargets(ctx.Target)
+		generatedAssets = filterSkippedHosts(generatedAssets, ctx.SkippedHosts)
+		if len(generatedAssets) > 0 {
+			assets = generatedAssets
+			ctx.Assets = generatedAssets
+			w.taskLog(task.TaskId, LevelInfo, "JSFinder: generated %d assets from user input targets", len(assets))
+		}
+	}
+
+	if len(assets) == 0 {
+		w.taskLog(task.TaskId, LevelInfo, "JSFinder: skipped (no assets)")
+		return &PhaseResult{}, nil
+	}
+
+	if ctrl := w.checkTaskControl(ctx.Ctx, task.TaskId); ctrl == "STOP" {
+		return &PhaseResult{Stopped: true}, nil
+	} else if ctrl == "PAUSE" {
+		return &PhaseResult{Paused: true}, nil
+	}
+
+	w.executeJSFinder(ctx.Ctx, task, assets, config, ctx.OrgId)
+
+	if ctx.Ctx.Err() != nil || w.checkTaskControl(ctx.Ctx, task.TaskId) == "STOP" {
+		return &PhaseResult{Stopped: true}, nil
+	}
+
+	// JSFinder 扫描结果不再插入到漏洞列表中
+	return &PhaseResult{}, nil
+}
+
 // RegisterDefaultExecutors 注册默认阶段执行器
 func (i *TaskRunnerIntegration) RegisterDefaultExecutors() {
 	i.taskRunner.RegisterPhaseExecutor(PhaseDomainScan, NewDomainScanExecutor(i.worker))
@@ -1042,6 +1096,7 @@ func (i *TaskRunnerIntegration) RegisterDefaultExecutors() {
 	i.taskRunner.RegisterPhaseExecutor(PhasePortIdentify, NewPortIdentifyExecutor(i.worker))
 	i.taskRunner.RegisterPhaseExecutor(PhaseFingerprint, NewFingerprintExecutor(i.worker))
 	i.taskRunner.RegisterPhaseExecutor(PhaseDirScan, NewDirScanExecutor(i.worker))
+	i.taskRunner.RegisterPhaseExecutor(PhaseJSFinder, NewJSFinderExecutor(i.worker))
 	i.taskRunner.RegisterPhaseExecutor(PhasePocScan, NewPocScanExecutor(i.worker))
 }
 
