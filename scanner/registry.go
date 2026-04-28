@@ -190,6 +190,11 @@ func (r *ScannerRegistry) RegisterBuiltins() {
 	r.Register("brutescan", func(cfg *ScannerRegistryConfig) (Scanner, error) {
 		return NewBruteScanScanner(), nil
 	})
+
+	// JSFinder 扫描器
+	r.Register("jsfinder", func(cfg *ScannerRegistryConfig) (Scanner, error) {
+		return NewJSFinderScanner(), nil
+	})
 }
 
 // ScannerInfo 扫描器信息
