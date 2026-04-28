@@ -485,6 +485,7 @@ func (w *Worker) registerScanners() {
 	w.scanners["urlfinder"] = scanner.NewURLFinderScanner()
 	w.scanners["ffuf"] = scanner.NewFFufScanner()
 	w.scanners["brutescan"] = scanner.NewBruteScanScanner()
+	w.scanners["jsfinder"] = scanner.NewJSFinderScanner()
 }
 
 // Start 启动Worker
@@ -1202,6 +1203,15 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		}
 	} else {
 		configDetails = append(configDetails, "DirScan=nil")
+	}
+
+	if config.JSFinder != nil {
+		configDetails = append(configDetails, fmt.Sprintf("JSFinder.Enable=%v", config.JSFinder.Enable))
+		if config.JSFinder.Enable {
+			enabledPhases = append(enabledPhases, "JSFinder")
+		}
+	} else {
+		configDetails = append(configDetails, "JSFinder=nil")
 	}
 
 	if config.PocScan != nil {
@@ -2034,6 +2044,76 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			}
 			completedPhases["dirscan"] = true
 			w.incrSubTaskDone(ctx, task, "目录扫描")
+		}
+	}
+
+	// 检查控制信号
+	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+		return
+	}
+
+	// 执行 JSFinder 扫描（JS 敏感信息 + 未授权检测）
+	if config.JSFinder != nil && config.JSFinder.Enable && !completedPhases["jsfinder"] {
+		// 强制扫描模式：没有资产时从用户输入目标生成资产
+		if len(allAssets) == 0 && target != "" {
+			generatedAssets := scanner.GenerateAssetsFromTargets(target)
+			generatedAssets = filterSkippedHostsAssets(generatedAssets, skippedHosts)
+			if len(generatedAssets) > 0 {
+				allAssets = append(allAssets, generatedAssets...)
+				w.taskLog(task.TaskId, LevelInfo, "JSFinder: generated %d assets from target", len(generatedAssets))
+			}
+		}
+
+		if len(allAssets) == 0 {
+			w.taskLog(task.TaskId, LevelInfo, "JSFinder: skipped (no assets)")
+			completedPhases["jsfinder"] = true
+			w.incrSubTaskDone(ctx, task, "JS敏感信息扫描")
+		} else {
+			if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+				return
+			}
+
+			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "JS敏感信息扫描中", "JS敏感信息扫描")
+
+            jsfinderResults := w.executeJSFinder(ctx, task, allAssets, config.JSFinder, orgId)
+			if len(jsfinderResults) > 0 {
+                var schedResults []*JSFinderResultItem
+                for _, r := range jsfinderResults {
+                    schedResults = append(schedResults, &JSFinderResultItem{
+                        Authority:        r.Authority,
+                        Host:             r.Host,
+                        Port:             r.Port,
+                        URL:              r.URL,
+                        Severity:         r.Severity,
+                        VulName:          r.VulName,
+                        Result:           r.Result,
+                        Tags:             r.Tags,
+                        MatcherName:      r.MatcherName,
+                        ExtractedResults: r.ExtractedResults,
+                        CurlCommand:      r.CurlCommand,
+                        Request:          r.Request,
+                        Response:         r.Response,
+                    })
+                }
+                
+                req := &SaveJSFinderResultReq{
+                    WorkspaceId: task.WorkspaceId,
+                    MainTaskId:  task.MainTaskId,
+                    Results:     schedResults,
+                }
+                
+                resp, err := w.httpClient.SaveJSFinderResult(ctx, req)
+                if err != nil {
+                    w.taskLog(task.TaskId, LevelError, "JSFinder save failed: %v", err)
+                } else if !resp.Success {
+                    w.taskLog(task.TaskId, LevelWarn, "JSFinder save response: %s", resp.Msg)
+                } else {
+                    w.taskLog(task.TaskId, LevelInfo, "JSFinder completed: saved %d findings", len(jsfinderResults))
+                }
+			}
+			w.updateTaskProgressWithPhase(ctx, task.TaskId, 85, "JS敏感信息扫描完成", "JS敏感信息扫描")
+			completedPhases["jsfinder"] = true
+			w.incrSubTaskDone(ctx, task, "JS敏感信息扫描")
 		}
 	}
 
@@ -4514,6 +4594,101 @@ func (w *Worker) saveDirScanResults(ctx context.Context, task *scheduler.TaskInf
 	} else {
 		w.taskLog(task.TaskId, LevelWarn, "Dir scan: save results response: %s", resp.Msg)
 	}
+}
+
+// executeJSFinder 执行 JSFinder 扫描阶段（JS 敏感信息 + 未授权检测）
+func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.JSFinderConfig, orgId string) []*scanner.JSFinderResult {
+	defer func() {
+		if r := recover(); r != nil {
+			w.taskLog(task.TaskId, LevelError, "JSFinder panic recovered: %v, stack: %s", r, string(getStackTrace()))
+		}
+	}()
+
+	var httpAssets []*scanner.Asset
+	for _, asset := range assets {
+		if asset.IsHTTP || scanner.IsHTTPService(asset.Service, asset.Port) {
+			httpAssets = append(httpAssets, asset)
+		}
+	}
+
+	if len(httpAssets) == 0 {
+		w.taskLog(task.TaskId, LevelInfo, "JSFinder: skipped (no HTTP assets)")
+		return nil
+	}
+
+	// 拉取 4 份清单（高危路由 / 鉴权关键词 / 敏感数据关键词 / 域名黑名单）
+	cfgResp, err := w.httpClient.LoadJSFinderConfig(ctx)
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "JSFinder: load config failed: %v", err)
+		return nil
+	}
+	if cfgResp.Code != 0 {
+		w.taskLog(task.TaskId, LevelWarn, "JSFinder: load config response: %s", cfgResp.Msg)
+		return nil
+	}
+
+	threads := config.Threads
+	if threads <= 0 {
+		threads = 10
+	}
+	timeout := config.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+
+	// nil 表示用户未显式设置，默认视为 true；&false 表示用户明确关闭
+	enableSourcemap := config.EnableSourcemap == nil || *config.EnableSourcemap
+	enableUnauthCheck := config.EnableUnauthCheck == nil || *config.EnableUnauthCheck
+
+	w.taskLog(task.TaskId, LevelInfo, "JSFinder: %d HTTP assets, threads=%d, timeout=%ds, sourcemap=%v, unauth=%v",
+		len(httpAssets), threads, timeout, enableSourcemap, enableUnauthCheck)
+
+	jsScanner, ok := w.scanners["jsfinder"]
+	if !ok {
+		w.taskLog(task.TaskId, LevelError, "JSFinder: scanner not found")
+		return nil
+	}
+
+	opts := &scanner.JSFinderOptions{
+		HighRiskRoutes:       cfgResp.HighRiskRoutes,
+		AuthRequiredKeywords: cfgResp.AuthRequiredKeywords,
+		SensitiveKeywords:    cfgResp.SensitiveKeywords,
+		DomainBlacklist:      cfgResp.DomainBlacklist,
+		Threads:              threads,
+		Timeout:              timeout,
+		EnableSourcemap:      enableSourcemap,
+		EnableUnauthCheck:    enableUnauthCheck,
+	}
+
+	jsTaskLogger := func(level, format string, args ...interface{}) {
+		w.taskLog(task.TaskId, level, format, args...)
+	}
+
+	result, err := jsScanner.Scan(ctx, &scanner.ScanConfig{
+		Assets:      httpAssets,
+		Options:     opts,
+		WorkspaceId: task.WorkspaceId,
+		MainTaskId:  task.MainTaskId,
+		TaskLogger:  jsTaskLogger,
+	})
+
+	if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+		w.taskLog(task.TaskId, LevelInfo, "JSFinder: task stopped")
+		return nil
+	}
+
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "JSFinder error: %v", err)
+		return nil
+	}
+
+	if result == nil || len(result.JSFinderResults) == 0 {
+		w.taskLog(task.TaskId, LevelInfo, "JSFinder: no findings")
+		return nil
+	}
+
+	w.taskLog(task.TaskId, LevelInfo, "JSFinder: completed, found %d findings", len(result.JSFinderResults))
+	return result.JSFinderResults
 }
 
 // parseStatusCode 解析状态码字符串为整数
