@@ -433,6 +433,60 @@
           />
         </el-card>
       </el-tab-pane>
+
+      <!-- JSFinder 配置 -->
+      <el-tab-pane :label="$t('poc.jsfinderConfigTab')" name="jsfinderConfig">
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <span>{{ $t('poc.jsfinderConfig') }}</span>
+              <div style="margin-left: auto">
+                <el-button size="small" @click="handleResetJSFinderConfig" :loading="jsfinderResetLoading" style="margin-right: 10px">
+                  <el-icon><RefreshLeft /></el-icon>{{ $t('poc.jsfinderResetDefault') }}
+                </el-button>
+                <el-button type="primary" size="small" @click="handleSaveJSFinderConfig" :loading="jsfinderSaveLoading">
+                  <el-icon><Check /></el-icon>{{ $t('poc.save') }}
+                </el-button>
+              </div>
+            </div>
+          </template>
+          <p class="tip-text">{{ $t('poc.jsfinderConfigTip') }}</p>
+          <el-row :gutter="16" v-loading="jsfinderLoading">
+            <el-col :xs="24" :md="12" v-for="field in jsfinderFields" :key="field.key" style="margin-bottom: 16px">
+              <div class="jsfinder-list-card">
+                <div class="jsfinder-list-title">{{ $t(field.labelKey) }}</div>
+                <div class="jsfinder-list-hint">{{ $t(field.hintKey) }}</div>
+                <div class="jsfinder-tags">
+                  <el-tag
+                    v-for="(item, idx) in jsfinderConfig[field.key]"
+                    :key="`${field.key}-${idx}`"
+                    closable
+                    size="default"
+                    :disable-transitions="false"
+                    @close="jsfinderConfig[field.key].splice(idx, 1)"
+                    style="margin: 0 6px 6px 0"
+                  >{{ item }}</el-tag>
+                  <span v-if="!jsfinderConfig[field.key] || jsfinderConfig[field.key].length === 0" class="text-muted hint-text">
+                    {{ $t('poc.jsfinderEmptyHint') }}
+                  </span>
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 8px">
+                  <el-input
+                    v-model="jsfinderInputs[field.key]"
+                    :placeholder="$t('poc.jsfinderInputPlaceholder')"
+                    size="small"
+                    @keyup.enter="addJSFinderItem(field.key)"
+                    clearable
+                  />
+                  <el-button type="primary" size="small" @click="addJSFinderItem(field.key)">
+                    {{ $t('poc.jsfinderAddItem') }}
+                  </el-button>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 目录扫描字典编辑对话框 -->
@@ -1165,11 +1219,12 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened } from '@element-plus/icons-vue'
+import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check } from '@element-plus/icons-vue'
 import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
 import { getWeakpassDictList, saveWeakpassDict, deleteWeakpassDict, clearWeakpassDict } from '@/api/weakpass'
+import { getJSFinderConfig, saveJSFinderConfig, resetJSFinderConfig } from '@/api/jsfinder'
 import jsYaml from 'js-yaml'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
@@ -1179,7 +1234,7 @@ const router = useRouter()
 const { t } = useI18n()
 
 // 有效的tab名称
-const validTabs = ['nucleiTemplates', 'tagMapping', 'customPoc', 'dirscanDict', 'subdomainDict', 'weakpassDict']
+const validTabs = ['nucleiTemplates', 'tagMapping', 'customPoc', 'dirscanDict', 'subdomainDict', 'weakpassDict', 'jsfinderConfig']
 
 // 从URL获取初始tab
 const getInitialTab = () => {
@@ -1328,6 +1383,30 @@ const weakpassDictPagination = reactive({
   pageSize: 20,
   total: 0
 })
+
+// JSFinder 配置
+const jsfinderLoading = ref(false)
+const jsfinderSaveLoading = ref(false)
+const jsfinderResetLoading = ref(false)
+const jsfinderLoaded = ref(false)
+const jsfinderConfig = reactive({
+  highRiskRoutes: [],
+  authRequiredKeywords: [],
+  sensitiveKeywords: [],
+  domainBlacklist: []
+})
+const jsfinderInputs = reactive({
+  highRiskRoutes: '',
+  authRequiredKeywords: '',
+  sensitiveKeywords: '',
+  domainBlacklist: ''
+})
+const jsfinderFields = [
+  { key: 'highRiskRoutes', labelKey: 'poc.jsfinderHighRiskRoutes', hintKey: 'poc.jsfinderHighRiskRoutesHint' },
+  { key: 'authRequiredKeywords', labelKey: 'poc.jsfinderAuthRequiredKeywords', hintKey: 'poc.jsfinderAuthRequiredKeywordsHint' },
+  { key: 'sensitiveKeywords', labelKey: 'poc.jsfinderSensitiveKeywords', hintKey: 'poc.jsfinderSensitiveKeywordsHint' },
+  { key: 'domainBlacklist', labelKey: 'poc.jsfinderDomainBlacklist', hintKey: 'poc.jsfinderDomainBlacklistHint' }
+]
 
 // 服务类型选项
 const serviceOptions = [
@@ -1613,6 +1692,8 @@ function handleTabChange(tab) {
     loadSubdomainDicts()
   } else if (tab === 'weakpassDict' && weakpassDicts.value.length === 0) {
     loadWeakpassDicts()
+  } else if (tab === 'jsfinderConfig' && !jsfinderLoaded.value) {
+    loadJSFinderConfigData()
   }
 }
 
@@ -4164,6 +4245,89 @@ function getServiceLabel(service) {
   const opt = serviceOptions.find(o => o.value === service)
   return opt ? opt.label : service
 }
+
+// ==================== JSFinder 配置 ====================
+function applyJSFinderData(data) {
+  jsfinderConfig.highRiskRoutes = Array.isArray(data?.highRiskRoutes) ? [...data.highRiskRoutes] : []
+  jsfinderConfig.authRequiredKeywords = Array.isArray(data?.authRequiredKeywords) ? [...data.authRequiredKeywords] : []
+  jsfinderConfig.sensitiveKeywords = Array.isArray(data?.sensitiveKeywords) ? [...data.sensitiveKeywords] : []
+  jsfinderConfig.domainBlacklist = Array.isArray(data?.domainBlacklist) ? [...data.domainBlacklist] : []
+}
+
+async function loadJSFinderConfigData() {
+  jsfinderLoading.value = true
+  try {
+    const res = await getJSFinderConfig()
+    if (res.code === 0) {
+      applyJSFinderData(res.data)
+      jsfinderLoaded.value = true
+    } else {
+      ElMessage.error(res.msg || t('poc.loadFailed'))
+    }
+  } catch (e) {
+    console.error('加载JSFinder配置失败:', e)
+    ElMessage.error(t('poc.loadFailed'))
+  } finally {
+    jsfinderLoading.value = false
+  }
+}
+
+function addJSFinderItem(field) {
+  const v = (jsfinderInputs[field] || '').trim()
+  if (!v) return
+  if (jsfinderConfig[field].includes(v)) {
+    jsfinderInputs[field] = ''
+    return
+  }
+  jsfinderConfig[field].push(v)
+  jsfinderInputs[field] = ''
+}
+
+async function handleSaveJSFinderConfig() {
+  jsfinderSaveLoading.value = true
+  try {
+    const res = await saveJSFinderConfig({
+      highRiskRoutes: jsfinderConfig.highRiskRoutes,
+      authRequiredKeywords: jsfinderConfig.authRequiredKeywords,
+      sensitiveKeywords: jsfinderConfig.sensitiveKeywords,
+      domainBlacklist: jsfinderConfig.domainBlacklist
+    })
+    if (res.code === 0) {
+      ElMessage.success(t('poc.jsfinderSaveSuccess'))
+      if (res.data) applyJSFinderData(res.data)
+    } else {
+      ElMessage.error(res.msg || t('poc.saveFailed'))
+    }
+  } catch (e) {
+    console.error('保存JSFinder配置失败:', e)
+    ElMessage.error(t('poc.saveFailed'))
+  } finally {
+    jsfinderSaveLoading.value = false
+  }
+}
+
+async function handleResetJSFinderConfig() {
+  try {
+    await ElMessageBox.confirm(t('poc.jsfinderResetConfirm'), t('common.confirm'), { type: 'warning' })
+  } catch (e) {
+    return
+  }
+  jsfinderResetLoading.value = true
+  try {
+    const res = await resetJSFinderConfig()
+    if (res.code === 0) {
+      ElMessage.success(t('poc.jsfinderResetSuccess'))
+      if (res.data) applyJSFinderData(res.data)
+    } else {
+      ElMessage.error(res.msg || t('poc.saveFailed'))
+    }
+  } catch (e) {
+    console.error('重置JSFinder配置失败:', e)
+    ElMessage.error(t('poc.saveFailed'))
+  } finally {
+    jsfinderResetLoading.value = false
+  }
+}
 </script>
 
 <style lang="scss" scoped>
@@ -4183,6 +4347,38 @@ function getServiceLabel(service) {
     border-radius: 4px;
     border-left: 3px solid var(--el-color-primary-light-5);
     line-height: 1.6;
+  }
+
+  .jsfinder-list-card {
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    padding: 12px 14px;
+    background: var(--el-fill-color-blank);
+    height: 100%;
+    box-sizing: border-box;
+  }
+
+  .jsfinder-list-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+    margin-bottom: 4px;
+  }
+
+  .jsfinder-list-hint {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.5;
+    margin-bottom: 10px;
+  }
+
+  .jsfinder-tags {
+    min-height: 36px;
+    padding: 6px;
+    background: var(--el-fill-color-light);
+    border-radius: 4px;
+    max-height: 220px;
+    overflow-y: auto;
   }
 
   .filter-form {
