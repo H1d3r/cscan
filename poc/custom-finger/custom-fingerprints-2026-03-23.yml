@@ -10775,8 +10775,6 @@
 - name: Visualware-MyConnection-Server
   rule: '((body="<!-- Begin MyConnection Server applet -->" || server="Visualware MyConnection Server") && body!="Server: couchdb") || (banner="Server: Visualware MyConnection Server" && banner!="couchdb")'
 - name: Vite-App
-  rule: body="/@vite/client"
-- name: Vite-App
   rule: icon_hash="-1207029254"
 - name: Vite-App
   rule: title=="Vite App"
@@ -16001,8 +15999,6 @@
   rule: body="SANGFOR终端检测响应平台"
 - name: 深信服行为感知系统
   rule: body="<title>Loading...</title>"
-- name: 深信服行为感知系统
-  rule: header="Etag"
 - name: 深信服防火墙
   rule: title="深信服 防火墙"
 - name: 深信服数据中心
@@ -19748,10 +19744,6 @@
 - name: youBBS
   rule: title="youBBS"
 - name: yonyou-ufida-nc
-  rule: body="<div id="nc_text">"
-- name: yonyou-ufida-nc
-  rule: body="<div id="nc_img" onmouseover="overimage('nc');"
-- name: yonyou-ufida-nc
   rule: body="logo/images/" && body="ufida"
 - name: yonyou-ufida-nc
   rule: body="logo/images/ufida_nc.png"
@@ -20345,8 +20337,6 @@
   rule: body="<div><input type="hidden" name="__formid" id="field-login-__formid" value="login" />"
 - name: weblogic
   rule: body="WebLogic"
-- name: webissues
-  rule: body="<div id="header-right">webissues"
 - name: webfs
   rule: 'header="server: webfs"'
 - name: webgrind
@@ -21277,8 +21267,6 @@
   rule: body="/yungou/css/comm.css"
 - name: sztaiji_zw
   rule: title="sztaiji_zw"
-- name: tab-and-link-manager
-  rule: body="<div id="footer_copyright" class="shade footer_copyright">powered by <a href="http://www.wolfshead-solutions.com/ws-products/product-1"
 - name: tableau
   rule: icon_hash="783f669ae8336979325ef497a5e43037"
 - name: sytown-CMS
@@ -21528,8 +21516,6 @@
 - name: sourcecode-k2
   rule: body="document.getelementbyid("redirectform").action = "../workspace/default.aspx"
 - name: sourcebans
-  rule: body="<div id="footqversion">version("
-- name: sourcebans
   rule: body="http://www.sourcebans.net" target="_blank"><img src="images/sb.png"
 - name: sourcecode-k2
   rule: body="document.getelementbyid("redirectform").action = "../mxworkspace/login.aspx"
@@ -21673,8 +21659,6 @@
   rule: body="gcfutil = jsloader.resolve('smartbi.gcf.gcfutil')"
 - name: slideshowpro-director
   rule: body="</div> <!--close login-container--></body>"
-- name: slideshowpro-director
-  rule: body="<div id="simple-footer"><span>slideshowpro director"
 - name: skywcm
   rule: header="skywcm"
 - name: skywcm
@@ -21951,8 +21935,6 @@
   rule: body="gif/rlogo1.gif"
 - name: sco-openserver
   rule: body="sco corporate web site"
-- name: sawmill
-  rule: body="<div id="password:error"
 - name: sapido-router
   rule: body="/etop_home_menu_style.css" && body="/b28n.js"
 - name: savant-web-server
@@ -22399,8 +22381,6 @@
   rule: title="qht_study"
 - name: qcodo-development-framework
   rule: body="<b>qcodo version:"
-- name: qcubed-development-framework
-  rule: body="<div id="codeversion">qcubed development framework"
 - name: qax-useso
   rule: body="libs.useso.com"
 - name: qcodo-development-framework
@@ -22631,8 +22611,6 @@
   rule: body="powered by phxeventmanager"
 - name: piaoyou
   rule: body=".sexybutton.sexyorange:hover"
-- name: phxEventManager
-  rule: body="<script type="text/javascript" src="pem-includes/xajax/xajax_js/xajax_core.js"></script>"
 - name: phxeventmanager
   rule: body="<td><div class="minicalmonth"
 - name: phxEventManager
@@ -22835,8 +22813,6 @@
   rule: body="/tpl_image/by_phpmysport.gif" border="0""
 - name: phpMySport
   rule: body="<a href="http://phpmysport.sourceforge.net" title="phpMySport">"
-- name: phpMySport
-  rule: body="<div id="footer">R&eacute;alisation phpMySport"
 - name: phpMyRealty
   rule: 'body="<!-- main content table : stop -->" && body="powered by <a href=\"http://www.phpmyrealty.com"'
 - name: phpMySport
@@ -23607,8 +23583,6 @@
   rule: body="nginxWebUI"
 - name: nginx_admin
   rule: header="nginx admin"
-- name: ngi-gxd5-pacs
-  rule: body="<div id="passwordwrapper" class="fieldwrapper">"
 - name: nginx-webui
   rule: body="<title>nginxWebUI</title>"
 - name: nghttpx-HTTP/2proxy
@@ -24188,13 +24162,9 @@
 - name: marcopacs-Product
   rule: body="data-redirect="account/systemconfiguration.aspx""
 - name: marathon
-  rule: body="<div id="marathon"></div>"
-- name: marathon
   rule: title="marathon"
 - name: maopoa
   rule: title="maopoa"
-- name: marathon
-  rule: body="<div id="marathon"></div>" && body="href="img/marathon-favicon.ico"
 - name: maop-oa
   rule: body="www.oooa.cn"
 - name: mantuoluo-medication
@@ -24909,14 +24879,10 @@
   rule: icon_hash="97c6417ed01bdc0ae3ef32ae4894fd03"
 - name: jupyterhub
   rule: body="<title>JupyterHub</title>"
-- name: jupyter-notebook
-  rule: body="<div id="ipython_notebook" class="nav navbar-brand">"
 - name: juniper-vpn
   rule: body="junos pulse secure access service"
 - name: juniper_vpn
   rule: body="welcome.cgi?p=logo"
-- name: jupyter-notebook
-  rule: body="<div id="ipython-main-app" class="container">"
 - name: juniper-hdr
   rule: body="/stylesheet/juniper.css"
 - name: juniper-hdr
@@ -25287,8 +25253,6 @@
   rule: title="ip-label"
 - name: ip-label
   rule: header="ip-label"
-- name: ionCube-Loader
-  rule: body="<div id="loading"><script type="text/javascript">document.write("<p>Initialising<br>ionCube Loader Wizard<br><span id="status"></span></p>");</script>"
 - name: ionCube-Loader
   rule: body="<img src="?page=logo" alt="ionCube logo">"
 - name: ionCube-Loader
@@ -26853,8 +26817,6 @@
   rule: body="/js/esotalk.js"
 - name: esotalk
   rule: body="generated by esotalk"
-- name: esoTalk
-  rule: body="<script type="text/javascript" src="../js/esotalk.js"></script>"
 - name: esoTalk中文优化版
   rule: body="generated by esoTalk"
 - name: esoTalk中文优化版
@@ -27961,8 +27923,6 @@
   rule: body="data-i18n="[html]username">#username&nbsp;&nbsp;</td>"
 - name: colasoft-mdp
   rule: body="科来 版权所有 保留所有权利"
-- name: colasoft-mdp
-  rule: body="<div id="processtime" time="0.000033" >#processtime</div>"
 - name: codoforum
   rule: header="codoforum"
 - name: codoforum
@@ -28129,8 +28089,6 @@
   rule: header="Set-Cookie" && header="webvpncontext="
 - name: cisco-phone-adapter-configuration-utility
   rule: body="cisco" && body="configuration utility"
-- name: cisco-meeting-app
-  rule: body="<div id="cisco_meeting_application">"
 - name: cisco-nexus-data-broker
   rule: body="window.location.href = '/monitor';"
 - name: cisco-nexus-data-broker
@@ -28365,8 +28323,6 @@
   rule: icon_hash="1544230796"
 - name: cPanel
   rule: body="<p class="troubleshoot">It may be possible to restore access to this site by <a href="http://www.cpanel.net/docs/dnscache/cleardns.html">following these instructions</a> for clearing your dns cache.</p>"
-- name: cPanel
-  rule: body="<div id="footer_images"><img src="sys_cpanel/images/powered_by.gif" />"
 - name: cPanel
   rule: body="Apache is working on your cPanel<sup>&reg;</sup> and WHM&#8482; Server"
 - name: cPanel
@@ -28708,8 +28664,6 @@
 - name: bbPress
   rule: body="<!-- if you like showing off the fact that your server rocks -->"
 - name: bbPress
-  rule: body="<div id="bbpress-forums">"
-- name: bbPress
   rule: body="<!-- If you like showing off the fact that your server rocks -->"
 - name: bbPress
   rule: body="<!-- if you like showing off the fact that your server rocks -->" && body="is proudly powered by <a href="http://bbpress.org"
@@ -28765,8 +28719,6 @@
   rule: title="webacula"
 - name: bSpeak
   rule: body="- powered by bSpeak</TITLE>"
-- name: backbee
-  rule: body="<div id="bb5-site-wrapper">"
 - name: bacula-web
   rule: title="bacula-web"
 - name: b3log-solo
@@ -30313,10 +30265,6 @@
   rule: body="logo/images/ufida_nc.png"
 - name: Yonyou-UFIDA-NC
   rule: body="ufida" && body="logo/images/" && body="logo/images/ufida_nc.png" && body="<div id="nc_text">" && body="<div id="nc_img" onmouseover="overimage('nc';" && body="ufida nc"
-- name: Yonyou-UFIDA-NC
-  rule: body="<div id="nc_img" onmouseover="overimage("nc");"
-- name: Yonyou-UFIDA-NC
-  rule: body="<div id="nc_text">"
 - name: Yonyou-U8-cloud
   rule: body="开启u8 cloud云端之旅"
 - name: Yonyou-UFIDA
@@ -31590,8 +31538,6 @@
 - name: WebIssues
   rule: body="<div><input type="hidden" name="__formid" id="field-login-__formid" value="login" />"
 - name: WebIssues
-  rule: body="<div id="header-right">webissues"
-- name: WebIssues
   rule: body="<div id="header-right">webissues" && body="<div><input type="hidden" name="__formid" id="field-login-__formid" value="login" />"
 - name: WebHareApplicationPortal
   rule: title="WebHare Application Portal"
@@ -31675,8 +31621,6 @@
   rule: body="<form method="post" action="RTE_popup_file_atch.asp" name="frmImageInsrt">"
 - name: Web2
   rule: 'header="server: web2"'
-- name: Web2py
-  rule: body="<div id="serendipityleftsidebar">"
 - name: Web-Wiz-Rich-Text-Editor
   rule: body="<a href=\"http://www.richtexteditor.org"
 - name: Web-Data-Administrator
@@ -32106,8 +32050,6 @@
 - name: WEBXPAY
   rule: title="WEBXPAY"
 - name: WEBSOC
-  rule: body="<div id="logo-websoc" class="png-bg"></div>"
-- name: WEBSOC
   rule: title="网站立体监控系统"
 - name: WEBSOC
   rule: body="<div id=\"logo-websoc\" class=\"png-bg\"></div>"
@@ -32244,13 +32186,9 @@
 - name: VkFlash
   rule: title="VkFlash"
 - name: Vivotek-Network-Camera
-  rule: body="<script type="text/javascript" src="/cgi-bin/admin/getparamjs.cgi?system">"
-- name: Vivotek-Network-Camera
   rule: body="<div id=\"logo_icon\"><a href=\"http://www.vivotek.com/\" target=\"_blank\"><img alt=\"logo\" src=\"pic/logo.gif\"></a></div>"
 - name: Vivotek (Camera)
   rule: icon_hash="-1654229048"
-- name: Vivotek-Network-Camera
-  rule: body="<div id="logo_icon"><a href="http://www.vivotek.com/" target="_blank"><img alt="logo" src="pic/logo.gif"></a></div>"
 - name: Visualware-MyConnection-Server
   rule: 'header="server: visualware myconnection server"'
 - name: VisualwareMyConnectionServerBusinessCenter
@@ -32423,8 +32361,6 @@
   rule: title="VeryCMS"
 - name: Verizon-Router
   rule: body="<div id=\"bgimage\" class=\"container\" ng-view></div>"
-- name: Verizon-Router
-  rule: body="<div id="bgimage" class="container" ng-view></div>"
 - name: Verizon-Wireless-Router
   rule: body="verizon_logo_blk.gif"
 - name: Verizon-CDN
@@ -34270,8 +34206,6 @@
 - name: TYPO3CMS
   rule: title="TYPO3 CMS"
 - name: Tab-and-Link-Manager
-  rule: body="<div id="footer_copyright" class="shade footer_copyright">powered by <a href="http://www.wolfshead-solutions.com/ws-products/product-1"
-- name: Tab-and-Link-Manager
   rule: body="<div id=\"footer_copyright\" class=\"shade footer_copyright\">powered by <a href=\"http://www.wolfshead-solutions.com/ws-products/product-1"
 - name: TYPO3
   rule: body="<!--TYPO3SEARCH_end-->"
@@ -35635,8 +35569,6 @@
   rule: 'body="<div id="sds-login-dialog-form" style="position: absolute; top: -10000px; left: -10000px;"><form id="login-form" class="x-plain-body" method="POST" action="login.cgi" target="login_iframe""'
 - name: Synology-DiskStation
   rule: body="<!-- Don"t contain any text node to avoid IE insertBefore bug -->"
-- name: Synology-DiskStation
-  rule: body="<script type="text/javascript">SYNO.SDS.Session = {"
 - name: Synology VPN Plus
   rule: icon_hash="1235070469"
 - name: Synology DiskStation
@@ -35747,8 +35679,6 @@
   rule: body="swagger-ui.css"
 - name: Svelte
   rule: title="Svelte"
-- name: Swagger
-  rule: body="<div id="swagger-ui"></div>"
 - name: Swagger
   rule: body="swagger-ui.js"
 - name: Svelte
@@ -36027,8 +35957,6 @@
   rule: title="SublimeVideo"
 - name: Subrion
   rule: title="Subrion"
-- name: Subdreamer-CMS
-  rule: body="<div id="copyright">Powered by <b>Subdreamer CMS</b></div>"
 - name: Subdreamer-CMS
   rule: body="<a href="http://www.subdreamer.com" target="_blank" class="copyright">Website powered by Subdreamer CMS</a>"
 - name: SublimeVideo
@@ -36386,11 +36314,7 @@
 - name: SourceCode-K2
   rule: body="document.getelementbyid("redirectform".action = "../mxworkspace/login.aspx" && body="document.getelementbyid("redirectform".action = "../workspace/default.aspx"
 - name: SourceBans
-  rule: body="<div id="footqversion">version"
-- name: SourceBans
   rule: body="http://www.sourcebans.net" target="_blank"><img src="images/sb.png"
-- name: SourceBans
-  rule: body="<div id="footqversion">version("
 - name: SoundManager
   rule: title="SoundManager"
 - name: SourceBans
@@ -36823,8 +36747,6 @@
   rule: header="Slimbox"
 - name: SlideShowPro-Director
   rule: body="</div> <!--close login-container--></body>"
-- name: SlideShowPro-Director
-  rule: body="<div id="simple-footer"><span>slideshowpro director"
 - name: Slick
   rule: title="Slick"
 - name: SlideShowPro-Director
@@ -37531,8 +37453,6 @@
   rule: body="powered by <a class="externallink" href="http:"
 - name: Scrutinizer-Traffic-management-system
   rule: body="<div id='testalerthdrmsg'>for the best scrutinizer experience possible, please address the issues below:"
-- name: Scrutinizer-Traffic-management-system
-  rule: body="<div id="testalerthdrmsg">for the best scrutinizer experience possible, please address the issues below:"
 - name: ScrewTurn-Wiki-Web-service
   rule: title="screwturn-wiki"
 - name: ScrewTurn-Wiki-Web-service
@@ -37646,8 +37566,6 @@
 - name: Sazito
   rule: header="Sazito"
 - name: Sawmill
-  rule: body="<div id="password:error"
-- name: Sawmill
   rule: body="<td><input id="password" class="username-psw text" type="password" value="" /><div id="password:error" class="form-error"></div></td>"
 - name: SaxueArticle文章管理系统
   rule: title="SaxueArticle文章管理系统"
@@ -37657,8 +37575,6 @@
   rule: header="sawmill"
 - name: Sawmill
   rule: title="Sawmill"
-- name: Sawmill
-  rule: body="<div id="password:error" && body="src="/picts/sawmill_logo.png"
 - name: Sawmill
   rule: body="<div id=\"password:error" && body="src=\"/picts/sawmill_logo.png"
 - name: Sawmill
@@ -38020,8 +37936,6 @@
 - name: SQLBuddy
   rule: title="SQL Buddy"
 - name: SQL-CMS
-  rule: body="<script type="text/javascript">var LoginAttempts=0;</script><link href="CSS/styles/default.css" type="text/css" rel="stylesheet" /></head>"
-- name: SQL-CMS
   rule: body="<tr><td>Language</td><td><select id="ddlLanguage" onchange="location.href="admin.aspx?lang="+SelectedValue("ddlLanguage")"><option value="English" selected="selected">English</option>"
 - name: SQL-Buddy
   rule: body="h3><a href=\"http://www.sqlbuddy.com/help" && body="href=\"themes/bittersweet/css/main.css"
@@ -38123,8 +38037,6 @@
   rule: body="<body onload="setwindowtitle;showindex;">"
 - name: SONY-Projector
   rule: body="<body onload=\"setwindowtitle();showindex();\">" && body="<script type=\"text/javascript\" src=\"sonylogojs.js\"></script>"
-- name: SONY-Projector
-  rule: body="<script type="text/javascript" src="sonylogojs.js"></script>"
 - name: SONY-PCS-Video-Conferencing
   rule: header="pcs-" && header=" web control"
 - name: SONY-Projector
@@ -38720,8 +38632,6 @@
 - name: Ruckus Wireless
   rule: icon_hash="-2069844696"
 - name: Ruby-on-Rails
-  rule: body="<div id="session_dump" style="display:none"><pre class="debug_dump">---"
-- name: Ruby-on-Rails
   rule: body="<!-- This file lives in public/422.html -->"
 - name: RubyonRails
   rule: title="Ruby on Rails"
@@ -38957,8 +38867,6 @@
   rule: body=" sagemcom corporation."
 - name: Residential-Gateway
   rule: header="residential gateway"
-- name: Resin
-  rule: body="<script type="text/javascript" src="/resin-doc/js/default.js">"
 - name: Residential Gateway
   rule: icon_hash="-1933493443"
 - name: Residential-Gateway
@@ -39025,8 +38933,6 @@
   rule: header="Relaxcms"
 - name: Reinvigorate
   rule: title="Reinvigorate"
-- name: Reinvigorate
-  rule: body="<script type="text/javascript" src="http://include.reinvigorate.net/re_.js"></script>"
 - name: RegentApi_v2.0
   rule: body="RegentApi_v2.0"
 - name: Reinvigorate
@@ -39177,8 +39083,6 @@
   rule: body="producttype" && body="dominion ksx"
 - name: Raritan-Company's-product
   rule: body="<!-- raritan logo -->"
-- name: Raritan-Company's-product
-  rule: body="<div id="raritan_logo"
 - name: Raritan-Company's-product
   rule: title="akc client check"
 - name: Raritan-Company's-product
@@ -39681,8 +39585,6 @@
   rule: title="Photo Station"
 - name: QNAP NAS Virtualization Station
   rule: icon_hash="-1041180225"
-- name: QCubed-Development-Framework
-  rule: body="<div id="codeversion">qcubed development framework"
 - name: QLogic-SANsurfer-FC-HBA-Manager
   rule: body="<!---- This initializes the navigator.family object ---->"
 - name: QLogic-SANsurfer-FC-HBA-Manager
@@ -39761,8 +39663,6 @@
   rule: icon_hash="ba4bfe5d1deb2b4410e9eb97c5b74c9b"
 - name: Puppet-Dashboard
   rule: body="<title>Puppet Node Manager</title>"
-- name: PunBB
-  rule: body="<div id="brd-index" class="brd-page basic-page">"
 - name: PulseSecureSSLVPN
   rule: title="Pulse Secure SSL VPN"
 - name: PunBB
@@ -40957,8 +40857,6 @@
   rule: body="templates/phpmps/style/index.css"
 - name: PHPGradeBook
   rule: body="<title>phpGradeBook</title>"
-- name: PHPEasyData
-  rule: body="<div id="phpeasydata_container"  >"
 - name: PHPEMS在线模拟考试系统
   rule: header="PHPEMS在线模拟考试系统"
 - name: PHPEasyData
@@ -41507,8 +41405,6 @@
   rule: icon_hash="83245b21512cc0a0e7a67c72c3a3f501"
 - name: OpenX
   rule: body="<span class="tab-s">Welcome to OpenX</span><br />"
-- name: OpenX
-  rule: body="<div id="oaHeaderBranding" class="brandingAdServer">OpenX</div>"
 - name: OpenWrt
   rule: body="<title>OpenWrt Administrative Console</title>"
 - name: OpenWrt
@@ -42102,8 +41998,6 @@
 - name: Novell-ZENworks
   rule: body="managementzonename"
 - name: Novell-Open-Enterprise-Server
-  rule: body="<script type="text/javascript" src="/welcome/inc/flashobj.js"></script> <!-- required for javascript banners from Novell.com -->"
-- name: Novell-Open-Enterprise-Server
   rule: body="<!-- this is all just a super-duper redirect to the welcome page"
 - name: Novell-Open-Enterprise-Server
   rule: body="<!-- this is all just a super-duper redirect to the welcome page" && body="href=\"http://www.novell.com/products/openenterpriseserver"
@@ -42403,8 +42297,6 @@
   rule: body="<!-- full_page_footer.html START-->"
 - name: Netsys
   rule: header="Netsys"
-- name: Netsweeper
-  rule: body="<DIV id="overDiv" style="position:absolute; visibility:hidden; z-index:104;"></DIV>"
 - name: Netsweeper
   rule: body="<!-- full_page_header.html START -->"
 - name: Netsweeper
@@ -43223,8 +43115,6 @@
   rule: body="<div id=\"passwordwrapper\" class=\"fieldwrapper\">"
 - name: NITC
   rule: body="NITC Web Marketing Service"
-- name: NGI-GXD5-Pacs
-  rule: body="<div id="passwordwrapper" class="fieldwrapper">"
 - name: NEWS
   rule: body="<img id="createcheckcode" src="login/picturecheckcode" name="check_code" ng-click="reloadcheckcode"
 - name: NEWS
@@ -44253,8 +44143,6 @@
   rule: body="/admin/modules/admin/statics/images/"
 - name: Mithril
   rule: title="Mithril"
-- name: MivaMerchant
-  rule: body="<div id="mmcategorytree">"
 - name: MitelMiVoiceMX-ONE
   rule: title="Mitel MiVoice MX-ONE"
 - name: Mithril
@@ -44293,8 +44181,6 @@
   rule: body="/wm/mail/login.html"
 - name: Mirapoint
   rule: body="/wm/mail/login.html"
-- name: Mioot-Live-Chat
-  rule: body="<div id="miootOnOffDiv""
 - name: Miracle Hunt Services
   rule: header="Miracle Hunt Services"
 - name: MiracleHuntServices
@@ -45228,13 +45114,9 @@
 - name: Mahara
   rule: body="this site is powered by mahara" && body="id=\"powered-by\"><a href=\"http://mahara.org/" && body="{\"namedfieldempty\":"
 - name: Mahara
-  rule: body="<script type="text/javascript">var strings = {"namedfieldempty":"The required field \"%s\" is empty","processing":"Processing","requiredfieldempty":"A required field is empty","unknownerror":"An unknown error occurred (0x20f91a0)","
-- name: Mahara
   rule: body="<!-- there is a div id="performance-info" wrapping this -->"
 - name: Mahara
   rule: body="this site is powered by mahara"
-- name: Mahara
-  rule: body="<div id="powered-by"><a href="http://mahara.org/"><img src=""
 - name: Mahara
   rule: body="this site is powered by mahara" && body="id="powered-by"><a href="http://mahara.org/" && body="{"namedfieldempty":"
 - name: Mahara
@@ -46144,8 +46026,6 @@
 - name: Leaflet
   rule: header="Leaflet"
 - name: Leadsec-WAF
-  rule: body="<div id="divlogin">"
-- name: Leadsec-WAF
   rule: body="<div id="divlogin">" && body="网御waf"
 - name: Leadsec-SOC
   rule: body="/leadsec-soc" && body="action=\"/leadsec-soc/signin"
@@ -46301,8 +46181,6 @@
   rule: header="LS Research ModFLEX Mini Gateway"
 - name: LSResearchModFLEXMiniGateway
   rule: title="LS Research ModFLEX Mini Gateway"
-- name: LOREX-NVR
-  rule: body="<div id="lorexcameras" class="style29">"
 - name: LOREX-NVR
   rule: body="<div id=\"lorexcameras\" class=\"style29\">"
 - name: LOYTEC-LINX
@@ -46972,8 +46850,6 @@
 - name: Kayako-SupportSuite
   rule: body="- Powered By Kayako eSupport</title>"
 - name: Kayako-SupportSuite
-  rule: body="<div id="bottomfooter" class="bottomfooterpadding"><a href="http://www.kayako.com" target="_blank" class="bottomfooterlink">Help Desk Software""
-- name: Kayako-SupportSuite
   rule: body="powered by kayako esupport"
 - name: Kayako-SupportSuite
   rule: body="powered by kayako esupport" && body="help desk software by kayako esupport"
@@ -47208,13 +47084,9 @@
 - name: JupyterHub
   rule: icon_hash="1248917303"
 - name: Jupyter-Notebook
-  rule: body="<div id="ipython_notebook" class="nav navbar-brand">"
-- name: Jupyter-Notebook
   rule: body="<div id=\"ipython-main-app\" class=\"container\">" && body="<div id=\"ipython_notebook\" class=\"nav navbar-brand\">"
 - name: Jupyter Notebook
   rule: body="<div id=\"ipython-main-app\" class=\"container\">" || icon_hash="-895963602"
-- name: Jupyter-Notebook
-  rule: body="<div id="ipython-main-app" class="container">" && body="<div id="ipython_notebook" class="nav navbar-brand">"
 - name: Jupyter Notebook
   rule: header="Jupyter Notebook"
 - name: Jupyter Notebook
@@ -47912,8 +47784,6 @@
 - name: InvisionPowerBoard
   rule: body="<a href="#j_content" title="Jump to content" accesskey="m">Jump to content</a>"
 - name: InvisionPowerBoard
-  rule: body="<div id="ipbwrapper">"
-- name: InvisionPowerBoard
   rule: body="Powered by <a href="http://www.invisionboard.com"
 - name: InvisionPowerBoard
   rule: body="Powered By <a href="http://www.invisionboard.com" style="text-decoration:none" target="_blank">IP.Board</a>"
@@ -48147,8 +48017,6 @@
   rule: header="Infusionsoft"
 - name: InfraServer
   rule: title="InfraServer"
-- name: Infotrak-Oil-Commander
-  rule: body="<div id="pnlContent_Shadow" style="background-color:DarkGray;overflow:hidden;position:absolute;left:23;top:163;z-index:-1;width:98%;height:700 ;">"
 - name: Infotrak-Oil-Commander
   rule: 'body="<title>Login - Powered By: Infotrak"s Oil Commander</title>"'
 - name: Infosec-UTRUST
@@ -48726,8 +48594,6 @@
 - name: ICEFLOW_VPN
   rule: header="Server:ICEFLOW"
 - name: ICEshop
-  rule: body="<div id="iceshop">"
-- name: ICEshop
   rule: body="<dl class="box boxLogo  box02 iceshop">"
 - name: ICEFLOWNP上网行为管理
   rule: title="ICEFLOW NP上网行为管理"
@@ -49085,8 +48951,6 @@
   rule: 'header="server: quidway" && header="/view/login.html"'
 - name: Huawei-Switch
   rule: header="/view/login.html"
-- name: Huawei-Switch
-  rule: body="<div id="zhtip" style="display:none">web网管系统初始化中，请稍后</div>"
 - name: Huawei-Switch
   rule: 'body="huawei technologies co., ltd" && body="background: url("../style/default/image/diaphapic.png");"'
 - name: Huawei-Switch
@@ -49577,8 +49441,6 @@
   rule: body="Powered by HoloCMS"
 - name: Home-Control-Box
   rule: header="realm="hcb_web"
-- name: HoloCMS
-  rule: body="<div id="remember-me-notification" class="bottom-bubble" style="display:none;">"
 - name: Hollycrm-CRM
   rule: body="jqxhr" && body="/sso/client/passer"
 - name: Hollysys-MES
@@ -53041,15 +52903,11 @@
 - name: Energine
   rule: body="<div id="footer">Powered by Energine.</div>"
 - name: Energine
-  rule: body="<div id="footer"><span class="copyright">Powered by <a href="http://energine.org">Energine</a><br/>"
-- name: Energine
   rule: body="stylesheets/energine.css"
 - name: Energine
   rule: body="scripts/Energine.js"
 - name: Energine
   rule: body="<span class="copyright">Powered by <a href= "http://energine.org/">Energine</a></span>"
-- name: Energine
-  rule: body="<div id="footer">Powered by <a href="http://energine.org">Energine</a>"
 - name: Energine
   rule: body="Powered by <a href= "http://energine.org/"
 - name: EnableQ在线问卷调查引擎
@@ -53386,8 +53244,6 @@
   rule: title="EasyGBS" || icon_hash="1550946924"
 - name: EasyFeeds
   rule: 'body="<div style="float: left; height: 35px; width: 300px; margin: 45px 0px 0px 40px;"></div>"'
-- name: EasyFeeds
-  rule: body="<div id="feedslist" align="left" class="divTableCell">"
 - name: EasyEngine
   rule: title="EasyEngine"
 - name: EasyEngine
@@ -53552,8 +53408,6 @@
   rule: body="<td scope="row" align="right" class="fieldlabel" height="30"><span  class="defaultLabelStyle">Repository</span></td><td class="defaultcolumnspacer">:&nbsp;</td>"
 - name: EMC-Documentum-Webtop
   rule: body="/webtop/webtop/theme/documentum/css/webtop.css"
-- name: EMC-Documentum-Webtop
-  rule: body="<script type="text/javascript">var g_virtualRoot = "/webtop";</script>"
 - name: EMC-DD-System-Manager
   rule: body="emc-favicon.ico" && body="dd system manager" && body="datadomain enterprise manager"
 - name: EMC-DD-System-Manager
@@ -53760,8 +53614,6 @@
   rule: body="<script type=\"text/javascript\" src=\"/js/ecology"
 - name: E-zekiel
   rule: icon_hash="81ed5fa6453cf406d1d82233ba355b9a"
-- name: E-cology-OA
-  rule: body="<script type="text/javascript" src="/js/ecology"
 - name: E-cology-OA
   rule: 'body="Set-Cookie: ecology"'
 - name: E-Tiller
@@ -53977,8 +53829,6 @@
 - name: Dradis-Framework
   rule: body="<p class=\"copyright\">dradis"
 - name: Dradis-Framework
-  rule: body="<div id="back"><a href="/">&lsaquo; back to the app.</a></div>"
-- name: Dradis-Framework
   rule: header="_dradis_session="
 - name: Dradis-Framework
   rule: body="effective information sharing - <a href="http://dradisframework.org/">http://dradisframework.org</a>"
@@ -53996,8 +53846,6 @@
   rule: body="/user/toupdatepasswordpage.di"
 - name: Dr-Web-Anti-Virus
   rule: header="DRWEB_PERSONAL_OFFICE="
-- name: Dr-Web-Anti-Virus
-  rule: body="<div id="logo" class="logo"><img src="/avdesk/includes/system/templates/images/logo_en.png" alt="" /></div>"
 - name: Dr.Rui-Cloud-office-system
   rule: body="/studentsign/tologin.di" && body="/user/toupdatepasswordpage.di"
 - name: Dr-Web-Anti-Virus
@@ -54764,8 +54612,6 @@
   rule: body="/portal/include/script/dahuaDefined/headCommon.js"
 - name: Dahua ICC
   rule: body="*客户端会小于800*"
-- name: Daffodil-CRM
-  rule: body="<div id="right_footer">Design & Development by Daffodil Software Ltd</div>"
 - name: Dahua
   rule: icon_hash="-1466785234"
 - name: Dahua
@@ -54774,8 +54620,6 @@
   rule: body="Powered by Daffodil"
 - name: DaGaoPeng_大高朋网团购程序
   rule: title="DaGaoPeng_大高朋网团购程序"
-- name: Daffodil-CRM
-  rule: body="<div id="right_footer">Powered by Daffodil Software Ltd</div>"
 - name: Daffodil-CRM
   rule: body="Design & Development by Daffodil Software Ltd"
 - name: D_Link-web-camera
@@ -55628,16 +55472,12 @@
   rule: title="Crypto-Loot"
 - name: Crypto-Loot
   rule: header="Crypto-Loot"
-- name: CruxPA
-  rule: body="<div id="copy"><center>Powered By <a href="http://www.cruxsoftware.co.uk">CruxPA</a><br>"
 - name: CrushFTP
   rule: header="Server:CrushFTP HTTP Server"
 - name: CrushFTP
   rule: title="crushftp webinterface"
 - name: CrushFTP
   rule: icon_hash="-1022206565"
-- name: CrushFTP
-  rule: body="<script type="text/javascript" src="crushftp_functions.js"></script>"
 - name: Crow-Force-portal-CMS
   rule: body="中企动力提供技术支持"
 - name: CrushFTP
@@ -56098,8 +55938,6 @@
   rule: title="科来元数据分析系统"
 - name: Colasoft-MDP
   rule: body="<div id="processtime" time="0.000033" >#processtime</div>" && body="科来 版权所有 保留所有权利"
-- name: Colasoft-MDP
-  rule: body="<div id="processtime" time="0.000033" >#processtime</div>"
 - name: Coinlab
   rule: title="Coinlab"
 - name: Colasoft-MDP
@@ -56186,8 +56024,6 @@
   rule: icon_hash="-235701012"
 - name: Co.MZ_企业系统
   rule: title="Co.MZ_企业系统"
-- name: Cnservers LLC
-  rule: body="<div id="whmcstxtlogo"><a href="index.php">MEYU.NET</a></div>"
 - name: Cnoa-OA
   rule: body="admin@cnoa.cn"
 - name: Cnoa-OA
@@ -57166,8 +57002,6 @@
   rule: header="CarelDataServer"
 - name: Carel-Data-Server
   rule: body="<img style="position:absolute;left:0;top:0;" src=plv_primoLW.jpg zwidth="100%" zheight="100%">"
-- name: Carel-Data-Server
-  rule: body="<script type="text/javascript" language="JavaScript" src="/MPwebCoreFn.js"></script>"
 - name: Card-Reader-Adapter
   rule: body="<HTML> <Title> 401 unAuthorized </title>                   <body> <H1> 401 unauthorized request </H1></body>                   </HTML>"
 - name: Carel PlantVisor
@@ -57774,8 +57608,6 @@
   rule: body="j_security_check" && body="window.location.href = '/monitor';"
 - name: CISCO-Meeting-App
   rule: body="<div id=\"cisco_meeting_application\">"
-- name: CISCO-Meeting-App
-  rule: body="<div id="cisco_meeting_application">"
 - name: CISCO-M690
   rule: title="cisco content security management appliance m690"
 - name: CISCO-M680
@@ -57888,16 +57720,12 @@
   rule: header="CERN"
 - name: CERVIS
   rule: body="<a href="http://www.cervistech.com" target="_blank"><img src="/acts/images/cervis_logo_sm.png" align="absmiddle" border="0" />Powered by CERVIS</a>"
-- name: CEMIS
-  rule: body="<div id="demo" style="overflow:hidden"
 - name: CDNvideo
   rule: title="CDNvideo"
 - name: CDR-Stats
   rule: title="cdr-stats | customer interface"
 - name: CDR-Stats
   rule: body="/static/cdr-stats/js/jquery"
-- name: CEMIS
-  rule: body="<div id="demo" style="overflow:hidden@取消此条规则"
 - name: CDNsun
   rule: title="CDNsun"
 - name: CDN77
@@ -58754,8 +58582,6 @@
   rule: title="BbcBuilder电子商务系统"
 - name: BeEF
   rule: body="<img src="../images/beef.gif" onclick="new Effect.Shake("sidebar");"></div> BeEF</h1>"
-- name: BeEF
-  rule: body="<div id="centered"><img id="beef-logo" src="/ui/media/images/beef.png" alt="BeEF - The Browser Exploitation Framework" /></div>"
 - name: Battle-Blog
   rule: body="<br /><br /><font face="arial" size="1">Powered by <a href="http://www.battleblog.com">Battle Blog</a></font>"
 - name: Battle-Blog
@@ -58844,8 +58670,6 @@
   rule: title="barracuda link balancer"
 - name: Barracuda-Backup-Server
   rule: header="BACKUP_LOCAL_LOCALE"
-- name: Barracuda-Backup-Server
-  rule: body="<div id="logo-wrapper"><a id="logo" href="http://www.barracudanetworks.com/ns/?a=backup_localui">Barracuda Networks</a></div>"
 - name: Barracuda-Backup-Server
   rule: header="backup_local_locale"
 - name: Barracuda Link Balancer
@@ -58982,8 +58806,6 @@
   rule: body="new backbone.model"
 - name: BackBee
   rule: body="<div id=\"bb5-site-wrapper\">"
-- name: BackBee
-  rule: body="<div id="bb5-site-wrapper">"
 - name: Bablic
   rule: title="Bablic"
 - name: Babel
@@ -59347,8 +59169,6 @@
 - name: Avaya-Aura-Utility-Server
   rule: body="vmstitle\">avaya aura&#8482;&nbsp;utility server" && body="/webhelp/base/utility_toc.htm" && body="avaya aura&reg;&nbsp;utility services" && body="avaya inc. all rights reserved"
 - name: Avaya-Aura-Utility-Server
-  rule: body="<div id="topBar"><div id="topBarLeft"><a href="#" class="helpAndExit" onclick="window.open("/webhelp/Base/Utility_toc.htm"
-- name: Avaya-Aura-Utility-Server
   rule: body="vmstitle">avaya aura&#8482;&nbsp;utility server"
 - name: Avaya-Aura-Utility-Server
   rule: body="vmsTitle">Avaya Aura&#8482;&nbsp;Utility Server"
@@ -59552,8 +59372,6 @@
   rule: title="Asymptix PHP Framework"
 - name: Asterisk
   rule: header="Asterisk"
-- name: Asterisk
-  rule: body="<div id="ACTIVE_CONTENT"><noscript>You need to enable Javascript in your browser !!</noscript></div>"
 - name: Asterisk
   rule: header="asterisk"
 - name: Asterisk
