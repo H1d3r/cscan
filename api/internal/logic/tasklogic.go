@@ -29,9 +29,9 @@ type MainTaskListLogic struct {
 }
 
 // hasAnyScanPhaseEnabled 检查任务配置中是否至少启用了一项扫描阶段
-// 扫描阶段包括：子域名扫描/端口扫描/端口识别/指纹识别/目录扫描/漏洞扫描/弱口令扫描
+// 扫描阶段包括：子域名扫描/端口扫描/端口识别/指纹识别/目录扫描/漏洞扫描/弱口令扫描/JS扫描
 func hasAnyScanPhaseEnabled(taskConfig map[string]interface{}) bool {
-	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan"}
+	phases := []string{"domainscan", "portscan", "portidentify", "fingerprint", "dirscan", "pocscan", "brutescan", "jsfinder"}
 	for _, phase := range phases {
 		section, ok := taskConfig[phase].(map[string]interface{})
 		if !ok {
@@ -394,7 +394,7 @@ func (l *MainTaskCreateLogic) MainTaskCreate(req *types.MainTaskCreateReq, works
 
 	// 校验：至少启用一项扫描配置
 	if !hasAnyScanPhaseEnabled(taskConfig) {
-		return &types.BaseRespWithId{Code: 400, Msg: "请至少启用一项扫描配置（子域名扫描、端口扫描、端口识别、指纹识别、目录扫描、漏洞扫描或弱口令扫描）"}, nil
+		return &types.BaseRespWithId{Code: 400, Msg: "请至少启用一项扫描配置（子域名扫描、端口扫描、端口识别、指纹识别、目录扫描、漏洞扫描、弱口令扫描或JS扫描）"}, nil
 	}
 
 	configBytes, _ := json.Marshal(taskConfig)

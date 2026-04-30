@@ -13,6 +13,11 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
+const (
+	workerQueryTimeout    = 500 * time.Millisecond
+	workerOnlineThreshold = 45 * time.Second
+)
+
 type WorkerListLogic struct {
 	logx.Logger
 	ctx    context.Context
@@ -50,8 +55,12 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 	// 发送查询请求，通知所有Worker立即上报状态
 	rdb.Publish(l.ctx, "cscan:worker:query", "refresh")
 
-	// 等待Worker响应（最多等待500毫秒）
-	time.Sleep(500 * time.Millisecond)
+	// 等待Worker响应
+	select {
+	case <-time.After(workerQueryTimeout):
+	case <-l.ctx.Done():
+		return &types.WorkerListResp{Code: 400, Msg: "请求已取消"}, nil
+	}
 
 	// 从Redis获取Worker状态（使用正确的键前缀）
 	keys, err := rdb.Keys(l.ctx, "cscan:worker:*").Result()
@@ -92,7 +101,7 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 			if err == nil {
 				elapsed := time.Since(updateTime)
 				l.Logger.Infof("Worker %s: updateTime=%s, elapsed=%v", status.WorkerName, status.UpdateTime, elapsed)
-				if elapsed < 45*time.Second {
+				if elapsed < workerOnlineThreshold {
 					workerStatus = "running"
 				}
 			} else {

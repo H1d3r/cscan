@@ -312,7 +312,7 @@ func (b *TaskBuilder) countEnabledModules(configMap map[string]interface{}) int 
 
 	// Other modules (must be explicitly enabled)
 	// 修复：将 brutescan 也纳入统计，与 portidentify 等模块保持一致
-	modules := []string{"portidentify", "fingerprint", "brutescan", "dirscan", "pocscan"}
+	modules := []string{"portidentify", "fingerprint", "brutescan", "dirscan", "jsfinder", "pocscan"}
 	for _, mod := range modules {
 		if m, ok := configMap[mod].(map[string]interface{}); ok {
 			if enable, ok := m["enable"].(bool); ok && enable {

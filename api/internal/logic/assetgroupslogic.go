@@ -56,71 +56,66 @@ func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq, workspaceId st
 		// 用于记录每个域名对应的任务状态
 		domainTaskStatus := make(map[string]string)
 
-		for _, task := range tasks {
-			l.Logger.Infof("处理任务: taskId=%s, status=%s, target=%s", task.TaskId, task.Status, task.Target)
+	for _, task := range tasks {
+		// 从任务目标中提取域名
+		targets := strings.Split(task.Target, "\n")
+		allDomainsAlreadySet := true
+		for _, target := range targets {
+			target = strings.TrimSpace(target)
+			if target == "" {
+				continue
+			}
 
-			// 从任务目标中提取域名
-			targets := strings.Split(task.Target, "\n")
-			for _, target := range targets {
-				target = strings.TrimSpace(target)
-				if target == "" {
-					continue
+			// 提取主域名
+			domain := extractMainDomainFromTarget(target)
+			if domain == "" {
+				continue
+			}
+
+			// 只使用最新任务的状态（任务已按 update_time 降序排序）
+			// 如果已经设置过该域名的状态，跳过（因为后面的任务更旧）
+			if _, exists := domainTaskStatus[domain]; exists {
+				continue
+			}
+
+			allDomainsAlreadySet = false
+
+			// 第一次遇到该域名，使用当前任务的状态
+			taskStatus := getTaskStatusForGroup(task.Status)
+			domainTaskStatus[domain] = taskStatus
+			l.Logger.Infof("域名分组状态: domain=%s, status=%s, taskId=%s", domain, taskStatus, task.TaskId)
+
+			// 计算任务的真实执行时长（只使用最新任务）
+			if task.StartTime != nil && task.EndTime != nil {
+				domainDuration[domain] = task.EndTime.Sub(*task.StartTime)
+			} else if task.StartTime != nil && task.Status == "STARTED" {
+				domainDuration[domain] = time.Since(*task.StartTime)
+			} else {
+				domainDuration[domain] = 0
+			}
+
+			// 如果分组不存在，创建新分组
+			if _, exists := domainGroups[domain]; !exists {
+				domainGroups[domain] = &types.AssetGroup{
+					Domain:        domain,
+					Source:        "Auto Discovery",
+					Status:        domainTaskStatus[domain],
+					TotalServices: 0,
+					Duration:      "",
+					LastUpdated:   "",
+					FirstSeen:     task.CreateTime,
+					LatestUpdate:  task.UpdateTime,
 				}
-
-				// 提取主域名
-				domain := extractMainDomainFromTarget(target)
-				if domain == "" {
-					continue
-				}
-
-				l.Logger.Infof("提取域名: target=%s, domain=%s", target, domain)
-
-				// 只使用最新任务的状态（任务已按 update_time 降序排序）
-				// 如果已经设置过该域名的状态，跳过（因为后面的任务更旧）
-				if _, exists := domainTaskStatus[domain]; exists {
-					l.Logger.Infof("域名 %s 已设置状态 %s，跳过（任务 %s 更旧）", domain, domainTaskStatus[domain], task.TaskId)
-					continue
-				}
-
-				// 第一次遇到该域名，使用当前任务的状态
-				taskStatus := getTaskStatusForGroup(task.Status)
-				domainTaskStatus[domain] = taskStatus
-				l.Logger.Infof("设置域名 %s 的状态为: %s (任务 %s 是最新的)", domain, taskStatus, task.TaskId)
-
-				// 计算任务的真实执行时长（只使用最新任务）
-				if task.StartTime != nil && task.EndTime != nil {
-					// 任务已完成，计算执行时长
-					domainDuration[domain] = task.EndTime.Sub(*task.StartTime)
-					l.Logger.Infof("域名 %s 任务执行时长: %s", domain, domainDuration[domain])
-				} else if task.StartTime != nil && task.Status == "STARTED" {
-					// 正在运行的任务，计算从开始到现在的时长
-					domainDuration[domain] = time.Since(*task.StartTime)
-					l.Logger.Infof("域名 %s 任务正在运行，已运行时长: %s", domain, domainDuration[domain])
-				} else {
-					// 任务未开始或没有开始时间，时长为0
-					domainDuration[domain] = 0
-				}
-
-				// 如果分组不存在，创建新分组
-				if _, exists := domainGroups[domain]; !exists {
-					domainGroups[domain] = &types.AssetGroup{
-						Domain:        domain,
-						Source:        "Auto Discovery",
-						Status:        domainTaskStatus[domain],
-						TotalServices: 0,
-						Duration:      "",
-						LastUpdated:   "",
-						FirstSeen:     task.CreateTime,
-						LatestUpdate:  task.UpdateTime,
-					}
-					l.Logger.Infof("创建新分组: domain=%s, status=%s", domain, domainTaskStatus[domain])
-				} else {
-					// 更新状态
-					domainGroups[domain].Status = domainTaskStatus[domain]
-					l.Logger.Infof("更新分组状态: domain=%s, status=%s", domain, domainTaskStatus[domain])
-				}
+			} else {
+				domainGroups[domain].Status = domainTaskStatus[domain]
 			}
 		}
+
+		// 优化：如果该任务所有域名都已设置过状态，后续任务只会更旧，可安全跳过
+		if allDomainsAlreadySet {
+			continue
+		}
+	}
 
 		// 2. 从资产中统计实际数据
 		assetModel := l.svcCtx.GetAssetModel(wsId)
@@ -206,7 +201,6 @@ func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq, workspaceId st
 	// 转换为列表
 	list := make([]types.AssetGroup, 0, len(domainGroups))
 	for _, group := range domainGroups {
-		l.Logger.Infof("分组数据: domain=%s, status=%s, services=%d", group.Domain, group.Status, group.TotalServices)
 		list = append(list, *group)
 	}
 
@@ -231,11 +225,6 @@ func (l *AssetGroupsLogic) AssetGroups(req *types.AssetGroupsReq, workspaceId st
 			end = total
 		}
 		list = list[start:end]
-	}
-
-	// 记录返回的数据
-	for _, group := range list {
-		l.Logger.Infof("返回分组: domain=%s, status=%s, services=%d", group.Domain, group.Status, group.TotalServices)
 	}
 
 	return &types.AssetGroupsResp{

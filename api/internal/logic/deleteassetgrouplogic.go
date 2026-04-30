@@ -5,6 +5,7 @@ import (
 	"cscan/api/internal/logic/common"
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/model"
 	"strings"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -58,11 +59,14 @@ func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq,
 
 		// 收集需要删除的资产ID
 		var idsToDelete []string
+		// 记录被删除资产的host，用于清理历史记录
+		var hostsToDelete []string
 		for _, asset := range allAssets {
 			// 使用和分组查询相同的逻辑提取主域名
 			mainDomain := extractMainDomainForDelete(asset.Host)
 			if mainDomain == req.Domain {
 				idsToDelete = append(idsToDelete, asset.Id.Hex())
+				hostsToDelete = append(hostsToDelete, asset.Host)
 			}
 		}
 
@@ -77,6 +81,35 @@ func (l *DeleteAssetGroupLogic) DeleteAssetGroup(req *types.DeleteAssetGroupReq,
 				l.Logger.Infof("工作空间 %s 删除了 %d 个资产", wsId, deletedCount)
 				totalDeleted += deletedCount
 			}
+
+			// 删除资产历史记录（ScanResultHistoryModel）
+			historyModel := model.NewScanResultHistoryModel(l.svcCtx.MongoDB, wsId)
+			historyDeleted := int64(0)
+			for _, host := range hostsToDelete {
+				// 按 host 删除历史记录
+				filter := bson.M{"host": host}
+				result, err := historyModel.DeleteByFilter(l.ctx, wsId, filter)
+				if err != nil {
+					l.Logger.Errorf("删除工作空间 %s 的资产历史记录失败: host=%s, err=%v", wsId, host, err)
+				} else {
+					historyDeleted += result
+				}
+			}
+			l.Logger.Infof("工作空间 %s 已清理 %d 条资产历史记录", wsId, historyDeleted)
+
+			// 删除 JSFinder 结果
+			jsfinderModel := l.svcCtx.GetJSFinderResultModel(wsId)
+			jsfinderDeleted := int64(0)
+			for _, host := range hostsToDelete {
+				filter := bson.M{"host": host}
+				result, err := jsfinderModel.DeleteMany(l.ctx, filter)
+				if err != nil {
+					l.Logger.Errorf("删除工作空间 %s 的 JSFinder 结果失败: host=%s, err=%v", wsId, host, err)
+				} else {
+					jsfinderDeleted += result
+				}
+			}
+			l.Logger.Infof("工作空间 %s 已清理 %d 条 JSFinder 结果", wsId, jsfinderDeleted)
 		}
 
 		// 2. 删除相关任务
