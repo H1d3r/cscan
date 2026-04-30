@@ -274,6 +274,8 @@ const riskTagMap = {
   'info-leak': { label: '信息泄漏', type: 'info', en: 'Info Leak' },
   'unauth': { label: '未授权', type: 'danger', en: 'Unauth' },
   'js-file': { label: 'JS文件', type: 'info', en: 'JS File' },
+  'url': { label: 'API路径', type: 'info', en: 'API Path' },
+  'absurl': { label: '绝对URL', type: 'info', en: 'Absolute URL' },
   'url-list': { label: 'API路径', type: 'info', en: 'API Paths' },
   'absurl-list': { label: 'URL清单', type: 'info', en: 'URL List' }
 }

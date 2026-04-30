@@ -451,36 +451,38 @@
             </div>
           </template>
           <p class="tip-text">{{ $t('poc.jsfinderConfigTip') }}</p>
+          <div class="jsfinder-search-bar">
+            <el-input
+              v-model="jsfinderSearchQuery"
+              :placeholder="$t('poc.jsfinderSearchPlaceholder')"
+              clearable
+              :prefix-icon="Search"
+              size="default"
+            />
+          </div>
           <el-row :gutter="16" v-loading="jsfinderLoading">
-            <el-col :xs="24" :md="12" v-for="field in jsfinderFields" :key="field.key" style="margin-bottom: 16px">
+            <el-col :xs="24" :md="6" v-for="field in jsfinderFields" :key="field.key" style="margin-bottom: 16px">
               <div class="jsfinder-list-card">
-                <div class="jsfinder-list-title">{{ $t(field.labelKey) }}</div>
-                <div class="jsfinder-list-hint">{{ $t(field.hintKey) }}</div>
-                <div class="jsfinder-tags">
-                  <el-tag
-                    v-for="(item, idx) in jsfinderConfig[field.key]"
-                    :key="`${field.key}-${idx}`"
-                    closable
-                    size="default"
-                    :disable-transitions="false"
-                    @close="jsfinderConfig[field.key].splice(idx, 1)"
-                    style="margin: 0 6px 6px 0"
-                  >{{ item }}</el-tag>
-                  <span v-if="!jsfinderConfig[field.key] || jsfinderConfig[field.key].length === 0" class="text-muted hint-text">
-                    {{ $t('poc.jsfinderEmptyHint') }}
+                <div class="jsfinder-list-title">
+                  {{ $t(field.labelKey) }}
+                  <span v-if="jsfinderSearchQuery && jsfinderMatchCount(field.key) > 0" class="jsfinder-match-badge">
+                    {{ $t('poc.jsfinderMatchCount', { count: jsfinderMatchCount(field.key) }) }}
                   </span>
                 </div>
-                <div style="display: flex; gap: 8px; margin-top: 8px">
-                  <el-input
-                    v-model="jsfinderInputs[field.key]"
-                    :placeholder="$t('poc.jsfinderInputPlaceholder')"
-                    size="small"
-                    @keyup.enter="addJSFinderItem(field.key)"
-                    clearable
+                <div class="jsfinder-list-hint">{{ $t(field.hintKey) }}</div>
+                <el-input
+                  type="textarea"
+                  :model-value="jsfinderText(field.key)"
+                  @input="val => jsfinderUpdateText(field.key, val)"
+                  :autosize="{ minRows: 8, maxRows: 20 }"
+                />
+                <div v-if="jsfinderSearchQuery && getMatchedLines(field.key).length" class="jsfinder-match-strip">
+                  <span
+                    v-for="(line, i) in getMatchedLines(field.key)"
+                    :key="i"
+                    class="jsfinder-match-chip"
+                    v-html="highlightLine(line, jsfinderSearchQuery)"
                   />
-                  <el-button type="primary" size="small" @click="addJSFinderItem(field.key)">
-                    {{ $t('poc.jsfinderAddItem') }}
-                  </el-button>
                 </div>
               </div>
             </el-col>
@@ -1219,7 +1221,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check } from '@element-plus/icons-vue'
+import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search } from '@element-plus/icons-vue'
 import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, downloadNucleiTemplates, getDownloadStatus, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, getAIConfig, saveAIConfig, validatePocSyntax } from '@/api/poc'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
@@ -1395,12 +1397,7 @@ const jsfinderConfig = reactive({
   sensitiveKeywords: [],
   domainBlacklist: []
 })
-const jsfinderInputs = reactive({
-  highRiskRoutes: '',
-  authRequiredKeywords: '',
-  sensitiveKeywords: '',
-  domainBlacklist: ''
-})
+const jsfinderSearchQuery = ref('')
 const jsfinderFields = [
   { key: 'highRiskRoutes', labelKey: 'poc.jsfinderHighRiskRoutes', hintKey: 'poc.jsfinderHighRiskRoutesHint' },
   { key: 'authRequiredKeywords', labelKey: 'poc.jsfinderAuthRequiredKeywords', hintKey: 'poc.jsfinderAuthRequiredKeywordsHint' },
@@ -4254,6 +4251,50 @@ function applyJSFinderData(data) {
   jsfinderConfig.domainBlacklist = Array.isArray(data?.domainBlacklist) ? [...data.domainBlacklist] : []
 }
 
+function jsfinderText(key) {
+  return (jsfinderConfig[key] || []).join('\n')
+}
+
+function jsfinderUpdateText(key, val) {
+  jsfinderConfig[key] = val.split('\n').map(s => s.trim()).filter(Boolean)
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function jsfinderMatchCount(key) {
+  if (!jsfinderSearchQuery.value) return 0
+  const text = jsfinderText(key).toLowerCase()
+  const q = jsfinderSearchQuery.value.toLowerCase()
+  let count = 0
+  let idx = 0
+  while ((idx = text.indexOf(q, idx)) !== -1) {
+    count++
+    idx += q.length
+  }
+  return count
+}
+
+function getMatchedLines(key) {
+  if (!jsfinderSearchQuery.value) return []
+  const items = jsfinderConfig[key] || []
+  const q = jsfinderSearchQuery.value.toLowerCase()
+  return items.filter(item => item.toLowerCase().includes(q))
+}
+
+function highlightLine(line, query) {
+  const escaped = escapeHtml(line)
+  if (!query) return escaped
+  const q = escapeHtml(query)
+  const regex = new RegExp(`(${escapeRegex(q)})`, 'gi')
+  return escaped.replace(regex, '<mark class="jsfinder-highlight">$1</mark>')
+}
+
 async function loadJSFinderConfigData() {
   jsfinderLoading.value = true
   try {
@@ -4272,16 +4313,6 @@ async function loadJSFinderConfigData() {
   }
 }
 
-function addJSFinderItem(field) {
-  const v = (jsfinderInputs[field] || '').trim()
-  if (!v) return
-  if (jsfinderConfig[field].includes(v)) {
-    jsfinderInputs[field] = ''
-    return
-  }
-  jsfinderConfig[field].push(v)
-  jsfinderInputs[field] = ''
-}
 
 async function handleSaveJSFinderConfig() {
   jsfinderSaveLoading.value = true
@@ -4372,13 +4403,51 @@ async function handleResetJSFinderConfig() {
     margin-bottom: 10px;
   }
 
-  .jsfinder-tags {
-    min-height: 36px;
-    padding: 6px;
+  .jsfinder-search-bar {
+    margin-bottom: 16px;
+  }
+
+  .jsfinder-match-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    background: var(--el-color-warning-light-3);
+    color: var(--el-color-warning-dark-2);
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .jsfinder-match-strip {
+    margin-top: 6px;
+    padding: 4px 8px;
     background: var(--el-fill-color-light);
     border-radius: 4px;
-    max-height: 220px;
+    font-size: 12px;
+    line-height: 1.8;
+    max-height: 80px;
     overflow-y: auto;
+    border: 1px solid var(--el-border-color-lighter);
+  }
+
+  .jsfinder-match-chip {
+    display: inline-block;
+    margin: 2px 4px 2px 0;
+    padding: 0 6px;
+    background: var(--el-fill-color-blank);
+    border-radius: 3px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+
+  .jsfinder-highlight {
+    background-color: #e6a23c;
+    color: #fff;
+    padding: 1px 2px;
+    border-radius: 2px;
   }
 
   .filter-form {

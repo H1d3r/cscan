@@ -117,6 +117,7 @@
   "auth": {
     "login": "Login",
     "logout": "Logout",
+    "changePassword": "Change Password",
     "username": "Username",
     "password": "Password",
     "loginTitle": "Asset Security Scanning Platform",
@@ -124,7 +125,8 @@
     "loginFailed": "Login failed",
     "sessionExpired": "Session expired, please login again",
     "pleaseEnterUsername": "Please enter username",
-    "pleaseEnterPassword": "Please enter password"
+    "pleaseEnterPassword": "Please enter password",
+    "forceResetTitle": "Please change your password on first login"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -795,7 +797,7 @@
     "password": "Password",
     "pleaseEnterTaskName": "Please enter task name",
     "pleaseEnterTarget": "Please enter scan target",
-    "noScanConfigEnabled": "Please enable at least one scan option (subdomain scan, port scan, port identify, fingerprint, directory scan or vulnerability scan)",
+    "noScanConfigEnabled": "Please enable at least one scan option (subdomain scan, port scan, port identify, fingerprint, directory scan, vulnerability scan, brute force scan or JS scan)",
     "targetPlaceholder": "One target per line, supported formats:\n• IP: 192.168.1.1\n• CIDR: 192.168.1.0/24\n• IP Range: 192.168.1.1-192.168.1.100\n• Domain: example.com",
     "tags": "Tags",
     "tagsPlaceholder": "Enter tags, support creating new tags",
@@ -1400,7 +1402,9 @@
     "jsfinderResetConfirm": "Reset to default config? Current custom entries will be overwritten.",
     "jsfinderResetSuccess": "Reset to default successfully",
     "jsfinderSaveSuccess": "Saved successfully",
-    "jsfinderEmptyHint": "No items configured"
+    "jsfinderEmptyHint": "No items configured",
+    "jsfinderSearchPlaceholder": "Search keywords, matches will be highlighted",
+    "jsfinderMatchCount": "{count} matches"
   },
   "fingerprint": {
     "title": "Fingerprint Management",
@@ -1866,6 +1870,11 @@
     "pleaseEnterNewPassword": "Please enter new password",
     "pleaseConfirmPassword": "Please confirm password",
     "pleaseSelectStatus": "Please select status",
+    "pleaseSelectRole": "Please select role",
+    "passwordMinLength": "Password must be at least 8 characters",
+    "passwordNeedUpper": "Password must contain uppercase letter",
+    "passwordNeedLower": "Password must contain lowercase letter",
+    "passwordNeedDigit": "Password must contain digit",
     "passwordMismatch": "Passwords do not match",
     "passwordResetSuccess": "Password reset successfully",
     "passwordResetFailed": "Password reset failed",

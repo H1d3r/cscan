@@ -361,6 +361,13 @@
       </template>
       <el-table :data="userList" v-loading="userLoading" stripe max-height="500">
         <el-table-column prop="username" :label="$t('user.userName')" min-width="150" />
+        <el-table-column prop="role" :label="$t('user.role')" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.role === 'admin' || row.role === 'superadmin' ? 'danger' : 'info'">
+              {{ row.role === 'admin' || row.role === 'superadmin' ? $t('user.admin') : $t('user.user') }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" :label="$t('common.status')" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'enable' ? 'success' : 'danger'">
@@ -402,6 +409,12 @@
         </el-form-item>
         <el-form-item v-if="!userForm.id" :label="$t('user.password')" prop="password">
           <el-input v-model="userForm.password" type="password" :placeholder="$t('user.pleaseEnterPassword')" />
+        </el-form-item>
+        <el-form-item :label="$t('user.role')" prop="role">
+          <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')">
+            <el-option :label="$t('user.admin')" value="admin" />
+            <el-option :label="$t('user.user')" value="user" />
+          </el-select>
         </el-form-item>
         <el-form-item :label="$t('common.status')" prop="status">
           <el-select v-model="userForm.status" :placeholder="$t('user.pleaseSelectStatus')">
@@ -506,12 +519,26 @@ const userList = ref([])
 const userDialogVisible = ref(false)
 const userSubmitting = ref(false)
 const userFormRef = ref()
-const userForm = ref({ id: '', username: '', password: '', status: 'enable' })
+const userForm = ref({ id: '', username: '', password: '', role: 'user', status: 'enable' })
 const userRules = computed(() => ({
   username: [{ required: true, message: t('user.pleaseEnterUsername'), trigger: 'blur' }],
-  password: [{ required: true, message: t('user.pleaseEnterPassword'), trigger: 'blur' }],
+  password: [
+    { required: true, message: t('user.pleaseEnterPassword'), trigger: 'blur' },
+    { validator: validatePasswordStrength, trigger: 'blur' }
+  ],
+  role: [{ required: true, message: t('user.pleaseSelectRole'), trigger: 'change' }],
   status: [{ required: true, message: t('user.pleaseSelectStatus'), trigger: 'change' }]
 }))
+
+// 密码强度校验器
+const validatePasswordStrength = (rule, value, callback) => {
+  if (!value) return callback()
+  if (value.length < 8) return callback(new Error(t('user.passwordMinLength')))
+  if (!/[A-Z]/.test(value)) return callback(new Error(t('user.passwordNeedUpper')))
+  if (!/[a-z]/.test(value)) return callback(new Error(t('user.passwordNeedLower')))
+  if (!/[0-9]/.test(value)) return callback(new Error(t('user.passwordNeedDigit')))
+  callback()
+}
 
 // 重置密码相关
 const resetPasswordVisible = ref(false)
@@ -520,7 +547,10 @@ const resetFormRef = ref()
 const resetForm = ref({ id: '', oldPassword: '', newPassword: '', confirmPassword: '' })
 const resetRules = computed(() => ({
   oldPassword: [{ required: true, message: t('user.pleaseEnterOldPassword'), trigger: 'blur' }],
-  newPassword: [{ required: true, message: t('user.pleaseEnterNewPassword'), trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: t('user.pleaseEnterNewPassword'), trigger: 'blur' },
+    { validator: validatePasswordStrength, trigger: 'blur' }
+  ],
   confirmPassword: [
     { required: true, message: t('user.pleaseConfirmPassword'), trigger: 'blur' },
     {
@@ -774,7 +804,7 @@ function showUserDialog(row = null) {
   if (row) {
     userForm.value = { ...row, password: '' }
   } else {
-    userForm.value = { id: '', username: '', password: '', status: 'enable' }
+    userForm.value = { id: '', username: '', password: '', role: 'user', status: 'enable' }
   }
   userDialogVisible.value = true
 }

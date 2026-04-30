@@ -123,7 +123,7 @@
               </el-icon>
               <template #title>{{ $t('navigation.organizationManagement') }}</template>
             </el-menu-item>
-            <el-menu-item index="/settings?tab=user">
+            <el-menu-item v-if="userStore.role === 'admin' || userStore.role === 'superadmin'" index="/settings?tab=user">
               <el-icon>
                 <User />
               </el-icon>
@@ -166,12 +166,32 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">{{ $t('auth.logout') }}</el-dropdown-item>
+                <el-dropdown-item command="changePassword">{{ $t('auth.changePassword') }}</el-dropdown-item>
+                <el-dropdown-item divided command="logout">{{ $t('auth.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
       </el-header>
+
+      <!-- 修改密码对话框 -->
+      <el-dialog v-model="changePwdVisible" :title="$t('auth.changePassword')" width="400px" append-to-body destroy-on-close>
+        <el-form ref="changePwdFormRef" :model="changePwdForm" :rules="changePwdRules" label-width="80px">
+          <el-form-item :label="$t('user.oldPassword')" prop="oldPassword">
+            <el-input v-model="changePwdForm.oldPassword" type="password" :placeholder="$t('user.pleaseEnterOldPassword')" show-password />
+          </el-form-item>
+          <el-form-item :label="$t('user.newPassword')" prop="newPassword">
+            <el-input v-model="changePwdForm.newPassword" type="password" :placeholder="$t('user.pleaseEnterNewPassword')" show-password />
+          </el-form-item>
+          <el-form-item :label="$t('user.confirmPassword')" prop="confirmPassword">
+            <el-input v-model="changePwdForm.confirmPassword" type="password" :placeholder="$t('user.pleaseConfirmPassword')" show-password />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="changePwdVisible = false">{{ $t('common.cancel') }}</el-button>
+          <el-button type="primary" :loading="changePwdLoading" @click="handleChangePassword">{{ $t('common.confirm') }}</el-button>
+        </template>
+      </el-dialog>
 
       <!-- 主内容区 -->
       <el-main class="main" v-loading.fullscreen.lock="isSwitchingWorkspace" :element-loading-text="$t('common.switchingWorkspace', '正在切换工作空间...')">
@@ -186,21 +206,51 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useThemeStore } from '@/stores/theme'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
+import { resetUserPassword } from '@/api/auth'
 import { Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection, Fold, Expand, Key, Folder, OfficeBuilding, Bell, User, Document, CircleClose, Warning, Timer } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
 const workspaceStore = useWorkspaceStore()
 const isCollapse = ref(false)
 const defaultOpeneds = ref(['scan-group', 'system-group'])
+
+// 修改密码
+const changePwdVisible = ref(false)
+const changePwdLoading = ref(false)
+const changePwdFormRef = ref()
+const changePwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const changePwdRules = computed(() => ({
+  oldPassword: [{ required: true, message: t('user.pleaseEnterOldPassword'), trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: t('user.pleaseEnterNewPassword'), trigger: 'blur' },
+    { min: 8, message: t('user.passwordMinLength', '密码至少8位'), trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: t('user.pleaseConfirmPassword'), trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (value !== changePwdForm.newPassword) {
+          callback(new Error(t('user.passwordMismatch')))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur'
+    }
+  ]
+}))
 
 onMounted(() => {
   workspaceStore.loadWorkspaces()
@@ -222,6 +272,34 @@ function handleCommand(command) {
   if (command === 'logout') {
     userStore.logout()
     router.push('/login')
+  } else if (command === 'changePassword') {
+    changePwdForm.oldPassword = ''
+    changePwdForm.newPassword = ''
+    changePwdForm.confirmPassword = ''
+    changePwdVisible.value = true
+  }
+}
+
+async function handleChangePassword() {
+  if (!changePwdFormRef.value) return
+  try {
+    await changePwdFormRef.value.validate()
+    changePwdLoading.value = true
+    const res = await resetUserPassword({
+      id: userStore.userId,
+      oldPassword: changePwdForm.oldPassword,
+      newPassword: changePwdForm.newPassword
+    })
+    if (res.code === 0) {
+      ElMessage.success(res.msg || t('user.passwordResetSuccess'))
+      changePwdVisible.value = false
+    } else {
+      ElMessage.error(res.msg || t('user.passwordResetFailed'))
+    }
+  } catch (error) {
+    // validation failed
+  } finally {
+    changePwdLoading.value = false
   }
 }
 </script>

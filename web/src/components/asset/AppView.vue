@@ -87,7 +87,7 @@ const {
 })
 
 const appColumns = computed(() => [
-  { label: t('asset.appView.columns.app'), prop: 'app', slot: 'app', minWidth: 200 },
+  { label: t('asset.appView.columns.app'), prop: 'app', slot: 'app', minWidth: 300 },
   { label: t('asset.appView.columns.assets'), prop: 'assets', slot: 'assets', minWidth: 250 },
   { label: t('asset.appView.columns.organization'), prop: 'orgName', slot: 'org', width: 120 },
   { label: t('asset.appView.columns.createTime'), prop: 'createTime', width: 160 },

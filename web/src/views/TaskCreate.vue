@@ -53,7 +53,7 @@
           <span class="form-hint">{{ $t('task.tagsHint') }}</span>
         </el-form-item>
         <!-- 可折叠配置区域 -->
-        <el-collapse v-model="activeCollapse" class="config-collapse">
+        <el-collapse v-model="activeCollapse" class="config-collapse" @change="handleCollapseChange">
           <!-- 子域名扫描 -->
           <el-collapse-item name="domainscan">
             <template #title>
@@ -497,7 +497,7 @@
             </template>
           </el-collapse-item>
 
-          <!-- JS敏感信息扫描 -->
+          <!-- JS扫描 -->
           <el-collapse-item name="jsfinder">
             <template #title>
               <span class="collapse-title">{{ $t('task.jsfinderScan') }} <el-tag v-if="form.jsfinderEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
@@ -507,6 +507,11 @@
               <span class="form-hint">{{ $t('task.jsfinderScanHint') }}</span>
             </el-form-item>
             <template v-if="form.jsfinderEnable">
+              <!-- 强制扫描：仅在前序阶段均未启用时显示 -->
+              <el-form-item v-if="!hasPrePhaseEnabled" :label="$t('task.forceScan')">
+                <el-switch v-model="form.jsfinderForceScan" />
+                <span class="form-hint warning-hint">{{ $t('task.forceScanHint') }}</span>
+              </el-form-item>
               <el-row :gutter="20">
                 <el-col :span="12">
                   <el-form-item :label="$t('task.concurrentThreads')">
@@ -591,12 +596,6 @@
                   <el-checkbox label="info">Info</el-checkbox>
                   <el-checkbox label="unknown">Unknown</el-checkbox>
                 </el-checkbox-group>
-              </el-form-item>
-              <el-form-item label="请求速率(Rate/s)">
-                <el-input-number v-model="form.pocscanRateLimit" :min="1" :max="2000" />
-              </el-form-item>
-              <el-form-item label="模板并发">
-                <el-input-number v-model="form.pocscanConcurrency" :min="1" :max="500" />
               </el-form-item>
               <el-form-item :label="$t('task.targetTimeout')">
                 <el-input-number v-model="form.pocscanTargetTimeout" :min="30" :max="600" />
@@ -972,6 +971,13 @@ const workers = ref([])
 const commonTags = ref([]) // 常用标签列表
 const activeCollapse = ref([])
 const isEdit = ref(false)
+
+// 处理 Collapse 状态变化，移除焦点避免 aria-hidden 冲突
+function handleCollapseChange() {
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur()
+  }
+}
 const selectedTemplate = ref(null)
 
 // 计算当前配置（用于保存为模板）
@@ -1146,8 +1152,6 @@ const form = reactive({
   pocscanCustomOnly: false,
   pocscanSeverity: ['critical', 'high', 'medium'],
   pocscanTargetTimeout: 600,
-  pocscanRateLimit: 800,
-  pocscanConcurrency: 80,
   pocscanForceScan: false,
   pocscanNucleiTemplateIds: [],
   pocscanCustomPocIds: [],
@@ -1177,12 +1181,12 @@ const form = reactive({
   dirscanRate: 0,
   dirscanRecursion: false,
   dirscanRecursionDepth: 2,
-  // JS敏感信息扫描
   jsfinderEnable: false,
   jsfinderThreads: 10,
   jsfinderTimeout: 10,
   jsfinderEnableSourcemap: true,
-  jsfinderEnableUnauthCheck: true
+  jsfinderEnableUnauthCheck: true,
+  jsfinderForceScan: false
 })
 
 // 判断是否有前序扫描阶段启用（用于控制强制扫描开关的显隐）
@@ -1247,28 +1251,36 @@ watch(() => form.recursiveDictIds, (newVal) => {
   }
 }, { deep: true })
 
-// 当模块启用状态变化时，自动展开/收缩对应面板
-watch([
-  () => form.domainscanEnable,
-  () => form.portscanEnable,
-  () => form.portidentifyEnable,
-  () => form.fingerprintEnable,
-  () => form.brutescanEnable,
-  () => form.dirscanEnable,
-  () => form.jsfinderEnable,
-  () => form.pocscanEnable
-], ([domainscan, portscan, portidentify, fingerprint, brutescan, dirscan, jsfinder, pocscan]) => {
-  const enabled = []
-  if (domainscan) enabled.push('domainscan')
-  if (portscan) enabled.push('portscan')
-  if (portidentify) enabled.push('portidentify')
-  if (fingerprint) enabled.push('fingerprint')
-  if (brutescan) enabled.push('brutescan')
-  if (dirscan) enabled.push('dirscan')
-  if (jsfinder) enabled.push('jsfinder')
-  if (pocscan) enabled.push('pocscan')
-  activeCollapse.value = enabled
-})
+// 当模块启用状态变化时，仅展开/收缩对应面板，不影响其他面板
+const moduleEnableMap = [
+  { key: 'domainscan', prop: () => form.domainscanEnable },
+  { key: 'portscan', prop: () => form.portscanEnable },
+  { key: 'portidentify', prop: () => form.portidentifyEnable },
+  { key: 'fingerprint', prop: () => form.fingerprintEnable },
+  { key: 'brutescan', prop: () => form.brutescanEnable },
+  { key: 'dirscan', prop: () => form.dirscanEnable },
+  { key: 'jsfinder', prop: () => form.jsfinderEnable },
+  { key: 'pocscan', prop: () => form.pocscanEnable }
+]
+watch(
+  moduleEnableMap.map(m => m.prop),
+  (newVals, oldVals) => {
+    if (!oldVals) return
+    for (let i = 0; i < newVals.length; i++) {
+      if (newVals[i] !== oldVals[i]) {
+        const name = moduleEnableMap[i].key
+        const set = new Set(activeCollapse.value)
+        if (newVals[i]) {
+          set.add(name)
+        } else {
+          set.delete(name)
+        }
+        activeCollapse.value = [...set]
+        break
+      }
+    }
+  }
+)
 
 async function loadWorkspaces() {
   try {
@@ -1324,10 +1336,14 @@ async function loadTaskDetail(taskId) {
 function applyConfig(config) {
   // 判断POC模式：如果有nucleiTemplateIds或customPocIds，则为手动模式
   const isManualMode = (config.pocscan?.nucleiTemplateIds?.length > 0) || (config.pocscan?.customPocIds?.length > 0)
-  
+
   // 判断是否启用字典爆破：如果有subdomainDictIds则启用
   const hasBruteforce = config.domainscan?.subdomainDictIds?.length > 0
-  
+
+  // 恢复上次的任务名称和扫描目标
+  if (config.name) form.name = config.name
+  if (config.target) form.target = config.target
+
   Object.assign(form, {
     // batchSize 由后端自动计算，不再从配置加载
     // 子域名扫描
@@ -1392,8 +1408,6 @@ function applyConfig(config) {
     pocscanCustomOnly: config.pocscan?.customPocOnly ?? false,
     pocscanSeverity: config.pocscan?.severity ? config.pocscan.severity.split(',') : ['critical', 'high', 'medium'],
     pocscanTargetTimeout: config.pocscan?.targetTimeout || 600,
-    pocscanRateLimit: config.pocscan?.rateLimit || 800,
-    pocscanConcurrency: config.pocscan?.concurrency || 80,
     pocscanNucleiTemplateIds: config.pocscan?.nucleiTemplateIds || [],
     pocscanCustomPocIds: config.pocscan?.customPocIds || [],
     ...parseCustomHeaders(config.pocscan?.customHeaders),
@@ -1403,12 +1417,13 @@ function applyConfig(config) {
     dirscanThreads: config.dirscan?.threads || 50,
     dirscanTimeout: config.dirscan?.timeout || 10,
     dirscanFollowRedirect: config.dirscan?.followRedirect ?? false,
-    // JS敏感信息扫描
+    // JS扫描
     jsfinderEnable: config.jsfinder?.enable ?? false,
     jsfinderThreads: config.jsfinder?.threads || 10,
     jsfinderTimeout: config.jsfinder?.timeout || 10,
     jsfinderEnableSourcemap: config.jsfinder?.enableSourcemap ?? true,
-    jsfinderEnableUnauthCheck: config.jsfinder?.enableUnauthCheck ?? true
+    jsfinderEnableUnauthCheck: config.jsfinder?.enableUnauthCheck ?? true,
+    jsfinderForceScan: config.jsfinder?.forceScan ?? false
   })
 
   // 根据启用的模块动态设置折叠面板展开状态
@@ -1448,6 +1463,8 @@ function debounceSaveConfig() {
 // 使用 getter 函数返回配置字段的快照
 watch(
   () => JSON.stringify({
+    name: form.name,
+    target: form.target,
     domainscanEnable: form.domainscanEnable,
     domainscanSubfinder: form.domainscanSubfinder,
     domainscanBruteforce: form.domainscanBruteforce,
@@ -1553,6 +1570,8 @@ function buildCustomHeaders() {
 
 function buildConfig() {
   const config = {
+    name: form.name,
+    target: form.target,
     template: selectedTemplate.value,
     // batchSize 由后端根据目标数量和Worker并发数自动计算
     domainscan: {
@@ -1630,8 +1649,6 @@ function buildConfig() {
       customOnly: form.pocscanCustomOnly,
       severity: form.pocscanSeverity.join(','),
       targetTimeout: form.pocscanTargetTimeout,
-      rateLimit: form.pocscanRateLimit,
-      concurrency: form.pocscanConcurrency,
       nucleiTemplateIds: form.pocscanNucleiTemplateIds || [],
       customPocIds: form.pocscanCustomPocIds || [],
       customHeaders: buildCustomHeaders()
@@ -1659,7 +1676,8 @@ function buildConfig() {
       threads: form.jsfinderThreads,
       timeout: form.jsfinderTimeout,
       enableSourcemap: form.jsfinderEnableSourcemap ? undefined : false,
-      enableUnauthCheck: form.jsfinderEnableUnauthCheck ? undefined : false
+      enableUnauthCheck: form.jsfinderEnableUnauthCheck ? undefined : false,
+      forceScan: form.jsfinderForceScan && !hasPrePhaseEnabled.value
     }
   }
 

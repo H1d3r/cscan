@@ -636,7 +636,7 @@
             </template>
           </el-collapse-item>
 
-          <!-- JS敏感信息扫描 -->
+          <!-- JS扫描 -->
           <el-collapse-item name="jsfinder">
             <template #title>
               <span class="collapse-title">{{ $t('task.jsfinderScan') }} <el-tag v-if="form.jsfinderEnable" type="success" size="small">{{ $t('task.started') }}</el-tag></span>
@@ -1204,7 +1204,6 @@ function getDefaultForm() {
     dirscanRate: 0,
     dirscanRecursion: false,
     dirscanRecursionDepth: 2,
-    // JS敏感信息扫描
     jsfinderEnable: false,
     jsfinderThreads: 10,
     jsfinderTimeout: 10,

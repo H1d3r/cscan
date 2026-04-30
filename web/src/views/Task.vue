@@ -578,14 +578,6 @@
                 <span class="config-label">{{ $t('task.targetTimeout') }}</span>
                 <span class="config-value">{{ parsedConfig.pocscan?.targetTimeout || 600 }}{{ $t('task.seconds') }}</span>
               </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.concurrent') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.concurrency || 25 }}</span>
-              </div>
-              <div class="config-item">
-                <span class="config-label">{{ $t('task.rateLimit') }}</span>
-                <span class="config-value">{{ parsedConfig.pocscan?.rateLimit || 150 }} req/s</span>
-              </div>
               <div v-if="parsedConfig.pocscan?.pocTypes?.length" class="config-item full-width">
                 <span class="config-label">{{ $t('task.pocTypes') }}</span>
                 <span class="config-value">{{ parsedConfig.pocscan.pocTypes.join(', ') }}</span>
@@ -919,14 +911,6 @@
                 </el-checkbox-group>
               </el-form-item>
               <el-form-item :label="$t('task.targetTimeout')">
-              </el-form-item>
-              <el-form-item label="请求速率(Rate/s)">
-                <el-input-number v-model="form.pocscanRateLimit" :min="1" :max="2000" />
-              </el-form-item>
-              <el-form-item label="模板并发">
-                <el-input-number v-model="form.pocscanConcurrency" :min="1" :max="500" />
-              </el-form-item>
-              <el-form-item :label="$t('task.targetTimeout')">
                 <el-input-number v-model="form.pocscanTargetTimeout" :min="30" :max="600" />
                 <span class="form-hint">{{ $t('task.seconds') }}</span>
               </el-form-item>
@@ -1094,10 +1078,6 @@ const form = reactive({
   pocscanCustomOnly: false,
   pocscanSeverity: ['critical', 'high', 'medium'],
   pocscanTargetTimeout: 600,
-    pocscanRateLimit: 800,
-    pocscanConcurrency: 80,
-  pocscanRateLimit: 800,
-  pocscanConcurrency: 80,
   pocscanForceScan: false
 })
 
@@ -1342,9 +1322,7 @@ function resetForm() {
     fingerprintCustomEngine: false, fingerprintScreenshot: false,
     fingerprintTimeout: 30, pocscanEnable: false, pocscanAutoScan: true,
     pocscanAutomaticScan: true, pocscanCustomOnly: false, pocscanSeverity: ['critical', 'high', 'medium'],
-    pocscanTargetTimeout: 600,
-    pocscanRateLimit: 800,
-    pocscanConcurrency: 80
+    pocscanTargetTimeout: 600
   })
 }
 
@@ -1430,9 +1408,7 @@ function applyConfig(config) {
     pocscanAutomaticScan: config.pocscan?.automaticScan ?? true,
     pocscanCustomOnly: config.pocscan?.customPocOnly ?? false,
     pocscanSeverity: config.pocscan?.severity ? config.pocscan.severity.split(',') : ['critical', 'high', 'medium'],
-    pocscanTargetTimeout: config.pocscan?.targetTimeout || 600,
-    pocscanRateLimit: config.pocscan?.rateLimit || 800,
-    pocscanConcurrency: config.pocscan?.concurrency || 80
+    pocscanTargetTimeout: config.pocscan?.targetTimeout || 600
   })
 }
 
@@ -1461,7 +1437,7 @@ function buildConfig() {
     portscan: { enable: form.portscanEnable, tool: form.portscanTool, rate: form.portscanRate, ports: form.ports, portThreshold: form.portThreshold, scanType: form.scanType, timeout: form.portscanTimeout, skipHostDiscovery: form.skipHostDiscovery, excludeCDN: form.excludeCDN, excludeHosts: form.excludeHosts },
     portidentify: { enable: form.portidentifyEnable, tool: form.portidentifyTool, timeout: form.portidentifyTimeout, concurrency: form.portidentifyConcurrency, args: form.portidentifyArgs, udp: form.portidentifyUDP, fastMode: form.portidentifyFastMode, forceScan: form.portidentifyForceScan && !form.portscanEnable },
     fingerprint: { enable: form.fingerprintEnable, tool: form.fingerprintTool, iconHash: form.fingerprintIconHash, customEngine: form.fingerprintCustomEngine, screenshot: form.fingerprintScreenshot, targetTimeout: form.fingerprintTimeout, forceScan: form.fingerprintForceScan && !form.portscanEnable && !form.portidentifyEnable },
-    pocscan: { enable: form.pocscanEnable, useNuclei: true, forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout, rateLimit: form.pocscanRateLimit, concurrency: form.pocscanConcurrency }
+    pocscan: { enable: form.pocscanEnable, useNuclei: true, forceScan: form.pocscanForceScan && !hasPrePhaseEnabled.value, autoScan: form.pocscanAutoScan, automaticScan: form.pocscanAutomaticScan, customPocOnly: form.pocscanCustomOnly, severity: form.pocscanSeverity.join(','), targetTimeout: form.pocscanTargetTimeout }
   }
 }
 

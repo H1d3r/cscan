@@ -10,7 +10,7 @@ export const useUserStore = defineStore('user', () => {
   const workspaceId = ref(localStorage.getItem('workspaceId') || '')
 
   const isLoggedIn = computed(() => !!token.value)
-  const isSuperAdmin = computed(() => role.value === 'superadmin')
+  const isAdmin = computed(() => role.value === 'admin' || role.value === 'superadmin')
 
   async function login(loginForm) {
     const res = await loginApi(loginForm)
@@ -59,7 +59,7 @@ export const useUserStore = defineStore('user', () => {
     role,
     workspaceId,
     isLoggedIn,
-    isSuperAdmin,
+    isAdmin,
     login,
     logout,
     setWorkspace

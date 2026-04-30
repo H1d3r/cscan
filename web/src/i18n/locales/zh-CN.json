@@ -117,6 +117,7 @@
   "auth": {
     "login": "登录",
     "logout": "退出登录",
+    "changePassword": "修改密码",
     "username": "用户名",
     "password": "密码",
     "loginTitle": "资产安全扫描平台",
@@ -124,7 +125,8 @@
     "loginFailed": "登录失败",
     "sessionExpired": "登录已过期，请重新登录",
     "pleaseEnterUsername": "请输入用户名",
-    "pleaseEnterPassword": "请输入密码"
+    "pleaseEnterPassword": "请输入密码",
+    "forceResetTitle": "首次登录请修改密码"
   },
   "dashboard": {
     "title": "工作台",
@@ -797,7 +799,7 @@
     "password": "密码",
     "pleaseEnterTaskName": "请输入任务名称",
     "pleaseEnterTarget": "请输入扫描目标",
-    "noScanConfigEnabled": "请至少启用一项扫描配置（子域名扫描、端口扫描、端口识别、指纹识别、目录扫描、漏洞扫描或弱口令扫描）",
+    "noScanConfigEnabled": "请至少启用一项扫描配置（子域名扫描、端口扫描、端口识别、指纹识别、目录扫描、漏洞扫描、弱口令扫描或JS扫描）",
     "targetPlaceholder": "每行一个目标，支持格式:\n• IP: 192.168.1.1\n• CIDR: 192.168.1.0/24\n• IP范围: 192.168.1.1-192.168.1.100\n• 域名: example.com",
     "tags": "标签",
     "tagsPlaceholder": "输入标签，支持创建新标签",
@@ -896,7 +898,7 @@
     "serviceMappingModeHint": "使用服务映射过滤，排除明确标识为非HTTP的服务（如SSH、MySQL等），保留HTTP及未知服务",
     "activeScanHint": "访问特定路径识别应用（如/nacos/、/actuator等），启用后自动开启自定义指纹引擎",
     "dirScanHint": "基于字典的目录路径发现",
-    "jsfinderScan": "JS敏感信息扫描",
+    "jsfinderScan": "JS扫描",
     "jsfinderScanHint": "提取JS文件中的敏感信息和API路径，并探测未授权访问",
     "enableSourcemap": "抓取SourceMap",
     "enableSourcemapHint": "尝试获取.js.map文件以增强提取覆盖率",
@@ -957,7 +959,7 @@
     "workflowPortIdentify": "端口识别",
     "workflowFingerprint": "指纹识别",
     "workflowDirScan": "目录扫描",
-    "workflowJSFinder": "JS敏感信息扫描",
+    "workflowJSFinder": "JS扫描",
     "workflowVulScan": "漏洞扫描",
     "scanStrategy": "扫描策略",
     "enabledModules": "已启用模块",
@@ -1400,7 +1402,9 @@
     "jsfinderResetConfirm": "确定恢复默认配置吗？当前自定义内容将被覆盖。",
     "jsfinderResetSuccess": "已恢复默认配置",
     "jsfinderSaveSuccess": "保存成功",
-    "jsfinderEmptyHint": "暂无配置项"
+    "jsfinderEmptyHint": "暂无配置项",
+    "jsfinderSearchPlaceholder": "搜索关键词，匹配项将高亮显示",
+    "jsfinderMatchCount": "匹配 {count} 项"
   },
   "fingerprint": {
     "title": "指纹管理",
@@ -1866,6 +1870,11 @@
     "pleaseEnterNewPassword": "请输入新密码",
     "pleaseConfirmPassword": "请再次输入新密码",
     "pleaseSelectStatus": "请选择状态",
+    "pleaseSelectRole": "请选择角色",
+    "passwordMinLength": "密码长度至少8位",
+    "passwordNeedUpper": "密码需包含大写字母",
+    "passwordNeedLower": "密码需包含小写字母",
+    "passwordNeedDigit": "密码需包含数字",
     "passwordMismatch": "两次输入的密码不一致",
     "passwordResetSuccess": "密码重置成功",
     "passwordResetFailed": "密码重置失败",

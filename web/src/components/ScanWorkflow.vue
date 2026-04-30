@@ -76,7 +76,7 @@ const phaseNameMap = {
   '端口识别': 'portidentify',
   '指纹识别': 'fingerprint',
   '目录扫描': 'dirscan',
-  'JS敏感信息扫描': 'jsfinder',
+  'JS扫描': 'jsfinder',
   '漏洞扫描': 'pocscan',
   '完成': 'completed'
 }
