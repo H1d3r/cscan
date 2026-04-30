@@ -121,13 +121,10 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	// 需要认证的路由
 	authMiddleware := middleware.NewAuthMiddleware(svcCtx.Config.Auth.AccessSecret)
 	authRoutes := []rest.Route{
-		// 用户管理
+		// 用户管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/user/list", Handler: user.UserListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/user/create", Handler: user.UserCreateHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/user/update", Handler: user.UserUpdateHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/user/delete", Handler: user.UserDeleteHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/user/resetPassword", Handler: user.UserResetPasswordHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/firstLoginResetPassword", Handler: user.UserFirstLoginResetPasswordHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/resetPassword", Handler: user.UserResetPasswordHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/save", Handler: user.SaveScanConfigHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/scanConfig/get", Handler: user.GetScanConfigHandler(svcCtx)},
 
@@ -423,14 +420,17 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 	// 需要管理员权限的路由（敏感操作）
 	adminRoutes := []rest.Route{
-		// 清除日志移到普通认证路由，如需管理员限制可移回此处
+		// 用户管理（写操作需要管理员权限）
+		{Method: http.MethodPost, Path: "/api/v1/user/create", Handler: user.UserCreateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/update", Handler: user.UserUpdateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/user/delete", Handler: user.UserDeleteHandler(svcCtx)},
 	}
 
-	// 为管理员路由包装认证中间件
+	// 为管理员路由包装认证中间件 + 管理员权限中间件
 	for i := range adminRoutes {
 		originalHandler := adminRoutes[i].Handler
 		adminRoutes[i].Handler = func(w http.ResponseWriter, r *http.Request) {
-			authMiddleware.Handle(http.HandlerFunc(originalHandler)).ServeHTTP(w, r)
+			authMiddleware.Handle(middleware.RequireAdmin(http.HandlerFunc(originalHandler))).ServeHTTP(w, r)
 		}
 	}
 

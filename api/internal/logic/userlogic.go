@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -33,19 +34,26 @@ func (l *UserListLogic) UserList(req *types.PageReq) (resp *types.UserListResp, 
 
 	total, err := l.svcCtx.UserModel.Count(l.ctx, filter)
 	if err != nil {
-		return &types.UserListResp{Code: 500, Msg: "查询失败"}, nil
+		logx.Errorf("查询用户数量失败: %v", err)
+		return nil, fmt.Errorf("查询用户数量失败: %w", err)
 	}
 
 	users, err := l.svcCtx.UserModel.Find(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
-		return &types.UserListResp{Code: 500, Msg: "查询失败"}, nil
+		logx.Errorf("查询用户列表失败: %v", err)
+		return nil, fmt.Errorf("查询用户列表失败: %w", err)
 	}
 
 	list := make([]types.UserInfo, 0, len(users))
 	for _, u := range users {
+		role := u.Role
+		if role == "" {
+			role = "user"
+		}
 		list = append(list, types.UserInfo{
 			Id:       u.Id.Hex(),
 			Username: u.Username,
+			Role:     role,
 			Status:   u.Status,
 		})
 	}
@@ -74,6 +82,11 @@ func NewUserCreateLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UserCr
 }
 
 func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.BaseResp, err error) {
+	// 验证密码强度
+	if err := model.ValidatePasswordStrength(req.Password); err != nil {
+		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
+	}
+
 	// 检查用户名是否已存在
 	exists, err := l.svcCtx.UserModel.FindByUsername(l.ctx, req.Username)
 	if err != nil {
@@ -85,9 +98,14 @@ func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.Base
 	}
 
 	// 创建用户
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
 	user := &model.User{
 		Username: req.Username,
 		Password: req.Password, // 在model层会自动bcrypt加密
+		Role:     role,
 		Status:   req.Status,
 	}
 
@@ -139,13 +157,18 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 	}
 
 	// 更新用户信息
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
 	updateData := bson.M{
 		"username":    req.Username,
+		"role":        role,
 		"status":      req.Status,
 		"update_time": time.Now(),
 	}
 
-	err = l.svcCtx.UserModel.UpdateById(l.ctx, req.Id, updateData)
+	err = l.svcCtx.UserModel.Update(l.ctx, req.Id, updateData)
 	if err != nil {
 		logx.Errorf("更新用户失败: %v", err)
 		return &types.BaseResp{Code: 500, Msg: "更新用户失败"}, nil
@@ -211,6 +234,11 @@ func NewUserResetPasswordLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordReq) (resp *types.BaseResp, err error) {
+	// 验证新密码强度
+	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
+		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
+	}
+
 	// 检查用户是否存在
 	user, err := l.svcCtx.UserModel.FindById(l.ctx, req.Id)
 	if err != nil {
@@ -227,6 +255,11 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 	}
 	if !model.CheckPassword(req.OldPassword, user.Password) {
 		return &types.BaseResp{Code: 400, Msg: "原密码错误"}, nil
+	}
+
+	// 新密码不能与原密码相同
+	if req.OldPassword == req.NewPassword {
+		return &types.BaseResp{Code: 400, Msg: "新密码不能与原密码相同"}, nil
 	}
 
 	// 重置密码
@@ -255,6 +288,11 @@ func NewUserFirstLoginResetPasswordLogic(ctx context.Context, svcCtx *svc.Servic
 }
 
 func (l *UserFirstLoginResetPasswordLogic) UserFirstLoginResetPassword(req *types.UserFirstLoginResetPasswordReq) (resp *types.BaseResp, err error) {
+	// 验证新密码强度
+	if err := model.ValidatePasswordStrength(req.NewPassword); err != nil {
+		return &types.BaseResp{Code: 400, Msg: err.Error()}, nil
+	}
+
 	// 检查用户是否存在
 	user, err := l.svcCtx.UserModel.FindById(l.ctx, req.Id)
 	if err != nil {

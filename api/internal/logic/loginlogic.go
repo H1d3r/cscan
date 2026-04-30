@@ -36,12 +36,20 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 	}
 
 	// 更新登录时间
-	_ = l.svcCtx.UserModel.UpdateLoginTime(l.ctx, user.Id.Hex())
+	if err := l.svcCtx.UserModel.UpdateLoginTime(l.ctx, user.Id.Hex()); err != nil {
+		l.Logger.Errorf("更新登录时间失败: %v", err)
+	}
+
+	// 确定用户角色，默认为 user
+	role := user.Role
+	if role == "" {
+		role = "user"
+	}
 
 	// 生成JWT Token
 	now := time.Now().Unix()
 	accessExpire := l.svcCtx.Config.Auth.AccessExpire
-	token, err := l.generateToken(user.Id.Hex(), user.Username, now, accessExpire)
+	token, err := l.generateToken(user.Id.Hex(), user.Username, role, now, accessExpire)
 	if err != nil {
 		return &types.LoginResp{
 			Code: 500,
@@ -62,17 +70,17 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 		Token:         token,
 		UserId:        user.Id.Hex(),
 		Username:      user.Username,
-		Role:          "admin", // 所有用户都是管理员
+		Role:          role,
 		WorkspaceId:   workspaceId,
 		NeedChangePwd: user.MustChangePassword,
 	}, nil
 }
 
-func (l *LoginLogic) generateToken(userId, username string, iat, expire int64) (string, error) {
+func (l *LoginLogic) generateToken(userId, username, role string, iat, expire int64) (string, error) {
 	claims := jwt.MapClaims{
 		"userId":   userId,
 		"username": username,
-		"role":     "admin", // 所有用户都是管理员
+		"role":     role,
 		"iat":      iat,
 		"exp":      iat + expire,
 	}

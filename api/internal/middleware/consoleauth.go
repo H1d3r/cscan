@@ -27,7 +27,7 @@ func (m *ConsoleAuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 从Context获取用户角色（需要先经过AuthMiddleware）
 		role := GetRole(r.Context())
-		if role != "admin" {
+		if role != "admin" && role != "superadmin" {
 			logx.Errorf("[ConsoleAuth] Access denied for non-admin user, role: %s, path: %s", role, r.URL.Path)
 			consoleForbidden(w, "需要管理员权限访问控制台")
 			return

@@ -682,7 +682,7 @@ func WorkerTerminalWSHandlerWithAuth(svcCtx *svc.ServiceContext, wsHandler *Work
 
 		// 检查是否是管理员
 		role, _ := claims["role"].(string)
-		if role != "admin" {
+		if role != "admin" && role != "superadmin" {
 			logx.Errorf("[TerminalWS] Access denied for non-admin user, role: %s", role)
 			http.Error(w, "admin access required", http.StatusForbidden)
 			return

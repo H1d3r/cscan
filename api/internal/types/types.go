@@ -41,6 +41,7 @@ type LoginResp struct {
 type UserInfo struct {
 	Id       string `json:"id"`
 	Username string `json:"username"`
+	Role     string `json:"role"`
 	Status   string `json:"status"`
 }
 
@@ -55,12 +56,14 @@ type UserListResp struct {
 type UserCreateReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Role     string `json:"role,optional"`
 	Status   string `json:"status"`
 }
 
 type UserUpdateReq struct {
 	Id       string `json:"id"`
 	Username string `json:"username"`
+	Role     string `json:"role,optional"`
 	Status   string `json:"status"`
 }
 

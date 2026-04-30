@@ -137,7 +137,7 @@ func GetWorkspaceId(ctx context.Context) string {
 func RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		role := GetRole(r.Context())
-		if role != "admin" {
+		if role != "admin" && role != "superadmin" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]interface{}{
