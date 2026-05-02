@@ -129,10 +129,10 @@ func filterConfigsByHighRisk(configs []ConfigItem, result *NotifyResult) []Confi
 
 // severityLevelMapping 中文到英文的严重级别映射
 var severityLevelMapping = map[string]string{
-	"严重": "critical",
-	"高危": "high",
-	"中危": "medium",
-	"低危": "low",
+	"严重":   "critical",
+	"高危":   "high",
+	"中危":   "medium",
+	"低危":   "low",
 	"严重级别": "critical",
 	"高危级别": "high",
 	"中危级别": "medium",

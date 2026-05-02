@@ -4,8 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	"cscan/pkg/xerr"
 	"github.com/zeromicro/go-zero/core/logx"
+
+	"cscan/pkg/xerr"
 
 	"github.com/zeromicro/go-zero/rest/httpx"
 )

@@ -115,7 +115,7 @@ var providerFactories = map[string]providerFactory{
 	"wecom":    createWeComProvider,
 	"slack":    createSlackProvider,
 	"discord":  createDiscordProvider,
-	"telegram":  createTelegramProvider,
+	"telegram": createTelegramProvider,
 	"teams":    createTeamsProvider,
 	"gotify":   createGotifyProvider,
 	"webhook":  createWebhookProvider,

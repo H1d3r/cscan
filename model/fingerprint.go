@@ -2,10 +2,10 @@ package model
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -557,8 +557,7 @@ func (m *FingerprintModel) BulkUpsert(ctx context.Context, docs []*Fingerprint) 
 
 		result, err := m.coll.BulkWrite(ctx, models[i:end], options.BulkWrite().SetOrdered(false))
 		if err != nil {
-			// 记录错误但继续处理
-			fmt.Printf("BulkWrite error: %v\n", err)
+			logx.Errorf("[FingerprintModel] BulkWrite error: %v", err)
 			continue
 		}
 		inserted += int(result.UpsertedCount)

@@ -18,17 +18,17 @@ const (
 )
 
 type User struct {
-	Id            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Username      string             `bson:"username" json:"username"`
-	Password      string             `bson:"password" json:"-"`
-	Role          string             `bson:"role,omitempty" json:"role"`
-	Status        string             `bson:"status" json:"status"`
-	WorkspaceIds  []string           `bson:"workspace_ids" json:"workspaceIds"`
-	ScanConfig    string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
-	LastLoginTime *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
-	CreateTime    time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime    time.Time          `bson:"update_time" json:"updateTime"`
-	MustChangePassword bool          `bson:"must_change_password,omitempty" json:"mustChangePassword"`
+	Id                 primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Username           string             `bson:"username" json:"username"`
+	Password           string             `bson:"password" json:"-"`
+	Role               string             `bson:"role,omitempty" json:"role"`
+	Status             string             `bson:"status" json:"status"`
+	WorkspaceIds       []string           `bson:"workspace_ids" json:"workspaceIds"`
+	ScanConfig         string             `bson:"scan_config" json:"scanConfig"` // 用户默认扫描配置JSON
+	LastLoginTime      *time.Time         `bson:"last_login_time" json:"lastLoginTime"`
+	CreateTime         time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime         time.Time          `bson:"update_time" json:"updateTime"`
+	MustChangePassword bool               `bson:"must_change_password,omitempty" json:"mustChangePassword"`
 }
 
 type UserModel struct {

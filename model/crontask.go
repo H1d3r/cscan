@@ -14,9 +14,9 @@ import (
 // CronTask 定时任务（MongoDB持久化模型）
 type CronTask struct {
 	Id           primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	CronTaskId   string             `bson:"cron_task_id" json:"cronTaskId"`     // 业务ID（UUID，用于跨服务引用）
+	CronTaskId   string             `bson:"cron_task_id" json:"cronTaskId"` // 业务ID（UUID，用于跨服务引用）
 	Name         string             `bson:"name" json:"name"`
-	ScheduleType string             `bson:"schedule_type" json:"scheduleType"`  // cron / once
+	ScheduleType string             `bson:"schedule_type" json:"scheduleType"` // cron / once
 	CronSpec     string             `bson:"cron_spec" json:"cronSpec"`
 	ScheduleTime string             `bson:"schedule_time" json:"scheduleTime"`
 	WorkspaceId  string             `bson:"workspace_id" json:"workspaceId"`
@@ -24,7 +24,7 @@ type CronTask struct {
 	TaskName     string             `bson:"task_name" json:"taskName"`
 	Target       string             `bson:"target" json:"target"`
 	Config       string             `bson:"config" json:"config"`
-	Status       string             `bson:"status" json:"status"`              // enable / disable
+	Status       string             `bson:"status" json:"status"` // enable / disable
 	LastRunTime  string             `bson:"last_run_time" json:"lastRunTime"`
 	NextRunTime  string             `bson:"next_run_time" json:"nextRunTime"`
 	CreateTime   time.Time          `bson:"create_time" json:"createTime"`

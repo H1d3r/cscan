@@ -18,13 +18,13 @@ import (
 // WeakpassDict 弱口令字典 - 使用 "用户名:密码" 格式
 type WeakpassDict struct {
 	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name        string             `bson:"name" json:"name"`                   // 字典名称
+	Name        string             `bson:"name" json:"name"`               // 字典名称
 	Description string             `bson:"description" json:"description"` // 描述
-	Service     string             `bson:"service" json:"service"`           // 服务类型：ssh/ftp/mysql/.../common
-	Content     string             `bson:"content" json:"content"`           // 字典内容（每行一个 "用户名:密码"）
-	WordCount   int                `bson:"word_count" json:"wordCount"`     // 词条数量（用户:密码组合数）
-	Enabled     bool               `bson:"enabled" json:"enabled"`          // 是否启用
-	IsBuiltin   bool               `bson:"is_builtin" json:"isBuiltin"`     // 是否内置字典
+	Service     string             `bson:"service" json:"service"`         // 服务类型：ssh/ftp/mysql/.../common
+	Content     string             `bson:"content" json:"content"`         // 字典内容（每行一个 "用户名:密码"）
+	WordCount   int                `bson:"word_count" json:"wordCount"`    // 词条数量（用户:密码组合数）
+	Enabled     bool               `bson:"enabled" json:"enabled"`         // 是否启用
+	IsBuiltin   bool               `bson:"is_builtin" json:"isBuiltin"`    // 是否内置字典
 	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
 }
@@ -470,26 +470,26 @@ func (m *WeakpassDictModel) initFromFile(ctx context.Context, filePath string) e
 // getServiceDictName 根据服务类型获取字典名称
 func getServiceDictName(service string) string {
 	serviceNames := map[string]string{
-		"ssh":         "SSH-弱口令",
-		"mysql":       "MySQL-弱口令",
-		"redis":       "Redis-弱口令",
-		"mongodb":     "MongoDB-弱口令",
-		"postgresql":  "PostgreSQL-弱口令",
-		"mssql":       "MSSQL-弱口令",
-		"ftp":    "FTP-弱口令",
-		"oracle": "Oracle-弱口令",
-		"smb":         "SMB-弱口令",
-		"mqtt":        "MQTT-弱口令",
-		"rdp":         "RDP-弱口令",
-		"telnet":      "Telnet-弱口令",
-		"vnc":         "VNC-弱口令",
-		"rsync":       "Rsync-弱口令",
-		"docker":      "DockerRegistry-弱口令",
-		"ldap":        "LDAP-弱口令",
-		"memcached":   "Memcached-弱口令",
+		"ssh":           "SSH-弱口令",
+		"mysql":         "MySQL-弱口令",
+		"redis":         "Redis-弱口令",
+		"mongodb":       "MongoDB-弱口令",
+		"postgresql":    "PostgreSQL-弱口令",
+		"mssql":         "MSSQL-弱口令",
+		"ftp":           "FTP-弱口令",
+		"oracle":        "Oracle-弱口令",
+		"smb":           "SMB-弱口令",
+		"mqtt":          "MQTT-弱口令",
+		"rdp":           "RDP-弱口令",
+		"telnet":        "Telnet-弱口令",
+		"vnc":           "VNC-弱口令",
+		"rsync":         "Rsync-弱口令",
+		"docker":        "DockerRegistry-弱口令",
+		"ldap":          "LDAP-弱口令",
+		"memcached":     "Memcached-弱口令",
 		"elasticsearch": "Elasticsearch-弱口令",
-		"kibana":      "Kibana-弱口令",
-		"common":      "通用-弱口令",
+		"kibana":        "Kibana-弱口令",
+		"common":        "通用-弱口令",
 	}
 
 	if name, ok := serviceNames[service]; ok {
@@ -501,26 +501,26 @@ func getServiceDictName(service string) string {
 // getServiceDictDesc 根据服务类型获取字典描述
 func getServiceDictDesc(service string) string {
 	descriptions := map[string]string{
-		"ssh":          "SSH服务弱口令字典",
-		"mysql":        "MySQL服务弱口令字典，支持无密码认证",
-		"redis":        "Redis服务弱口令字典，支持无密码认证",
-		"mongodb":      "MongoDB服务弱口令字典，支持无密码认证",
-		"postgresql":   "PostgreSQL服务弱口令字典",
-		"mssql":        "MSSQL服务弱口令字典，支持无密码认证",
-		"ftp":    "FTP服务弱口令字典",
-		"oracle": "Oracle服务弱口令字典",
-		"smb":          "SMB服务弱口令字典，支持无密码认证",
-		"mqtt":         "MQTT服务弱口令字典，支持匿名认证",
-		"rdp":          "RDP服务弱口令字典",
-		"telnet":       "Telnet服务弱口令字典",
-		"vnc":          "VNC服务弱口令字典（用户名留空，仅密码）",
-		"rsync":        "Rsync服务弱口令字典",
-		"docker":       "Docker Registry服务弱口令字典",
-		"ldap":         "LDAP服务弱口令字典",
-		"memcached":    "Memcached服务弱口令字典",
+		"ssh":           "SSH服务弱口令字典",
+		"mysql":         "MySQL服务弱口令字典，支持无密码认证",
+		"redis":         "Redis服务弱口令字典，支持无密码认证",
+		"mongodb":       "MongoDB服务弱口令字典，支持无密码认证",
+		"postgresql":    "PostgreSQL服务弱口令字典",
+		"mssql":         "MSSQL服务弱口令字典，支持无密码认证",
+		"ftp":           "FTP服务弱口令字典",
+		"oracle":        "Oracle服务弱口令字典",
+		"smb":           "SMB服务弱口令字典，支持无密码认证",
+		"mqtt":          "MQTT服务弱口令字典，支持匿名认证",
+		"rdp":           "RDP服务弱口令字典",
+		"telnet":        "Telnet服务弱口令字典",
+		"vnc":           "VNC服务弱口令字典（用户名留空，仅密码）",
+		"rsync":         "Rsync服务弱口令字典",
+		"docker":        "Docker Registry服务弱口令字典",
+		"ldap":          "LDAP服务弱口令字典",
+		"memcached":     "Memcached服务弱口令字典",
 		"elasticsearch": "Elasticsearch服务弱口令字典",
-		"kibana":       "Kibana服务弱口令字典",
-		"common":       "通用弱口令列表，包含常见用户名和密码组合",
+		"kibana":        "Kibana服务弱口令字典",
+		"common":        "通用弱口令列表，包含常见用户名和密码组合",
 	}
 
 	if desc, ok := descriptions[service]; ok {

@@ -43,7 +43,7 @@ func DoWithConfig(ctx context.Context, config Config, op Operation) error {
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return fmt.Errorf("context cancelled after %d attempts: %w", attempt, lastErr)
+				return fmt.Errorf("context canceled after %d attempts: %w", attempt, lastErr)
 			}
 			return ctx.Err()
 		default:
@@ -66,7 +66,7 @@ func DoWithConfig(ctx context.Context, config Config, op Operation) error {
 		if attempt < config.MaxRetries {
 			select {
 			case <-ctx.Done():
-				return fmt.Errorf("context cancelled during backoff: %w", lastErr)
+				return fmt.Errorf("context canceled during backoff: %w", lastErr)
 			case <-time.After(backoff):
 			}
 
@@ -128,7 +128,7 @@ func DoWithResult(ctx context.Context, config Config, op Operation) Result {
 			if lastErr != nil {
 				return Result{
 					Attempts: attempts,
-					Err:      fmt.Errorf("context cancelled after %d attempts: %w", attempts, lastErr),
+					Err:      fmt.Errorf("context canceled after %d attempts: %w", attempts, lastErr),
 				}
 			}
 			return Result{Attempts: attempts, Err: ctx.Err()}
@@ -154,7 +154,7 @@ func DoWithResult(ctx context.Context, config Config, op Operation) Result {
 			case <-ctx.Done():
 				return Result{
 					Attempts: attempts,
-					Err:      fmt.Errorf("context cancelled during backoff: %w", lastErr),
+					Err:      fmt.Errorf("context canceled during backoff: %w", lastErr),
 				}
 			case <-time.After(backoff):
 			}

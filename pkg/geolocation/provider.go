@@ -12,7 +12,7 @@ import (
 
 // Config 配置
 type Config struct {
-	Enabled      bool   `json:"enabled"`       // 是否启用
+	Enabled      bool   `json:"enabled"`      // 是否启用
 	DataDir      string `json:"dataDir"`      // 数据库目录（编译时准备好）
 	AutoDownload bool   `json:"autoDownload"` // 是否自动下载（已废弃，数据库应在编译时准备好）
 }
@@ -216,12 +216,4 @@ func GetConfigPath() string {
 	}
 
 	return ""
-}
-
-// MustInit 初始化服务，如果失败则 panic
-// 适用于应用启动时必须初始化的情况
-func (m *ProviderManager) MustInit() {
-	if err := m.Init(""); err != nil {
-		panic(fmt.Sprintf("failed to initialize geolocation service: %v", err))
-	}
 }
