@@ -46630,6 +46630,8 @@
 - name: Kibana
   rule: icon_hash="-1200737715"
 - name: Kibana
+  rule: icon_hash="1918732740"
+- name: Kibana
   rule: title="Kibana"
 - name: Kibana
   rule: title="Kibana" || (icon_hash="-267431135") || (icon_hash="-759754862") || (icon_hash="-1200737715") || (icon_hash="75230260") || (icon_hash="1668183286")

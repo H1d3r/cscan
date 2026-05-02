@@ -5,8 +5,8 @@ FROM golang:1.25.1-alpine AS builder
 
 WORKDIR /app
 
-# 安装编译依赖（scheduler→scanner→naabu→gopacket 需要 CGO + libpcap）
-RUN apk add --no-cache git gcc musl-dev libpcap-dev curl
+# 安装编译依赖
+RUN apk add --no-cache git curl
 
 # 复制 go.mod 和 go.sum
 COPY go.mod go.sum ./
@@ -22,8 +22,8 @@ RUN mkdir -p /app/data && \
     curl -sL "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v6.xdb" -o /app/data/ip2region_v6.xdb && \
     echo "ip2region databases downloaded"
 
-# 编译 RPC 服务 - 需要 CGO_ENABLED=1，因为 scheduler→scanner→naabu→gopacket 依赖 libpcap
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /cscan-rpc ./rpc/task/task.go
+# 编译 RPC 服务
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /cscan-rpc ./rpc/task/task.go
 
 # 运行镜像
 FROM alpine:3.19
@@ -31,7 +31,7 @@ FROM alpine:3.19
 WORKDIR /app
 
 # 安装运行时依赖（libpcap 是 gopacket 的运行时依赖）
-RUN apk add --no-cache ca-certificates tzdata libpcap
+RUN apk add --no-cache ca-certificates tzdata
 
 # 设置时区
 ENV TZ=Asia/Shanghai

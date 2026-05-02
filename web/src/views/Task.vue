@@ -251,7 +251,7 @@
               <span class="module-name">{{ $t('task.portIdentify') }}</span>
               <div class="module-details" v-if="parsedConfig.portidentify?.enable">
                 <span class="detail-item">{{ parsedConfig.portidentify?.tool || 'nmap' }}</span>
-                <span class="detail-item">{{ parsedConfig.portidentify?.timeout || 30 }}s</span>
+                <span class="detail-item">{{ parsedConfig.portidentify?.timeout || 60 }}s</span>
               </div>
             </div>
             <el-tag :type="parsedConfig.portidentify?.enable ? 'success' : 'info'" size="small" effect="plain">
@@ -442,7 +442,7 @@
               </div>
               <div class="config-item">
                 <span class="config-label">{{ $t('task.timeout') }}</span>
-                <span class="config-value">{{ parsedConfig.portidentify?.timeout || 30 }}{{ $t('task.seconds') }}</span>
+                <span class="config-value">{{ parsedConfig.portidentify?.timeout || 60 }}{{ $t('task.seconds') }}</span>
               </div>
               <div v-if="parsedConfig.portidentify?.tool === 'fingerprintx'" class="config-item">
                 <span class="config-label">{{ $t('task.concurrent') }}</span>
@@ -1392,7 +1392,7 @@ function applyConfig(config) {
     excludeHosts: config.portscan?.excludeHosts || '',
     portidentifyEnable: config.portidentify?.enable ?? false,
     portidentifyTool: config.portidentify?.tool || 'nmap',
-    portidentifyTimeout: config.portidentify?.timeout || 30,
+    portidentifyTimeout: config.portidentify?.timeout || 60,
     portidentifyConcurrency: config.portidentify?.concurrency || 10,
     portidentifyArgs: config.portidentify?.args || '',
     portidentifyUDP: config.portidentify?.udp ?? false,

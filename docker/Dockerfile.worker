@@ -5,7 +5,7 @@ ARG VERSION
 WORKDIR /app
 
 # 安装编译依赖
-RUN apk add --no-cache git gcc musl-dev libpcap-dev curl
+RUN apk add --no-cache git curl
 
 # 复制依赖文件并下载
 COPY go.mod go.sum ./
@@ -21,7 +21,7 @@ RUN mkdir -p /app/data && \
     echo "ip2region databases downloaded"
 
 # 编译 worker
-RUN CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=${VERSION}" \
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /cscan-worker ./cmd/worker/main.go
 
 # 安装 ksubdomain
@@ -39,7 +39,6 @@ RUN apk add --no-cache \
     masscan \
     curl \
     bind-tools \
-    libpcap \
     chromium \
     font-noto-cjk \
     util-linux

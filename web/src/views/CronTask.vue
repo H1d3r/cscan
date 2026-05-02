@@ -1611,7 +1611,7 @@ function applyConfig(config) {
   if (config.portidentify) {
     form.portidentifyEnable = config.portidentify.enable ?? false
     form.portidentifyTool = config.portidentify.tool ?? 'nmap'
-    form.portidentifyTimeout = config.portidentify.timeout ?? 30
+    form.portidentifyTimeout = config.portidentify.timeout ?? 60
     form.portidentifyConcurrency = config.portidentify.concurrency ?? 10
     form.portidentifyArgs = config.portidentify.args ?? ''
     form.portidentifyUDP = config.portidentify.udp ?? false

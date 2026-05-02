@@ -1377,7 +1377,7 @@ function applyConfig(config) {
     // 端口识别
     portidentifyEnable: config.portidentify?.enable ?? false,
     portidentifyTool: config.portidentify?.tool || 'nmap',
-    portidentifyTimeout: config.portidentify?.timeout || 30,
+    portidentifyTimeout: config.portidentify?.timeout || 60,
     portidentifyConcurrency: config.portidentify?.concurrency || 10,
     portidentifyArgs: config.portidentify?.args || '',
     portidentifyUDP: config.portidentify?.udp ?? false,

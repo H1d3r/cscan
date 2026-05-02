@@ -32,7 +32,7 @@ db.task_profile.insertOne({
         batchSize: 0,
         domainscan: { enable: false, timeout: 30, maxEnumerationTime: 10, threads: 10, rateLimit: 0, all: false, recursive: false, removeWildcard: true, resolveDNS: true, concurrent: 50 },
         portscan: { enable: true, tool: "naabu", rate: 1000, ports: "top1000", portThreshold: 50, scanType: "c", timeout: 600, skipHostDiscovery: false },
-        portidentify: { enable: false, timeout: 30, args: "" },
+        portidentify: { enable: false, timeout: 60, args: "" },
         fingerprint: { enable: true, httpx: true, iconHash: true, wappalyzer: false, customEngine: true, screenshot: true, targetTimeout: 30, concurrency: 2 },
         pocscan: { enable: true, useNuclei: true, autoScan: true, automaticScan: true, customPocOnly: false, severity: "critical,high,medium,low,info", targetTimeout: 600 }
     }),

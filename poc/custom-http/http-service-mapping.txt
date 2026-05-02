@@ -39,3 +39,4 @@ ntp=non_http # 时间同步
 tftp=non_http # 简单文件传输
 sip=non_http # SIP通信
 rtsp=non_http # 流媒体
+grpc=non_http # gRPC 服务
