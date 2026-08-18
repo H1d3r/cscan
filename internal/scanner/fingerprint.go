@@ -781,7 +781,10 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	// 截图功能：如果 httpx 没有获取到截图，使用内置方法补充
 	// 修复 D6：port 未知(==0)时跳过截图，避免对默认端口做无意义 Chrome 启动
 	if opts.Screenshot && asset.Screenshot == "" && asset.Port > 0 {
-		screenshot := s.takeScreenshot(ctx, targetUrl, taskLog)
+		// 截图独立预算：不依赖 httpx/指纹共用的 ctx，避免被上游模块耗尽预算而饿死
+		shotCtx, shotCancel := screenshotContext(opts)
+		screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
+		shotCancel()
 		if screenshot != "" {
 			asset.Screenshot = screenshot
 			taskLog("DEBUG", "Screenshot captured for %s:%d using builtin method", asset.Host, asset.Port)
@@ -1058,7 +1061,10 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		// 截图
 		// 修复 D6：port 未知(==0)时跳过截图
 		if opts.Screenshot && asset.Port > 0 {
-			screenshot := s.takeScreenshot(ctx, targetUrl, taskLog)
+			// 截图独立预算：不依赖指纹探测共用的 ctx，避免被上游模块耗尽预算而饿死
+			shotCtx, shotCancel := screenshotContext(opts)
+			screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
+			shotCancel()
 			taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
 			if screenshot != "" {
 				asset.Screenshot = screenshot
@@ -1178,6 +1184,18 @@ func (s *FingerprintScanner) getIconHash(baseUrl string) string {
 	return ""
 }
 
+// screenshotContext 为单次截图派生独立上下文预算，与 httpx/指纹共用的 ctx 彻底解耦。
+// 解决：上游模块（httpx）耗尽共享 ctx 预算后，截图派生的 ctx 一出生即 DeadlineExceeded，
+// 导致截图被静默跳过（饿死）。此处参考证书抓取（context.Background()）的独立预算模式。
+// 预算取单目标超时与 takeScreenshot 内部 60s 兜底的较大者，实际耗时仍由内部 timer 精确控制。
+func screenshotContext(opts *FingerprintOptions) (context.Context, context.CancelFunc) {
+	budget := 60
+	if opts != nil && opts.TargetTimeout > budget {
+		budget = opts.TargetTimeout
+	}
+	return context.WithTimeout(context.Background(), time.Duration(budget)*time.Second)
+}
+
 // takeScreenshot 使用chromedp截图（共享浏览器 + Tab 模式）
 // 全局只维护 1 个 Chrome 进程，每次截图创建新 Tab，完成后或超时时关闭 Tab。
 // 取消 Tab 上下文是安全的（仅关闭标签页），不会触发 chromedp 的 close-of-closed-channel panic。
@@ -1190,10 +1208,10 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		}
 	}
 
-	// 可见性修复：fpCtx 被 httpx 耗尽后，worker pool 派生的 targetCtx 一出生即过期，
-	// 截图在此静默返回 ""，导致"开了截图却无产物"且无任何日志。此处显式记录跳过原因。
+	// 截图 ctx 现已独立派生（screenshotContext，不再共享 httpx/指纹预算），
+	// 此处 ctx.Err() 仅发生于独立预算耗尽或显式取消，仍显式记录跳过原因便于排障。
 	if ctx.Err() != nil {
-		taskLog("DEBUG", "[Chromedp] skip screenshot for %s: context expired (%v), fingerprint budget likely exhausted", targetUrl, ctx.Err())
+		taskLog("DEBUG", "[Chromedp] skip screenshot for %s: context expired (%v)", targetUrl, ctx.Err())
 		return ""
 	}
 

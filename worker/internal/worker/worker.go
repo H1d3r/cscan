@@ -2223,9 +2223,7 @@ domainScanDone:
 					w.loadCustomFingerprints(ctx, s.(*scanner.FingerprintScanner), config.Fingerprint.ActiveScan)
 				}
 
-				// 按单目标超时计算总超时：单目标超时 × 目标数 / 并发数
-				// 注意：指纹扫描器和 httpx 扫描器内部均将并发上限为 5，
-				// 超时计算必须使用实际上限，否则会导致超时时间估算过短
+				// 并发数上限与扫描器内部一致（≤5）
 				fpConcurrency := config.Fingerprint.Concurrency
 				if fpConcurrency <= 0 {
 					fpConcurrency = 1
@@ -2233,25 +2231,15 @@ domainScanDone:
 				if fpConcurrency > 5 {
 					fpConcurrency = 5
 				}
-				fingerprintTimeout := targetTimeout * len(assetsToScan) / fpConcurrency
-				// 截图预算：开启截图时按 chromedp 信号量并发(3)与单张耗时上限(targetTimeout，即
-				// worker pool 派生 targetCtx 的上限)追加独立预算。否则 httpx 会吃满总超时，
-				// 导致截图阶段派生的 targetCtx 一出生即过期，截图被静默跳过（饿死）。
-				if config.Fingerprint.Screenshot && len(assetsToScan) > 0 {
-					screenshotReserve := ((len(assetsToScan) + 2) / 3) * targetTimeout // ceil(n/3)*targetTimeout
-					if screenshotReserve > 1200 {
-						screenshotReserve = 1200
-					}
-					fingerprintTimeout += screenshotReserve
-				}
-				// runner.New() 初始化（LevelDB 清理等）可能需要较长时间，
-				// 尤其是在 Windows 上，最小值设为 180 秒以确保有足够初始化时间
-				if fingerprintTimeout < 180 {
-					fingerprintTimeout = 180
-				}
-				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: total timeout=%ds (single=%ds, assets=%d, concurrency=%d)",
-					fingerprintTimeout, targetTimeout, len(assetsToScan), fpConcurrency)
-				fpCtx, fpCancel := context.WithTimeout(ctx, time.Duration(fingerprintTimeout)*time.Second)
+				// 超时按单目标单模块独立控制，不再设置会饿死下游模块的阶段级紧总超时：
+				//   - httpx：执行器按单目标超时控制（targetTimeout+10s/目标）
+				//   - 指纹：worker pool 派生的 targetCtx 按单目标超时控制
+				//   - 截图：takeScreenshot 独立预算（与 httpx 解耦，60s/张兜底）
+				// fpCtx 仅承载任务级取消信号（STOP/PAUSE），不再自带 deadline；
+				// 最终由父任务 baseCtx（6h）统一兜底，避免任一模块吃满总额导致其它模块被异常跳过。
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: per-target timeout=%ds, assets=%d, concurrency=%d (no phase total; modules bounded independently)",
+					targetTimeout, len(assetsToScan), fpConcurrency)
+				fpCtx, fpCancel := context.WithCancel(ctx)
 
 				// 创建任务日志回调
 				fpTaskLogger := func(level, format string, args ...interface{}) {
@@ -2294,11 +2282,8 @@ domainScanDone:
 				})
 				fpCancel()
 
-				// 检查是否超时
-				if fpCtx.Err() == context.DeadlineExceeded {
-					w.taskLog(task.TaskId, LevelWarn, "Fingerprint scan timeout after %ds, continuing with partial results", fingerprintTimeout)
-				}
-
+				// fpCtx 现为取消专用（无自带 deadline），阶段级超时由各模块单目标超时独立控制；
+				// 任务级取消/停止由下方 ctx.Err() 与 STOP 检查统一判定。
 				// 检查是否被取消
 				if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
 					w.taskLog(task.TaskId, LevelInfo, "Task stopped")
