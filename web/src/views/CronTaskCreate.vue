@@ -1156,8 +1156,8 @@ function getDefaultForm() {
     fingerprintTool: 'httpx',
     fingerprintIconHash: true,
     fingerprintCustomEngine: false,
-    fingerprintScreenshot: false,
-    fingerprintCert: false,
+    fingerprintScreenshot: true,
+    fingerprintCert: true,
     fingerprintActiveScan: false,
     fingerprintActiveTimeout: 10,
     fingerprintTimeout: 90,
@@ -1944,8 +1944,8 @@ function applyConfig(config) {
     form.fingerprintTool = config.fingerprint.tool ?? 'httpx'
     form.fingerprintIconHash = config.fingerprint.iconHash ?? true
     form.fingerprintCustomEngine = config.fingerprint.customEngine ?? false
-    form.fingerprintScreenshot = config.fingerprint.screenshot ?? false
-    form.fingerprintCert = config.fingerprint.cert ?? false
+    form.fingerprintScreenshot = config.fingerprint.screenshot ?? true
+    form.fingerprintCert = config.fingerprint.cert ?? true
     form.fingerprintActiveScan = config.fingerprint.activeScan ?? false
     form.fingerprintActiveTimeout = config.fingerprint.activeTimeout ?? 10
     form.fingerprintTimeout = config.fingerprint.targetTimeout ?? 90

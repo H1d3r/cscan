@@ -279,7 +279,7 @@ function showCreateDialog() {
     description: '',
     category: 'custom',
     tags: [],
-    config: '{\n  "portscan": {\n    "enable": true,\n    "ports": "top100"\n  },\n  "fingerprint": {\n    "enable": true\n  }\n}'
+    config: '{\n  "portscan": {\n    "enable": true,\n    "ports": "top100"\n  },\n  "fingerprint": {\n    "enable": true,\n    "screenshot": true,\n    "cert": true\n  }\n}'
   })
   editDialogVisible.value = true
 }

@@ -2234,6 +2234,16 @@ domainScanDone:
 					fpConcurrency = 5
 				}
 				fingerprintTimeout := targetTimeout * len(assetsToScan) / fpConcurrency
+				// 截图预算：开启截图时按 chromedp 信号量并发(3)与单张耗时上限(targetTimeout，即
+				// worker pool 派生 targetCtx 的上限)追加独立预算。否则 httpx 会吃满总超时，
+				// 导致截图阶段派生的 targetCtx 一出生即过期，截图被静默跳过（饿死）。
+				if config.Fingerprint.Screenshot && len(assetsToScan) > 0 {
+					screenshotReserve := ((len(assetsToScan) + 2) / 3) * targetTimeout // ceil(n/3)*targetTimeout
+					if screenshotReserve > 1200 {
+						screenshotReserve = 1200
+					}
+					fingerprintTimeout += screenshotReserve
+				}
 				// runner.New() 初始化（LevelDB 清理等）可能需要较长时间，
 				// 尤其是在 Windows 上，最小值设为 180 秒以确保有足够初始化时间
 				if fingerprintTimeout < 180 {

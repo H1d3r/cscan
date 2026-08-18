@@ -1183,14 +1183,18 @@ func (s *FingerprintScanner) getIconHash(baseUrl string) string {
 // 取消 Tab 上下文是安全的（仅关闭标签页），不会触发 chromedp 的 close-of-closed-channel panic。
 // 该 panic 仅在取消 Allocator 分配中的浏览器上下文时发生（Allocation 竞态）。
 func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl string, taskLog func(level, format string, args ...interface{})) (result string) {
-	if ctx.Err() != nil {
-		return ""
-	}
-
+	// taskLog 默认化前置：下方 ctx 过期日志依赖它，必须先就绪
 	if taskLog == nil {
 		taskLog = func(level, format string, args ...interface{}) {
 			logx.Infof(format, args...)
 		}
+	}
+
+	// 可见性修复：fpCtx 被 httpx 耗尽后，worker pool 派生的 targetCtx 一出生即过期，
+	// 截图在此静默返回 ""，导致"开了截图却无产物"且无任何日志。此处显式记录跳过原因。
+	if ctx.Err() != nil {
+		taskLog("DEBUG", "[Chromedp] skip screenshot for %s: context expired (%v), fingerprint budget likely exhausted", targetUrl, ctx.Err())
+		return ""
 	}
 
 	defer func() {
@@ -1204,6 +1208,7 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 	case chromedpSemaphore <- struct{}{}:
 		defer func() { <-chromedpSemaphore }()
 	case <-ctx.Done():
+		taskLog("DEBUG", "[Chromedp] skip screenshot for %s: context expired while waiting for semaphore (%v)", targetUrl, ctx.Err())
 		return ""
 	}
 
@@ -1281,7 +1286,8 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 		taskCancel()
 		return ""
 	case <-ctx.Done():
-		// 父 context 取消（任务停止），取消 Tab 上下文
+		// 父 context 取消：DeadlineExceeded=预算耗尽（httpx 占满 fpCtx），Canceled=任务停止
+		taskLog("DEBUG", "[Chromedp] abort screenshot for %s mid-run: parent context done (%v)", targetUrl, ctx.Err())
 		taskCancel()
 		return ""
 	}
