@@ -28,6 +28,9 @@ type SchedulerClient struct {
 }
 
 // NewSchedulerClient 创建调度客户端
+// mongoDB 仅用于 MainTask 状态写（IncrSubTaskDone / current_phase / progress /
+// MarkTaskCompleted），应传入独立状态连接池（独立持久化），与结果数据写隔离，
+// 避免数据写入过载时状态回写被饿死。
 func NewSchedulerClient(rdb *redis.Client, workerName string, mongoDB *mongo.Database) *SchedulerClient {
 	ctx := context.Background()
 	s := scheduler.NewScheduler(rdb)

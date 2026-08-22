@@ -88,6 +88,13 @@ type Worker struct {
 	mongoClient *mongo.Client
 	mongoDB     *mongo.Database
 
+	// 任务状态写独立连接池（独立持久化）：
+	// current_phase/progress/sub_task_done/MarkTaskCompleted 等状态回写走独立小池，
+	// 与结果数据写（mongoDB，池=20）隔离——数据写入过载时状态回写不会被饿死，
+	// 避免平台侧任务"卡在 Fingerprint"。
+	statusClient *mongo.Client
+	statusDB     *mongo.Database
+
 	// 扫描结果异步批量落库（后台写协程 + 有界缓冲）
 	asyncWriter *AsyncResultWriter
 
@@ -445,9 +452,32 @@ func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
 	w.loadHttpServiceMappings()
 }
 
+// SetStatusMongoDB 设置任务状态写专用 MongoDB 实例（独立连接池，独立持久化）。
+// db 为 nil 时回退使用数据写库（与历史行为一致，不阻断启动）。
+// 必须在 SetRedis 之前调用（SchedulerClient 构造时取状态库）。
+func (w *Worker) SetStatusMongoDB(client *mongo.Client, db *mongo.Database) {
+	if db == nil {
+		w.statusDB = w.mongoDB
+		return
+	}
+	w.statusClient = client
+	w.statusDB = db
+}
+
+// statusDBHandle 返回任务状态写库（独立池）；未配置时回退数据写库
+func (w *Worker) statusDBHandle() *mongo.Database {
+	if w.statusDB != nil {
+		return w.statusDB
+	}
+	return w.mongoDB
+}
+
 // SetRedis 设置 Redis 客户端并创建 SchedulerClient，用于直连 Redis 调度
 func (w *Worker) SetRedis(rdb *redis.Client) {
-	w.schedClient = NewSchedulerClient(rdb, w.config.Name, w.mongoDB)
+	// SchedulerClient 的 mongoDB 仅用于 MainTask 状态写
+	// （IncrSubTaskDone / current_phase / progress / MarkTaskCompleted），
+	// 传入独立状态池实现"独立持久化"，与结果数据写（w.mongoDB）隔离。
+	w.schedClient = NewSchedulerClient(rdb, w.config.Name, w.statusDBHandle())
 	logx.Infof("[Worker] SchedulerClient initialized for direct Redis scheduling")
 }
 
@@ -1079,6 +1109,15 @@ func (w *Worker) Stop() {
 		defer cancel()
 		if err := w.mongoClient.Disconnect(ctx); err != nil {
 			logx.Errorf("[Worker][MongoDirect] disconnect failed: %v", err)
+		}
+	}
+
+	// 关闭任务状态写独立连接池
+	if w.statusClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := w.statusClient.Disconnect(ctx); err != nil {
+			logx.Errorf("[Worker][MongoStatus] disconnect failed: %v", err)
 		}
 	}
 
@@ -2999,9 +3038,9 @@ func (w *Worker) updateMainTaskProgress(mainTaskId string, moduleFraction float6
 	w.lastReportedProgress = progress
 	w.progressMu.Unlock()
 
-	// 直接更新 MongoDB progress 字段
-	if w.mongoDB != nil {
-		taskModel := model.NewMainTaskModel(w.mongoDB)
+	// 直接更新 MongoDB progress 字段（状态写走独立连接池，避免被结果数据写入饿死）
+	if db := w.statusDBHandle(); db != nil {
+		taskModel := model.NewMainTaskModel(db)
 		if err := taskModel.Update(context.Background(), mainTaskId, bson.M{
 			"progress":      progress,
 			"current_phase": phase,

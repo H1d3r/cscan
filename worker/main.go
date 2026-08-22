@@ -257,6 +257,40 @@ func connectWorkerMongo(uri string) (*mongo.Client, *mongo.Database) {
 	return client, client.Database(dbName)
 }
 
+// connectStatusMongo 任务状态写专用连接（独立持久化）。
+// 与结果数据写池（connectWorkerMongo，池=20）完全隔离：状态写 QPS 低但优先级高，
+// 独立小池（max=5）即可保证扫描结果写入把数据池打满时，
+// IncrSubTaskDone / current_phase / MarkTaskCompleted 等状态回写不被饿死，
+// 避免平台侧任务"卡在 Fingerprint 终止"。连接失败时回退共用数据池（不阻断启动）。
+func connectStatusMongo(uri string) (*mongo.Client, *mongo.Database) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	clientOptions := options.Client().
+		ApplyURI(uri).
+		SetMaxPoolSize(5).
+		SetMinPoolSize(1).
+		SetMaxConnecting(2)
+
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		logx.Errorf("[Worker][MongoStatus] connect failed: %v (fall back to data pool for status writes)", err)
+		return nil, nil
+	}
+	if err := client.Ping(ctx, nil); err != nil {
+		logx.Errorf("[Worker][MongoStatus] ping failed: %v (fall back to data pool for status writes)", err)
+		_ = client.Disconnect(context.Background())
+		return nil, nil
+	}
+
+	dbName := "cscan"
+	if cs, err := connstring.Parse(uri); err == nil && cs.Database != "" {
+		dbName = cs.Database
+	}
+	logx.Infof("[Worker][MongoStatus] connected, db=%s, pool=5 (independent status write pool)", dbName)
+	return client, client.Database(dbName)
+}
+
 func main() {
 	flag.Parse()
 	// CSCAN_CONCURRENCY 未显式设置时，按内存上限自动推导并发，便于低配防 OOM、高配提吞吐
@@ -342,6 +376,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 任务状态写独立连接池（独立持久化）：结果数据写与状态回写隔离，
+	// 数据池过载时状态写仍可完成；连接失败自动回退数据池。
+	statusClient, statusDB := connectStatusMongo(mongoURI)
+	if statusDB == nil {
+		logx.Errorf("[Worker][MongoStatus] status pool unavailable, status writes will share the data pool")
+	}
+
 	config := worker.WorkerConfig{
 		Name:        name,
 		IP:          ip,
@@ -359,6 +400,10 @@ func main() {
 
 	// 设置 MongoDB 连接（Phase 1 后为必需）
 	w.SetMongoDB(mongoClient, mongoDB)
+
+	// 设置任务状态写专用连接池（独立持久化；nil 时内部回退数据池）。
+	// 必须在 SetRedis 之前调用：SchedulerClient 构造时绑定状态库。
+	w.SetStatusMongoDB(statusClient, statusDB)
 
 	// 初始化 Redis 直连（Phase 2：任务调度层直连 Redis）
 	rdb := connectWorkerRedis()
