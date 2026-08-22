@@ -140,6 +140,9 @@ func NewVulModel(db *mongo.Database) *VulModel {
 		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "severity", Value: 1}}},
 		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "first_seen_time", Value: -1}}},
 		{Keys: bson.D{{Key: "risk_source", Value: 1}, {Key: "status", Value: 1}}},
+		// 覆盖 Upsert 过滤键，扫描写入逐条 upsert 不再全表扫描
+		{Keys: bson.D{{Key: "host", Value: 1}, {Key: "port", Value: 1},
+			{Key: "pocfile", Value: 1}, {Key: "url", Value: 1}}},
 	}
 	if err := ensureIndexes(coll, indexes); err != nil {
 		logx.Errorf("[VulModel] ensureIndexes failed for %s: %v", coll.Name(), err)

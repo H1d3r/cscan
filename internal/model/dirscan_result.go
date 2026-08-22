@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -58,10 +59,34 @@ type DirScanResultModel struct {
 	coll *mongo.Collection
 }
 
+// dirScanResultIndexes url 刻意用非唯一索引：UpsertMany 按 url 过滤的 upsert 已保证逻辑去重，
+// 唯一索引会因存量重复数据创建失败导致索引永远缺失（写路径退化为全表扫描）。
+var dirScanResultIndexes = []mongo.IndexModel{
+	{Keys: bson.D{{Key: "main_task_id", Value: 1}}},
+	{Keys: bson.D{{Key: "authority", Value: 1}}},
+	{Keys: bson.D{{Key: "url", Value: 1}}},
+	{Keys: bson.D{{Key: "create_time", Value: -1}}},
+	{Keys: bson.D{{Key: "update_time", Value: -1}}},
+	{Keys: bson.D{
+		{Key: "authority", Value: 1},
+		{Key: "host", Value: 1},
+		{Key: "port", Value: 1},
+		{Key: "scan_time", Value: -1},
+	}},
+	{Keys: bson.D{{Key: "scan_time", Value: -1}}},
+	{Keys: bson.D{{Key: "version", Value: 1}}},
+	{Keys: bson.D{{Key: "ai_status", Value: 1}}},
+	{Keys: bson.D{{Key: "status_code", Value: 1}}},
+}
+
 // NewDirScanResultModel 全局集合模型
 func NewDirScanResultModel(db *mongo.Database) *DirScanResultModel {
+	coll := db.Collection("dirscan_result")
+	if err := ensureIndexes(coll, dirScanResultIndexes); err != nil {
+		logx.Errorf("[DirScanResultModel] ensureIndexes failed for %s: %v", coll.Name(), err)
+	}
 	return &DirScanResultModel{
-		coll: db.Collection("dirscan_result"),
+		coll: coll,
 	}
 }
 
@@ -72,27 +97,7 @@ func (m *DirScanResultModel) Collection() *mongo.Collection {
 
 // EnsureIndexes 创建索引
 func (m *DirScanResultModel) EnsureIndexes(ctx context.Context) error {
-	indexes := []mongo.IndexModel{
-		{Keys: bson.D{{Key: "main_task_id", Value: 1}}},
-		{Keys: bson.D{{Key: "authority", Value: 1}}},
-		{Keys: bson.D{{Key: "url", Value: 1}}, Options: options.Index().SetUnique(true)},
-		{Keys: bson.D{{Key: "create_time", Value: -1}}},
-		{Keys: bson.D{{Key: "update_time", Value: -1}}},
-		// 复合索引
-		{Keys: bson.D{
-			{Key: "authority", Value: 1},
-			{Key: "host", Value: 1},
-			{Key: "port", Value: 1},
-			{Key: "scan_time", Value: -1},
-		}},
-		{Keys: bson.D{{Key: "scan_time", Value: -1}}},
-		{Keys: bson.D{{Key: "version", Value: 1}}},
-		// AI研判状态索引
-		{Keys: bson.D{{Key: "ai_status", Value: 1}}},
-		// 状态码索引
-		{Keys: bson.D{{Key: "status_code", Value: 1}}},
-	}
-	_, err := m.coll.Indexes().CreateMany(ctx, indexes)
+	_, err := m.coll.Indexes().CreateMany(ctx, dirScanResultIndexes)
 	return err
 }
 
