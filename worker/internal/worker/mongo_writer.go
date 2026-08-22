@@ -3,17 +3,43 @@ package worker
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"cscan/internal/model"
 	"cscan/internal/scanner"
 )
 
-// saveAssetResultWithFallback 先直写 MongoDB，失败后将完整请求持久化到本地队列。
+// mongoDirectWriteTimeout 同步直写路径的单次写超时上界。
+// 原实现直接透传扫描阶段 ctx（最长 6h）：Mongo 挂起时扫描协程会被长时间卡死。
+// 这里为直写加独立上界，超时后由 ResultQueue 兜底，扫描主链路最多阻塞该时长。
+const mongoDirectWriteTimeout = 180 * time.Second
+
+// saveAssetResultWithFallback 扫描主链路入口：优先投递异步批量落库（AsyncResultWriter）；
+// 写协程不可用或通道已满时，回退为同步直写 + 失败入本地队列（保证零丢失）。
 func (w *Worker) saveAssetResultWithFallback(ctx context.Context, mainTaskID, orgID string, assets []*scanner.Asset) error {
 	if len(assets) == 0 {
 		return nil
 	}
-	if err := w.saveAssetResultDirect(ctx, mainTaskID, orgID, assets); err == nil {
+	if w.asyncWriter != nil && w.asyncWriter.Enqueue(&asyncWriteRequest{
+		kind:       asyncWriteAssets,
+		mainTaskID: mainTaskID,
+		orgID:      orgID,
+		assets:     assets,
+	}) {
+		return nil
+	}
+	return w.saveAssetResultSyncOrQueue(ctx, mainTaskID, orgID, assets)
+}
+
+// saveAssetResultSyncOrQueue 同步直写 MongoDB，失败后将完整请求持久化到本地队列。
+// 兼作异步写协程的批量 flush 回调（回调不得再投递回异步通道，避免自循环）。
+func (w *Worker) saveAssetResultSyncOrQueue(ctx context.Context, mainTaskID, orgID string, assets []*scanner.Asset) error {
+	if len(assets) == 0 {
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, mongoDirectWriteTimeout)
+	defer cancel()
+	if err := w.saveAssetResultDirect(writeCtx, mainTaskID, orgID, assets); err == nil {
 		return nil
 	} else {
 		if w.resultQueue == nil {
@@ -32,12 +58,30 @@ func (w *Worker) saveAssetResultWithFallback(ctx context.Context, mainTaskID, or
 	}
 }
 
-// saveVulResultWithFallback 先直写 MongoDB，失败后将漏洞请求持久化到本地队列。
+// saveVulResultWithFallback 扫描主链路入口：优先投递异步批量落库，不可用时回退同步直写。
 func (w *Worker) saveVulResultWithFallback(ctx context.Context, mainTaskID string, vuls []*scanner.Vulnerability) error {
 	if len(vuls) == 0 {
 		return nil
 	}
-	if err := w.saveVulResultDirect(ctx, mainTaskID, vuls); err == nil {
+	if w.asyncWriter != nil && w.asyncWriter.Enqueue(&asyncWriteRequest{
+		kind:       asyncWriteVuls,
+		mainTaskID: mainTaskID,
+		vuls:       vuls,
+	}) {
+		return nil
+	}
+	return w.saveVulResultSyncOrQueue(ctx, mainTaskID, vuls)
+}
+
+// saveVulResultSyncOrQueue 同步直写 MongoDB，失败后将漏洞请求持久化到本地队列。
+// 兼作异步写协程的批量 flush 回调。
+func (w *Worker) saveVulResultSyncOrQueue(ctx context.Context, mainTaskID string, vuls []*scanner.Vulnerability) error {
+	if len(vuls) == 0 {
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, mongoDirectWriteTimeout)
+	defer cancel()
+	if err := w.saveVulResultDirect(writeCtx, mainTaskID, vuls); err == nil {
 		return nil
 	} else {
 		req := &VulResultReq{MainTaskId: mainTaskID, Vuls: make([]VulDocument, 0, len(vuls))}
@@ -55,12 +99,32 @@ func (w *Worker) saveVulResultWithFallback(ctx context.Context, mainTaskID strin
 	}
 }
 
-// saveCertResultsWithFallback 先直写 MongoDB，失败后将证书请求持久化到本地队列。
+// saveCertResultsWithFallback 扫描主链路入口：优先投递异步批量落库，不可用时回退同步直写。
+// 此前 OnCertFound 逐张同步直写（每张一次 EnsureIndexes+Upsert），是连接池打满的主要放大源；
+// 异步化后按 100 张/批合并为一次 SaveCerts。
 func (w *Worker) saveCertResultsWithFallback(ctx context.Context, mainTaskID string, certs []*scanner.CertResult) error {
 	if len(certs) == 0 {
 		return nil
 	}
-	if err := w.saveCertResultsDirect(ctx, mainTaskID, certs); err == nil {
+	if w.asyncWriter != nil && w.asyncWriter.Enqueue(&asyncWriteRequest{
+		kind:       asyncWriteCerts,
+		mainTaskID: mainTaskID,
+		certs:      certs,
+	}) {
+		return nil
+	}
+	return w.saveCertResultsSyncOrQueue(ctx, mainTaskID, certs)
+}
+
+// saveCertResultsSyncOrQueue 同步直写 MongoDB，失败后将证书请求持久化到本地队列。
+// 兼作异步写协程的批量 flush 回调。
+func (w *Worker) saveCertResultsSyncOrQueue(ctx context.Context, mainTaskID string, certs []*scanner.CertResult) error {
+	if len(certs) == 0 {
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, mongoDirectWriteTimeout)
+	defer cancel()
+	if err := w.saveCertResultsDirect(writeCtx, mainTaskID, certs); err == nil {
 		return nil
 	} else {
 		req := &SaveCertResultReq{MainTaskId: mainTaskID, Results: make([]*CertResultItem, 0, len(certs))}
@@ -78,12 +142,30 @@ func (w *Worker) saveCertResultsWithFallback(ctx context.Context, mainTaskID str
 	}
 }
 
-// saveJSFinderResultWithFallback 先直写 MongoDB，失败后将 JS 结果持久化到本地队列。
+// saveJSFinderResultWithFallback 扫描主链路入口：优先投递异步批量落库，不可用时回退同步直写。
 func (w *Worker) saveJSFinderResultWithFallback(ctx context.Context, mainTaskID string, results []*JSFinderResultItem) error {
 	if len(results) == 0 {
 		return nil
 	}
-	if err := w.saveJSFinderResultDirect(ctx, mainTaskID, results); err == nil {
+	if w.asyncWriter != nil && w.asyncWriter.Enqueue(&asyncWriteRequest{
+		kind:       asyncWriteJS,
+		mainTaskID: mainTaskID,
+		jsResults:  results,
+	}) {
+		return nil
+	}
+	return w.saveJSFinderResultSyncOrQueue(ctx, mainTaskID, results)
+}
+
+// saveJSFinderResultSyncOrQueue 同步直写 MongoDB，失败后将 JS 结果持久化到本地队列。
+// 兼作异步写协程的批量 flush 回调。
+func (w *Worker) saveJSFinderResultSyncOrQueue(ctx context.Context, mainTaskID string, results []*JSFinderResultItem) error {
+	if len(results) == 0 {
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, mongoDirectWriteTimeout)
+	defer cancel()
+	if err := w.saveJSFinderResultDirect(writeCtx, mainTaskID, results); err == nil {
 		return nil
 	} else {
 		req := &SaveJSFinderResultReq{MainTaskId: mainTaskID, Results: results}
@@ -368,12 +450,30 @@ func (w *Worker) saveJSFinderResultDirect(ctx context.Context, mainTaskID string
 	return nil
 }
 
-// saveDirScanResultsWithFallback 先直写 MongoDB，失败后将目录扫描结果持久化到本地队列。
+// saveDirScanResultsWithFallback 扫描主链路入口：优先投递异步批量落库，不可用时回退同步直写。
 func (w *Worker) saveDirScanResultsWithFallback(ctx context.Context, mainTaskID string, results []DirScanResultDocument) error {
 	if len(results) == 0 {
 		return nil
 	}
-	if err := w.saveDirScanResultsDirect(ctx, mainTaskID, results); err == nil {
+	if w.asyncWriter != nil && w.asyncWriter.Enqueue(&asyncWriteRequest{
+		kind:       asyncWriteDirScan,
+		mainTaskID: mainTaskID,
+		dirResults: results,
+	}) {
+		return nil
+	}
+	return w.saveDirScanResultsSyncOrQueue(ctx, mainTaskID, results)
+}
+
+// saveDirScanResultsSyncOrQueue 同步直写 MongoDB，失败后将目录扫描结果持久化到本地队列。
+// 兼作异步写协程的批量 flush 回调。
+func (w *Worker) saveDirScanResultsSyncOrQueue(ctx context.Context, mainTaskID string, results []DirScanResultDocument) error {
+	if len(results) == 0 {
+		return nil
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, mongoDirectWriteTimeout)
+	defer cancel()
+	if err := w.saveDirScanResultsDirect(writeCtx, mainTaskID, results); err == nil {
 		return nil
 	} else {
 		req := &SaveDirScanResultReq{MainTaskId: mainTaskID, Results: results}

@@ -88,6 +88,9 @@ type Worker struct {
 	mongoClient *mongo.Client
 	mongoDB     *mongo.Database
 
+	// 扫描结果异步批量落库（后台写协程 + 有界缓冲）
+	asyncWriter *AsyncResultWriter
+
 	// 活跃任务的日志记录器（维持 buffer 生命周期）
 	taskLoggers sync.Map // mainTaskId -> *TaskLoggerWS
 
@@ -408,6 +411,27 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		w.logger.Info("[ResultQueue] "+format, args...)
 	})
 
+	// 异步批量落库：扫描主链路只投递，后台协程按任务分组定量/定时批量直写。
+	// flush 回调为"同步直写 + 失败入 ResultQueue"（SyncOrQueue），不投递回异步通道避免自循环；
+	// 通道满/写协程停止时 saveXxxWithFallback 自动回退同步路径，保证零丢失。
+	w.asyncWriter = NewAsyncResultWriter(defaultAsyncWriterConfig(), AsyncWriteCallbacks{
+		SaveAssets:  w.saveAssetResultSyncOrQueue,
+		SaveCerts:   w.saveCertResultsSyncOrQueue,
+		SaveVuls:    w.saveVulResultSyncOrQueue,
+		SaveJS:      w.saveJSFinderResultSyncOrQueue,
+		SaveDirScan: w.saveDirScanResultsSyncOrQueue,
+	})
+	w.asyncWriter.SetLogger(func(level, format string, args ...interface{}) {
+		switch level {
+		case LevelError:
+			w.logger.Error("[AsyncWriter] "+format, args...)
+		case LevelWarn:
+			w.logger.Warn("[AsyncWriter] "+format, args...)
+		default:
+			w.logger.Info("[AsyncWriter] "+format, args...)
+		}
+	})
+
 	return w, nil
 }
 
@@ -592,6 +616,13 @@ func (w *Worker) Start() {
 		if err := w.resultQueue.Start(w.ctx); err != nil {
 			w.logger.Warn("Result queue failed to start: %v", err)
 		}
+	}
+
+	// 启动扫描结果异步批量落库协程
+	if w.asyncWriter != nil {
+		w.asyncWriter.Start()
+		w.logger.Info("Async result writer started: chanSize=%d, flushInterval=%v, maxAssetsBatch=%d",
+			1024, 3*time.Second, 50)
 	}
 
 	// 启动 WebSocket 客户端（用于日志推送和控制信号）
@@ -1029,6 +1060,13 @@ func (w *Worker) Stop() {
 	}
 
 	w.wg.Wait()
+
+	// 排空异步批量写缓冲：任务协程已全部退出（wg.Wait），
+	// 此时 channel 内不再有新请求；在 MongoDB 断开前完成尾部落库，
+	// 优雅停机不丢缓冲数据（失败的批次仍会落 ResultQueue 本地文件）。
+	if w.asyncWriter != nil {
+		w.asyncWriter.Stop()
+	}
 
 	// 修复 #7：flush MongoDB 日志缓冲，避免停机/重启时丢失未落库的关键日志
 	if globalMongoLogger != nil {
