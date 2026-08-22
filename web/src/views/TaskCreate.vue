@@ -707,27 +707,58 @@
             <el-tab-pane :label="$t('task.defaultTemplate')" name="nuclei">
               <el-form :inline="true" class="poc-filter-form">
                 <el-form-item>
-                  <el-input v-model="nucleiTemplateFilter.keyword" :placeholder="$t('task.nameOrId')" clearable
-                    style="width: 150px" @keyup.enter="loadNucleiTemplatesForSelect" />
+                  <el-input v-model="nucleiTemplateFilter.keyword" :placeholder="$t('poc.searchAllPlaceholder')" clearable
+                    style="width: 170px" @keyup.enter="searchNucleiTemplatesForSelect"
+                    @clear="searchNucleiTemplatesForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-select v-model="nucleiTemplateFilter.severity" :placeholder="$t('task.level')" clearable
-                    style="width: 100px" @change="loadNucleiTemplatesForSelect">
-                    <el-option label="Critical" value="critical" />
-                    <el-option label="High" value="high" />
-                    <el-option label="Medium" value="medium" />
-                    <el-option label="Low" value="low" />
-                    <el-option label="Info" value="info" />
-                    <el-option label="Unknown" value="unknown" />
+                  <el-select v-model="nucleiTemplateFilter.tag" :placeholder="$t('poc.filterTag')" clearable filterable
+                    style="width: 120px" @change="searchNucleiTemplatesForSelect">
+                    <el-option v-for="t in nucleiTemplateFacets.tags" :key="t.value" :label="`${t.value} (${t.count})`"
+                      :value="t.value" />
                   </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-input v-model="nucleiTemplateFilter.tag" :placeholder="$t('task.tags')" clearable
-                    style="width: 120px" @keyup.enter="loadNucleiTemplatesForSelect" />
+                  <el-select v-model="nucleiTemplateFilter.category" :placeholder="$t('poc.filterCategory')" clearable
+                    filterable style="width: 120px" @change="searchNucleiTemplatesForSelect">
+                    <el-option v-for="c in nucleiTemplateFacets.categories" :key="c.value"
+                      :label="`${c.value} (${c.count})`" :value="c.value" />
+                  </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" size="small" @click="loadNucleiTemplatesForSelect">{{ $t('common.search')
+                  <el-select v-model="nucleiTemplateFilter.severities" :placeholder="$t('task.level')" multiple
+                    collapse-tags collapse-tags-tooltip clearable style="width: 140px"
+                    @change="searchNucleiTemplatesForSelect">
+                    <el-option v-for="s in severityLevelOptions" :key="s" :label="s" :value="s" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="nucleiTemplateFilter.protocols" :placeholder="$t('poc.filterProtocol')" multiple
+                    filterable collapse-tags collapse-tags-tooltip clearable style="width: 130px"
+                    @change="searchNucleiTemplatesForSelect">
+                    <el-option v-for="p in nucleiTemplateFacets.protocols" :key="p.value"
+                      :label="`${p.value} (${p.count})`" :value="p.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="nucleiTemplateFilter.hasCve" placeholder="CVE" clearable style="width: 110px"
+                    @change="searchNucleiTemplatesForSelect">
+                    <el-option :label="$t('poc.cveYes') + ` (${nucleiTemplateFacets.cveTrue})`" :value="true" />
+                    <el-option :label="$t('poc.cveNo') + ` (${nucleiTemplateFacets.cveFalse})`" :value="false" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="nucleiTemplateFilter.products" :placeholder="$t('poc.productPlaceholder')"
+                    multiple filterable collapse-tags collapse-tags-tooltip clearable style="width: 170px"
+                    @change="searchNucleiTemplatesForSelect">
+                    <el-option v-for="p in nucleiTemplateFacets.products" :key="p.value"
+                      :label="`${p.value} (${p.count})`" :value="p.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" size="small" @click="searchNucleiTemplatesForSelect">{{ $t('common.search')
                     }}</el-button>
+                  <el-button size="small" @click="resetNucleiTemplateFilter">{{ $t('common.reset') }}</el-button>
                   <el-button v-if="!nucleiSelectAll" type="success" size="small" @click="selectAllNucleiTemplates"
                     :loading="selectAllNucleiLoading">{{ $t('task.selectAll') }}</el-button>
                   <el-button v-if="nucleiSelectAll || selectedNucleiTemplateIds.length > 0" type="warning" size="small"
@@ -772,27 +803,50 @@
             <el-tab-pane :label="$t('task.customPoc')" name="custom">
               <el-form :inline="true" class="poc-filter-form">
                 <el-form-item>
-                  <el-input v-model="customPocFilter.name" :placeholder="$t('common.name')" clearable
-                    style="width: 150px" @keyup.enter="loadCustomPocsForSelect" />
+                  <el-input v-model="customPocFilter.keyword" :placeholder="$t('poc.searchAllPlaceholder')" clearable
+                    style="width: 170px" @keyup.enter="searchCustomPocsForSelect" @clear="searchCustomPocsForSelect" />
                 </el-form-item>
                 <el-form-item>
-                  <el-select v-model="customPocFilter.severity" :placeholder="$t('task.level')" clearable
-                    style="width: 100px" @change="loadCustomPocsForSelect">
-                    <el-option label="Critical" value="critical" />
-                    <el-option label="High" value="high" />
-                    <el-option label="Medium" value="medium" />
-                    <el-option label="Low" value="low" />
-                    <el-option label="Info" value="info" />
-                    <el-option label="Unknown" value="unknown" />
+                  <el-select v-model="customPocFilter.tag" :placeholder="$t('poc.filterTag')" clearable filterable
+                    style="width: 120px" @change="searchCustomPocsForSelect">
+                    <el-option v-for="t in customPocFacets.tags" :key="t.value" :label="`${t.value} (${t.count})`"
+                      :value="t.value" />
                   </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-input v-model="customPocFilter.tag" :placeholder="$t('task.tags')" clearable style="width: 120px"
-                    @keyup.enter="loadCustomPocsForSelect" />
+                  <el-select v-model="customPocFilter.severities" :placeholder="$t('task.level')" multiple
+                    collapse-tags collapse-tags-tooltip clearable style="width: 140px"
+                    @change="searchCustomPocsForSelect">
+                    <el-option v-for="s in severityLevelOptions" :key="s" :label="s" :value="s" />
+                  </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" size="small" @click="loadCustomPocsForSelect">{{ $t('common.search')
+                  <el-select v-model="customPocFilter.protocols" :placeholder="$t('poc.filterProtocol')" multiple
+                    filterable collapse-tags collapse-tags-tooltip clearable style="width: 130px"
+                    @change="searchCustomPocsForSelect">
+                    <el-option v-for="p in customPocFacets.protocols" :key="p.value"
+                      :label="`${p.value} (${p.count})`" :value="p.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="customPocFilter.hasCve" placeholder="CVE" clearable style="width: 110px"
+                    @change="searchCustomPocsForSelect">
+                    <el-option :label="$t('poc.cveYes') + ` (${customPocFacets.cveTrue})`" :value="true" />
+                    <el-option :label="$t('poc.cveNo') + ` (${customPocFacets.cveFalse})`" :value="false" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-select v-model="customPocFilter.products" :placeholder="$t('poc.productPlaceholder')" multiple
+                    filterable collapse-tags collapse-tags-tooltip clearable style="width: 170px"
+                    @change="searchCustomPocsForSelect">
+                    <el-option v-for="p in customPocFacets.products" :key="p.value" :label="`${p.value} (${p.count})`"
+                      :value="p.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" size="small" @click="searchCustomPocsForSelect">{{ $t('common.search')
                     }}</el-button>
+                  <el-button size="small" @click="resetCustomPocFilter">{{ $t('common.reset') }}</el-button>
                   <el-button v-if="!customPocSelectAll" type="success" size="small" @click="selectAllCustomPocs"
                     :loading="selectAllCustomLoading">{{ $t('task.selectAll') }}</el-button>
                   <el-button v-if="customPocSelectAll || selectedCustomPocIds.length > 0" type="warning" size="small"
@@ -852,15 +906,20 @@
                   }}</el-button>
               </div>
               <div v-if="hasNucleiSelectAllFilter" class="selected-all-conditions">
-                <el-tag v-if="nucleiSelectAllFilter.keyword" size="small">{{ $t('task.nameOrId') }}: {{
+                <el-tag v-if="nucleiSelectAllFilter.keyword" size="small">{{ $t('task.keyword') }}: {{
                   nucleiSelectAllFilter.keyword }}</el-tag>
-                <el-tag v-if="nucleiSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{
-                  nucleiSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{
+                  nucleiSelectAllFilter.tag }}</el-tag>
                 <el-tag v-if="nucleiSelectAllFilter.category" size="small">{{ $t('task.category') }}: {{
                   nucleiSelectAllFilter.category }}</el-tag>
-                <el-tag v-if="nucleiSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{
-                  nucleiSelectAllFilter.tag
-                  }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.severities.length" size="small">{{ $t('task.level') }}: {{
+                  nucleiSelectAllFilter.severities.join(',') }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.protocols.length" size="small">{{ $t('poc.filterProtocol') }}: {{
+                  nucleiSelectAllFilter.protocols.join(',') }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.products.length" size="small">{{ $t('poc.filterProduct') }}: {{
+                  nucleiSelectAllFilter.products.join(',') }}</el-tag>
+                <el-tag v-if="nucleiSelectAllFilter.hasCve !== null" size="small">CVE: {{ nucleiSelectAllFilter.hasCve
+                  ? $t('poc.cveYes') : $t('poc.cveNo') }}</el-tag>
               </div>
               <div v-else class="selected-all-conditions">{{ $t('task.allTemplates') }}</div>
             </div>
@@ -889,12 +948,18 @@
                   }}</el-button>
               </div>
               <div v-if="hasCustomPocSelectAllFilter" class="selected-all-conditions">
-                <el-tag v-if="customPocSelectAllFilter.name" size="small">{{ $t('common.name') }}: {{
-                  customPocSelectAllFilter.name }}</el-tag>
-                <el-tag v-if="customPocSelectAllFilter.severity" size="small">{{ $t('task.level') }}: {{
-                  customPocSelectAllFilter.severity }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.keyword" size="small">{{ $t('task.keyword') }}: {{
+                  customPocSelectAllFilter.keyword }}</el-tag>
                 <el-tag v-if="customPocSelectAllFilter.tag" size="small">{{ $t('task.tags') }}: {{
                   customPocSelectAllFilter.tag }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.severities.length" size="small">{{ $t('task.level') }}: {{
+                  customPocSelectAllFilter.severities.join(',') }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.protocols.length" size="small">{{ $t('poc.filterProtocol') }}: {{
+                  customPocSelectAllFilter.protocols.join(',') }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.products.length" size="small">{{ $t('poc.filterProduct') }}: {{
+                  customPocSelectAllFilter.products.join(',') }}</el-tag>
+                <el-tag v-if="customPocSelectAllFilter.hasCve !== null" size="small">CVE: {{ customPocSelectAllFilter.hasCve
+                  ? $t('poc.cveYes') : $t('poc.cveNo') }}</el-tag>
               </div>
               <div v-else class="selected-all-conditions">{{ $t('task.allPocs') }}</div>
             </div>
@@ -966,7 +1031,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Close, Search, InfoFilled } from '@element-plus/icons-vue'
 import { createTask, updateTask, getTaskDetail, startTask, getWorkerList, getScanConfig, saveScanConfig } from '@/api/task'
-import { getNucleiTemplateList, getCustomPocList, getNucleiTemplateDetail } from '@/api/poc'
+import { getNucleiTemplateList, getCustomPocList, getNucleiTemplateDetail, getNucleiTemplateCategories, getCustomPocCategories } from '@/api/poc'
 import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
@@ -1042,16 +1107,17 @@ const selectedCustomPocs = ref([])
 const selectedPocSearchKeyword = ref('')
 
 // 手动全选状态：前端只记录选择意图（标记 + 筛选条件），由后端按条件查询展开
+// 筛选字段与 POC 管理页保持一致（默认模板：keyword/tag/category/severities/protocols/products/hasCve）
 const nucleiSelectAll = ref(false) // 默认模板是否全选
 const nucleiSelectAllCount = ref(0) // 全选数量（仅展示，不加载列表）
-const nucleiSelectAllFilter = reactive({ keyword: '', severity: '', category: '', tag: '' })
+const nucleiSelectAllFilter = reactive({ keyword: '', tag: '', category: '', severities: [], protocols: [], products: [], hasCve: null })
 const customPocSelectAll = ref(false) // 自定义POC是否全选
 const customPocSelectAllCount = ref(0)
-const customPocSelectAllFilter = reactive({ name: '', severity: '', tag: '' })
+const customPocSelectAllFilter = reactive({ keyword: '', tag: '', severities: [], protocols: [], products: [], hasCve: null })
 
 // 全选筛选条件是否有非空项（用于展示条件标签）
-const hasNucleiSelectAllFilter = computed(() => Object.values(nucleiSelectAllFilter).some(v => v))
-const hasCustomPocSelectAllFilter = computed(() => Object.values(customPocSelectAllFilter).some(v => v))
+const hasNucleiSelectAllFilter = computed(() => Object.values(nucleiSelectAllFilter).some(v => (Array.isArray(v) ? v.length > 0 : v !== '' && v !== null)))
+const hasCustomPocSelectAllFilter = computed(() => Object.values(customPocSelectAllFilter).some(v => (Array.isArray(v) ? v.length > 0 : v !== '' && v !== null)))
 
 // 过滤后的已选择列表
 const filteredSelectedNucleiTemplates = computed(() => {
@@ -1072,17 +1138,28 @@ const filteredSelectedCustomPocs = computed(() => {
     (p.id && p.id.toLowerCase().includes(keyword))
   )
 })
+// 选择POC弹窗筛选条件（与 POC 管理页的默认模板/自定义POC TAB 保持一致；已无 unknown 级别）
+const severityLevelOptions = ['critical', 'high', 'medium', 'low', 'info']
 const nucleiTemplateFilter = reactive({
   keyword: '',
-  severity: '',
+  tag: '',
   category: '',
-  tag: ''
+  severities: [],
+  protocols: [],
+  products: [],
+  hasCve: null
 })
 const customPocFilter = reactive({
-  name: '',
-  severity: '',
-  tag: ''
+  keyword: '',
+  tag: '',
+  severities: [],
+  protocols: [],
+  products: [],
+  hasCve: null
 })
+// 筛选维度选项 + 数量统计（随筛选条件联动，来自分面统计接口）
+const nucleiTemplateFacets = reactive({ categories: [], severities: [], protocols: [], products: [], tags: [], cveTrue: 0, cveFalse: 0 })
+const customPocFacets = reactive({ severities: [], protocols: [], products: [], tags: [], cveTrue: 0, cveFalse: 0 })
 const nucleiTemplatePagination = reactive({ page: 1, pageSize: 50, total: 0 })
 const customPocPagination = reactive({ page: 1, pageSize: 50, total: 0 })
 
@@ -1783,6 +1860,9 @@ function buildConfig() {
     config.pocscan.autoScan = false
     config.pocscan.automaticScan = false
     config.pocscan.customPocOnly = false
+    // 手动模式下不叠加严重级别过滤：所选即所扫（severity 选择器在该模式下不展示，
+    // 若继续携带默认值会在扫描时静默丢弃低危模板）
+    config.pocscan.severity = ''
   } else {
     // 自动匹配模式
     if (form.pocscanCustomOnly) {
@@ -1942,8 +2022,8 @@ function showPocSelectDialog() {
 }
 
 async function handlePocDialogOpen() {
-  // 加载当前页数据
-  await Promise.all([loadNucleiTemplatesForSelect(), loadCustomPocsForSelect()])
+  // 加载当前页数据与筛选维度统计
+  await Promise.all([loadNucleiTemplatesForSelect(), loadCustomPocsForSelect(), loadNucleiTemplateFacets(), loadCustomPocFacets()])
   // 等待DOM更新后恢复选中状态
   await nextTick()
   restoreTableSelections()
@@ -1972,6 +2052,100 @@ function restoreTableSelections() {
   }
 }
 
+// 构建默认模板筛选请求参数（与 POC 管理页一致）
+function buildNucleiTemplateFilterPayload() {
+  return {
+    keyword: nucleiTemplateFilter.keyword,
+    tag: nucleiTemplateFilter.tag,
+    category: nucleiTemplateFilter.category,
+    severities: [...nucleiTemplateFilter.severities],
+    protocols: [...nucleiTemplateFilter.protocols],
+    products: [...nucleiTemplateFilter.products],
+    hasCve: nucleiTemplateFilter.hasCve
+  }
+}
+
+// 构建自定义POC筛选请求参数（与 POC 管理页一致）
+function buildCustomPocFilterPayload() {
+  return {
+    keyword: customPocFilter.keyword,
+    tag: customPocFilter.tag,
+    severities: [...customPocFilter.severities],
+    protocols: [...customPocFilter.protocols],
+    products: [...customPocFilter.products],
+    hasCve: customPocFilter.hasCve
+  }
+}
+
+async function loadNucleiTemplateFacets() {
+  try {
+    const res = await getNucleiTemplateCategories(buildNucleiTemplateFilterPayload())
+    if (res.code === 0) {
+      nucleiTemplateFacets.categories = res.categories || []
+      nucleiTemplateFacets.severities = res.severities || []
+      nucleiTemplateFacets.protocols = res.protocols || []
+      nucleiTemplateFacets.products = res.products || []
+      nucleiTemplateFacets.tags = res.tags || []
+      nucleiTemplateFacets.cveTrue = res.cveStats?.true || 0
+      nucleiTemplateFacets.cveFalse = res.cveStats?.false || 0
+    }
+  } catch (e) {
+    console.error('Load nuclei template facets failed:', e)
+  }
+}
+
+async function loadCustomPocFacets() {
+  try {
+    const res = await getCustomPocCategories(buildCustomPocFilterPayload())
+    if (res.code === 0) {
+      customPocFacets.severities = res.severities || []
+      customPocFacets.protocols = res.protocols || []
+      customPocFacets.products = res.products || []
+      customPocFacets.tags = res.tags || []
+      customPocFacets.cveTrue = res.cveStats?.true || 0
+      customPocFacets.cveFalse = res.cveStats?.false || 0
+    }
+  } catch (e) {
+    console.error('Load custom poc facets failed:', e)
+  }
+}
+
+// 应用筛选：重置到第一页，列表与分面计数同时刷新
+function searchNucleiTemplatesForSelect() {
+  nucleiTemplatePagination.page = 1
+  loadNucleiTemplatesForSelect()
+  loadNucleiTemplateFacets()
+}
+
+function searchCustomPocsForSelect() {
+  customPocPagination.page = 1
+  loadCustomPocsForSelect()
+  loadCustomPocFacets()
+}
+
+// 重置默认模板筛选条件
+function resetNucleiTemplateFilter() {
+  nucleiTemplateFilter.keyword = ''
+  nucleiTemplateFilter.tag = ''
+  nucleiTemplateFilter.category = ''
+  nucleiTemplateFilter.severities = []
+  nucleiTemplateFilter.protocols = []
+  nucleiTemplateFilter.products = []
+  nucleiTemplateFilter.hasCve = null
+  searchNucleiTemplatesForSelect()
+}
+
+// 重置自定义POC筛选条件
+function resetCustomPocFilter() {
+  customPocFilter.keyword = ''
+  customPocFilter.tag = ''
+  customPocFilter.severities = []
+  customPocFilter.protocols = []
+  customPocFilter.products = []
+  customPocFilter.hasCve = null
+  searchCustomPocsForSelect()
+}
+
 async function loadNucleiTemplatesForSelect() {
   nucleiTemplateLoading.value = true
   isLoadingData.value = true
@@ -1979,10 +2153,7 @@ async function loadNucleiTemplatesForSelect() {
     const res = await getNucleiTemplateList({
       page: nucleiTemplatePagination.page,
       pageSize: nucleiTemplatePagination.pageSize,
-      keyword: nucleiTemplateFilter.keyword,
-      severity: nucleiTemplateFilter.severity,
-      category: nucleiTemplateFilter.category,
-      tag: nucleiTemplateFilter.tag
+      ...buildNucleiTemplateFilterPayload()
     })
     if (res.code === 0) {
       nucleiTemplateList.value = res.list || []
@@ -2018,9 +2189,7 @@ async function loadCustomPocsForSelect() {
     const res = await getCustomPocList({
       page: customPocPagination.page,
       pageSize: customPocPagination.pageSize,
-      name: customPocFilter.name,
-      severity: customPocFilter.severity,
-      tag: customPocFilter.tag,
+      ...buildCustomPocFilterPayload(),
       enabled: true // 只显示启用的POC
     })
     if (res.code === 0) {
@@ -2131,18 +2300,24 @@ function resetNucleiSelectAll() {
   nucleiSelectAll.value = false
   nucleiSelectAllCount.value = 0
   nucleiSelectAllFilter.keyword = ''
-  nucleiSelectAllFilter.severity = ''
-  nucleiSelectAllFilter.category = ''
   nucleiSelectAllFilter.tag = ''
+  nucleiSelectAllFilter.category = ''
+  nucleiSelectAllFilter.severities = []
+  nucleiSelectAllFilter.protocols = []
+  nucleiSelectAllFilter.products = []
+  nucleiSelectAllFilter.hasCve = null
 }
 
 // 重置自定义POC全选状态
 function resetCustomPocSelectAll() {
   customPocSelectAll.value = false
   customPocSelectAllCount.value = 0
-  customPocSelectAllFilter.name = ''
-  customPocSelectAllFilter.severity = ''
+  customPocSelectAllFilter.keyword = ''
   customPocSelectAllFilter.tag = ''
+  customPocSelectAllFilter.severities = []
+  customPocSelectAllFilter.protocols = []
+  customPocSelectAllFilter.products = []
+  customPocSelectAllFilter.hasCve = null
 }
 
 // 选择全部Nuclei模板（根据当前筛选条件）：只记录全选标记与条件，由后端查询展开
@@ -2150,14 +2325,11 @@ async function selectAllNucleiTemplates() {
   selectAllNucleiLoading.value = true
   isSelectingAll.value = true
   try {
-    // 记录全选条件（当前对话框筛选）
-    nucleiSelectAllFilter.keyword = nucleiTemplateFilter.keyword
-    nucleiSelectAllFilter.severity = nucleiTemplateFilter.severity
-    nucleiSelectAllFilter.category = nucleiTemplateFilter.category
-    nucleiSelectAllFilter.tag = nucleiTemplateFilter.tag
+    // 记录全选条件（当前对话框筛选，与列表接口参数一致，由后端按相同条件展开）
+    Object.assign(nucleiSelectAllFilter, buildNucleiTemplateFilterPayload())
 
     // 只查询数量（pageSize=1），不加载列表
-    const res = await getNucleiTemplateList({ page: 1, pageSize: 1, ...nucleiSelectAllFilter })
+    const res = await getNucleiTemplateList({ page: 1, pageSize: 1, ...buildNucleiTemplateFilterPayload() })
     if (res.code !== 0) {
       throw new Error(res.msg || 'Failed to fetch data')
     }
@@ -2193,13 +2365,11 @@ async function selectAllCustomPocs() {
   selectAllCustomLoading.value = true
   isSelectingAll.value = true
   try {
-    // 记录全选条件（当前对话框筛选）
-    customPocSelectAllFilter.name = customPocFilter.name
-    customPocSelectAllFilter.severity = customPocFilter.severity
-    customPocSelectAllFilter.tag = customPocFilter.tag
+    // 记录全选条件（当前对话框筛选，与列表接口参数一致，由后端按相同条件展开）
+    Object.assign(customPocSelectAllFilter, buildCustomPocFilterPayload())
 
     // 只查询数量（pageSize=1），不加载列表
-    const res = await getCustomPocList({ page: 1, pageSize: 1, ...customPocSelectAllFilter, enabled: true })
+    const res = await getCustomPocList({ page: 1, pageSize: 1, ...buildCustomPocFilterPayload(), enabled: true })
     if (res.code !== 0) {
       throw new Error(res.msg || 'Failed to fetch data')
     }

@@ -62,56 +62,113 @@
           <p class="tip-text">
             {{ $t('poc.templateLibTip') }}
           </p>
-          <!-- 筛选条件 -->
-          <el-form :inline="true" class="filter-form">
-            <el-form-item :label="$t('poc.filterCategory')">
-              <el-select v-model="templateFilter.category" :placeholder="$t('poc.allCategories')" clearable style="width: 150px" @change="loadNucleiTemplates">
-                <el-option v-for="cat in templateCategories" :key="cat" :label="cat" :value="cat" />
-              </el-select>
-            </el-form-item>
-            <el-form-item :label="$t('poc.filterLevel')">
-              <el-select v-model="templateFilter.severity" :placeholder="$t('poc.allLevels')" clearable style="width: 120px" @change="loadNucleiTemplates">
-                <el-option label="Critical" value="critical" />
-                <el-option label="High" value="high" />
-                <el-option label="Medium" value="medium" />
-                <el-option label="Low" value="low" />
-                <el-option label="Info" value="info" />
-                <el-option label="Unknown" value="unknown" />
-              </el-select>
-            </el-form-item>
-            <el-form-item :label="$t('poc.filterTag')">
-              <el-input v-model="templateFilter.tag" :placeholder="$t('poc.enterTag')" clearable style="width: 150px" @keyup.enter="loadNucleiTemplates" />
-            </el-form-item>
-            <el-form-item :label="$t('poc.filterSearch')">
-              <el-input v-model="templateFilter.keyword" :placeholder="$t('poc.searchPlaceholder')" clearable style="width: 180px" @keyup.enter="loadNucleiTemplates" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="loadNucleiTemplates">{{ $t('common.search') }}</el-button>
-            </el-form-item>
-          </el-form>
-          <!-- 统计信息和批量操作 -->
-          <div class="stats-bar" v-if="templateStats.total">
-            <el-tag type="danger" size="small">Critical: {{ templateStats.critical || 0 }}</el-tag>
-            <el-tag type="warning" size="small">High: {{ templateStats.high || 0 }}</el-tag>
-            <el-tag size="small">Medium: {{ templateStats.medium || 0 }}</el-tag>
-            <el-tag type="info" size="small">Low: {{ templateStats.low || 0 }}</el-tag>
-            <el-tag type="success" size="small">Info: {{ templateStats.info || 0 }}</el-tag>
-            <el-tag v-if="templateStats.unknown" type="info" size="small" effect="plain">Unknown: {{ templateStats.unknown }}</el-tag>
-            <el-button 
-              v-if="selectedTemplates.length > 0" 
-              type="success" 
-              size="small" 
-              style="margin-left: 20px"
+          <!-- 筛选条件（仿官方模板库：每个筛选项带数量统计） -->
+          <div class="template-filters">
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterSearch') }}</div>
+              <div class="filter-row-controls">
+                <el-input v-model="templateFilter.keyword" :placeholder="$t('poc.searchAllPlaceholder')" clearable style="width: 320px" @keyup.enter="handleTemplateSearch" />
+                <el-select v-model="templateFilter.tag" :placeholder="$t('poc.filterTag')" clearable filterable style="width: 150px" @change="handleTemplateSearch">
+                  <el-option v-for="t in templateFacets.tags" :key="t.value" :label="`${t.value} (${t.count})`" :value="t.value" />
+                </el-select>
+                <el-select v-model="templateFilter.category" :placeholder="$t('poc.filterCategory')" clearable filterable style="width: 140px" @change="handleTemplateSearch">
+                  <el-option v-for="c in templateFacets.categories" :key="c.value" :label="`${c.value} (${c.count})`" :value="c.value" />
+                </el-select>
+                <el-button type="primary" @click="handleTemplateSearch">{{ $t('common.search') }}</el-button>
+                <el-button @click="resetTemplateFilter">{{ $t('common.reset') }}</el-button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterLevel') }}</div>
+              <div class="facet-group">
+                <button
+                  v-for="level in severityLevels"
+                  :key="level"
+                  type="button"
+                  class="facet-chip"
+                  :class="[`facet-sev-${level}`, { 'is-active': templateFilter.severities.includes(level), 'is-disabled': !templateFilter.severities.includes(level) && severityFacetCount(level) === 0 }]"
+                  :disabled="!templateFilter.severities.includes(level) && severityFacetCount(level) === 0"
+                  @click="toggleSeverityFacet(level)"
+                >
+                  <span class="facet-sev-dot" :class="`dot-${level}`"></span>
+                  <span class="facet-name">{{ level }}</span>
+                  <span class="facet-count">{{ severityFacetCount(level) }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterProtocol') }}</div>
+              <div class="facet-group">
+                <button
+                  v-for="p in templateFacets.protocols"
+                  :key="p.value"
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': templateFilter.protocols.includes(p.value) }"
+                  @click="toggleProtocolFacet(p.value)"
+                >
+                  <span class="facet-name">{{ p.value }}</span>
+                  <span class="facet-count">{{ p.count }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-row-label">CVE</div>
+              <div class="facet-group">
+                <button
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': templateFilter.hasCve === true }"
+                  @click="toggleCveFacet(true)"
+                >
+                  <span class="facet-name">{{ $t('poc.cveYes') }}</span>
+                  <span class="facet-count">{{ templateFacets.cveTrue }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': templateFilter.hasCve === false }"
+                  @click="toggleCveFacet(false)"
+                >
+                  <span class="facet-name">{{ $t('poc.cveNo') }}</span>
+                  <span class="facet-count">{{ templateFacets.cveFalse }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterProduct') }}</div>
+              <div class="filter-row-controls">
+                <el-select
+                  v-model="templateFilter.products"
+                  :placeholder="$t('poc.productPlaceholder')"
+                  multiple
+                  filterable
+                  clearable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  style="width: 320px"
+                  @change="handleTemplateSearch"
+                >
+                  <el-option v-for="p in templateFacets.products" :key="p.value" :label="`${p.value} (${p.count})`" :value="p.value" />
+                </el-select>
+              </div>
+            </div>
+          </div>
+          <!-- 批量操作 -->
+          <div class="stats-bar" v-if="selectedTemplates.length > 0">
+            <el-button
+              type="success"
+              size="small"
               @click="showTemplateBatchValidateDialog"
             >
               {{ $t('poc.batchValidate') }} ({{ selectedTemplates.length }})
             </el-button>
           </div>
           <!-- 模板列表 -->
-          <el-table 
-            :data="nucleiTemplates" 
-            stripe 
-            v-loading="nucleiTemplateLoading" 
+          <el-table
+            :data="nucleiTemplates"
+            stripe
+            v-loading="nucleiTemplateLoading"
             max-height="500"
             @selection-change="handleTemplateSelectionChange"
           >
@@ -123,13 +180,31 @@
                 <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="category" :label="$t('poc.category')" width="100" />
-            <el-table-column prop="tags" :label="$t('poc.tags')" min-width="180">
+            <el-table-column prop="protocol" :label="$t('poc.protocol')" width="90">
+              <template #default="{ row }">
+                <el-tag v-if="row.protocol" effect="plain" size="small">{{ row.protocol }}</el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="cveIds" :label="'CVE'" width="140">
+              <template #default="{ row }">
+                <el-tag v-if="row.cveIds && row.cveIds.length" type="danger" effect="plain" size="small">
+                  {{ row.cveIds[0] }}{{ row.cveIds.length > 1 ? ` +${row.cveIds.length - 1}` : '' }}
+                </el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="product" :label="$t('poc.product')" width="110" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.product || row.vendor || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="tags" :label="$t('poc.tags')" min-width="160">
               <template #default="{ row }">
                 <el-tag v-for="tag in (row.tags || [])" :key="tag" size="small" style="margin-right: 3px">
                   {{ tag }}
                 </el-tag>
-                <span v-if="row.tags && row.tags.length > 4" class="more-count">+{{ row.tags.length - 4 }}</span>
+                <span v-if="row.tags && row.tags.length > 3" class="more-count">+{{ row.tags.length - 3 }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="author" :label="$t('poc.author')" width="100" show-overflow-tooltip />
@@ -222,51 +297,127 @@
               </div>
             </div>
           </template>
-          <!-- 筛选条件 -->
-          <el-form :inline="true" class="filter-form">
-            <el-form-item :label="$t('poc.pocNameFilter')">
-              <el-input v-model="customPocFilter.name" :placeholder="$t('poc.pocNamePlaceholder')" clearable style="width: 150px" @keyup.enter="loadCustomPocs" />
-            </el-form-item>
-            <el-form-item :label="$t('poc.templateIdFilter')">
-              <el-input v-model="customPocFilter.templateId" :placeholder="$t('poc.templateIdPlaceholder')" clearable style="width: 150px" @keyup.enter="loadCustomPocs" />
-            </el-form-item>
-            <el-form-item :label="$t('poc.filterLevel')">
-              <el-select v-model="customPocFilter.severity" :placeholder="$t('poc.allLevels')" clearable style="width: 120px" @change="loadCustomPocs">
-                <el-option label="Critical" value="critical" />
-                <el-option label="High" value="high" />
-                <el-option label="Medium" value="medium" />
-                <el-option label="Low" value="low" />
-                <el-option label="Info" value="info" />
-                <el-option label="Unknown" value="unknown" />
-              </el-select>
-            </el-form-item>
-            <el-form-item :label="$t('poc.tagFilter')">
-              <el-input v-model="customPocFilter.tag" :placeholder="$t('poc.tagPlaceholder')" clearable style="width: 120px" @keyup.enter="loadCustomPocs" />
-            </el-form-item>
-            <el-form-item :label="$t('poc.statusFilter')">
-              <el-select v-model="customPocFilter.enabled" :placeholder="$t('poc.allStatus')" clearable style="width: 100px" @change="loadCustomPocs">
-                <el-option :label="$t('poc.enabled')" :value="true" />
-                <el-option :label="$t('poc.disabled')" :value="false" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="loadCustomPocs">{{ $t('common.search') }}</el-button>
-              <el-button @click="resetCustomPocFilter">{{ $t('common.reset') }}</el-button>
-            </el-form-item>
-          </el-form>
+          <!-- 筛选条件（仿默认模板库：每个筛选项带数量统计） -->
+          <div class="template-filters">
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterSearch') }}</div>
+              <div class="filter-row-controls">
+                <el-input v-model="customPocFilter.keyword" :placeholder="$t('poc.searchAllPlaceholder')" clearable style="width: 300px" @keyup.enter="handlePocSearch" />
+                <el-select v-model="customPocFilter.tag" :placeholder="$t('poc.filterTag')" clearable filterable style="width: 140px" @change="handlePocSearch">
+                  <el-option v-for="t in customPocFacets.tags" :key="t.value" :label="`${t.value} (${t.count})`" :value="t.value" />
+                </el-select>
+                <el-select v-model="customPocFilter.enabled" :placeholder="$t('poc.allStatus')" clearable style="width: 110px" @change="handlePocSearch">
+                  <el-option :label="$t('poc.enabled')" :value="true" />
+                  <el-option :label="$t('poc.disabled')" :value="false" />
+                </el-select>
+                <el-button type="primary" @click="handlePocSearch">{{ $t('common.search') }}</el-button>
+                <el-button @click="resetCustomPocFilter">{{ $t('common.reset') }}</el-button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <div class="filter-row-label">{{ $t('poc.filterLevel') }}</div>
+              <div class="facet-group">
+                <button
+                  v-for="level in severityLevels"
+                  :key="level"
+                  type="button"
+                  class="facet-chip"
+                  :class="[`facet-sev-${level}`, { 'is-active': customPocFilter.severities.includes(level), 'is-disabled': !customPocFilter.severities.includes(level) && pocSeverityFacetCount(level) === 0 }]"
+                  :disabled="!customPocFilter.severities.includes(level) && pocSeverityFacetCount(level) === 0"
+                  @click="togglePocSeverityFacet(level)"
+                >
+                  <span class="facet-sev-dot" :class="`dot-${level}`"></span>
+                  <span class="facet-name">{{ level }}</span>
+                  <span class="facet-count">{{ pocSeverityFacetCount(level) }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row" v-if="customPocFacets.protocols.length">
+              <div class="filter-row-label">{{ $t('poc.filterProtocol') }}</div>
+              <div class="facet-group">
+                <button
+                  v-for="p in customPocFacets.protocols"
+                  :key="p.value"
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': customPocFilter.protocols.includes(p.value) }"
+                  @click="togglePocProtocolFacet(p.value)"
+                >
+                  <span class="facet-name">{{ p.value }}</span>
+                  <span class="facet-count">{{ p.count }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row" v-if="customPocFacets.cveTrue || customPocFacets.cveFalse">
+              <div class="filter-row-label">CVE</div>
+              <div class="facet-group">
+                <button
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': customPocFilter.hasCve === true }"
+                  @click="togglePocCveFacet(true)"
+                >
+                  <span class="facet-name">{{ $t('poc.cveYes') }}</span>
+                  <span class="facet-count">{{ customPocFacets.cveTrue }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="facet-chip"
+                  :class="{ 'is-active': customPocFilter.hasCve === false }"
+                  @click="togglePocCveFacet(false)"
+                >
+                  <span class="facet-name">{{ $t('poc.cveNo') }}</span>
+                  <span class="facet-count">{{ customPocFacets.cveFalse }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="filter-row" v-if="customPocFacets.products.length">
+              <div class="filter-row-label">{{ $t('poc.filterProduct') }}</div>
+              <div class="filter-row-controls">
+                <el-select
+                  v-model="customPocFilter.products"
+                  :placeholder="$t('poc.productPlaceholder')"
+                  multiple
+                  filterable
+                  clearable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  style="width: 320px"
+                  @change="handlePocSearch"
+                >
+                  <el-option v-for="p in customPocFacets.products" :key="p.value" :label="`${p.value} (${p.count})`" :value="p.value" />
+                </el-select>
+              </div>
+            </div>
+          </div>
           <el-table :data="customPocs" stripe v-loading="customPocLoading" max-height="500">
-            <el-table-column prop="name" :label="$t('poc.name')" width="250" />
-            <el-table-column prop="templateId" :label="$t('poc.templateId')" width="250" />
-            <el-table-column prop="severity" :label="$t('poc.severityLevel')" width="100">
+            <el-table-column prop="templateId" :label="$t('poc.templateId')" width="200" show-overflow-tooltip />
+            <el-table-column prop="name" :label="$t('poc.name')" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="severity" :label="$t('poc.severityLevel')" width="90" sortable :sort-method="sortBySeverity">
               <template #default="{ row }">
                 <el-tag :type="getSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="tags" :label="$t('poc.tags')" min-width="200">
+            <el-table-column prop="protocol" :label="$t('poc.protocol')" width="90">
               <template #default="{ row }">
-                <el-tag v-for="tag in row.tags" :key="tag" size="small" style="margin-right: 5px">
+                <el-tag v-if="row.protocol" effect="plain" size="small">{{ row.protocol }}</el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="cveIds" :label="'CVE'" width="140">
+              <template #default="{ row }">
+                <el-tag v-if="row.cveIds && row.cveIds.length" type="danger" effect="plain" size="small">
+                  {{ row.cveIds[0] }}{{ row.cveIds.length > 1 ? ` +${row.cveIds.length - 1}` : '' }}
+                </el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="tags" :label="$t('poc.tags')" min-width="180">
+              <template #default="{ row }">
+                <el-tag v-for="tag in row.tags" :key="tag" size="small" style="margin-right: 3px">
                   {{ tag }}
                 </el-tag>
+                <span v-if="row.tags && row.tags.length > 3" class="more-count">+{{ row.tags.length - 3 }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="enabled" :label="$t('poc.status')" width="80">
@@ -720,7 +871,6 @@
                 <el-option label="Medium" value="medium" />
                 <el-option label="Low" value="low" />
                 <el-option label="Info" value="info" />
-                <el-option label="Unknown" value="unknown" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -886,8 +1036,18 @@
         <el-descriptions-item :label="$t('poc.severityLevel')">
           <el-tag :type="getSeverityType(currentTemplate.severity)" size="small">{{ currentTemplate.severity }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item :label="$t('poc.category')">{{ currentTemplate.category }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('poc.author')">{{ currentTemplate.author }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('poc.protocol')">{{ currentTemplate.protocol || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('poc.category')">{{ currentTemplate.category || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('poc.product')">{{ currentTemplate.product || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('poc.vendor')">{{ currentTemplate.vendor || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="'CVE'" :span="2">
+          <template v-if="currentTemplate.cveIds && currentTemplate.cveIds.length">
+            <el-tag v-for="cve in currentTemplate.cveIds" :key="cve" type="danger" effect="plain" size="small" style="margin-right: 5px">{{ cve }}</el-tag>
+          </template>
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item :label="$t('poc.author')">{{ currentTemplate.author || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="CVSS">{{ currentTemplate.cvssScore || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$t('poc.tags')" :span="2">
           <el-tag v-for="tag in (currentTemplate.tags || [])" :key="tag" size="small" style="margin-right: 5px">{{ tag }}</el-tag>
         </el-descriptions-item>
@@ -1350,7 +1510,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowDown, UploadFilled, Upload, Download, Delete, MagicStick, FolderOpened, RefreshLeft, Check, Search, Loading, CircleCheck, CircleClose, Close } from '@element-plus/icons-vue'
-import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax, batchValidatePoc } from '@/api/poc'
+import { getTagMappingList, saveTagMapping, deleteTagMapping, getCustomPocList, getCustomPocCategories, saveCustomPoc, batchImportCustomPoc, deleteCustomPoc, clearAllCustomPoc, getNucleiTemplateList, getNucleiTemplateCategories, syncNucleiTemplates, clearNucleiTemplates, getNucleiTemplateDetail, validatePoc as validatePocApi, getPocValidationResult, scanAssetsWithPoc, validatePocSyntax, batchValidatePoc } from '@/api/poc'
 import { DEFAULT_AI_CONFIG, loadAIConfig, chat, extractYamlBlock } from '@/utils/aiClient'
 import { getDirScanDictList, saveDirScanDict, deleteDirScanDict, clearDirScanDict } from '@/api/dirscan'
 import { getSubdomainDictList, saveSubdomainDict, deleteSubdomainDict, clearSubdomainDict } from '@/api/subdomain'
@@ -1388,13 +1548,26 @@ watch(() => route.query.tab, (newTab) => {
 // Nuclei默认模板
 const nucleiTemplates = ref([])
 const nucleiTemplateLoading = ref(false)
-const templateCategories = ref([])
-const templateTags = ref([])
 const selectedTemplates = ref([])
 const templateStats = ref({})
+// 严重级别固定展示顺序（官方模板库已无 Unknown 级别）
+const severityLevels = ['critical', 'high', 'medium', 'low', 'info']
+// 各筛选维度选项 + 数量统计（随筛选条件联动）
+const templateFacets = reactive({
+  categories: [],
+  severities: [],
+  protocols: [],
+  products: [],
+  tags: [],
+  cveTrue: 0,
+  cveFalse: 0
+})
 const templateFilter = reactive({
   category: '',
-  severity: '',
+  severities: [],
+  protocols: [],
+  products: [],
+  hasCve: null,
   tag: '',
   keyword: ''
 })
@@ -1569,11 +1742,22 @@ async function loadAiConfig() {
 
 // 自定义POC筛选条件
 const customPocFilter = reactive({
-  name: '',
-  templateId: '',
-  severity: '',
+  keyword: '',
+  severities: [],
+  protocols: [],
+  products: [],
+  hasCve: null,
   tag: '',
   enabled: null
+})
+// 自定义POC各筛选维度选项 + 数量统计（随筛选条件联动）
+const customPocFacets = reactive({
+  severities: [],
+  protocols: [],
+  products: [],
+  tags: [],
+  cveTrue: 0,
+  cveFalse: 0
 })
 
 // 导入POC
@@ -1727,6 +1911,7 @@ function handleTabChange(tab) {
     loadTagMappings()
   } else if (tab === 'customPoc' && customPocs.value.length === 0) {
     loadCustomPocs()
+    loadCustomPocFacets()
   } else if (tab === 'dirscanDict' && dirscanDicts.value.length === 0) {
     loadDirscanDicts()
   } else if (tab === 'subdomainDict' && subdomainDicts.value.length === 0) {
@@ -1740,10 +1925,15 @@ function handleTabChange(tab) {
 
 async function loadNucleiTemplateCategories() {
   try {
-    const res = await getNucleiTemplateCategories()
+    const res = await getNucleiTemplateCategories(buildTemplateFilterPayload())
     if (res.code === 0) {
-      templateCategories.value = res.categories || []
-      templateTags.value = res.tags || []
+      templateFacets.categories = res.categories || []
+      templateFacets.severities = res.severities || []
+      templateFacets.protocols = res.protocols || []
+      templateFacets.products = res.products || []
+      templateFacets.tags = res.tags || []
+      templateFacets.cveTrue = res.cveStats?.true || 0
+      templateFacets.cveFalse = res.cveStats?.false || 0
       templateStats.value = res.stats || {}
     }
   } catch (e) {
@@ -1751,14 +1941,23 @@ async function loadNucleiTemplateCategories() {
   }
 }
 
+function buildTemplateFilterPayload() {
+  return {
+    category: templateFilter.category,
+    tag: templateFilter.tag,
+    keyword: templateFilter.keyword,
+    severities: [...templateFilter.severities],
+    protocols: [...templateFilter.protocols],
+    products: [...templateFilter.products],
+    hasCve: templateFilter.hasCve
+  }
+}
+
 async function loadNucleiTemplates() {
   nucleiTemplateLoading.value = true
   try {
     const res = await getNucleiTemplateList({
-      category: templateFilter.category,
-      severity: templateFilter.severity,
-      tag: templateFilter.tag,
-      keyword: templateFilter.keyword,
+      ...buildTemplateFilterPayload(),
       page: templatePagination.page,
       pageSize: templatePagination.pageSize
     })
@@ -1771,6 +1970,55 @@ async function loadNucleiTemplates() {
   } finally {
     nucleiTemplateLoading.value = false
   }
+}
+
+// 应用筛选（重置到第一页，列表与分面计数同时刷新）
+function handleTemplateSearch() {
+  templatePagination.page = 1
+  loadNucleiTemplates()
+  loadNucleiTemplateCategories()
+}
+
+function severityFacetCount(level) {
+  const item = templateFacets.severities.find(s => s.value === level)
+  return item ? item.count : 0
+}
+
+function toggleSeverityFacet(level) {
+  const idx = templateFilter.severities.indexOf(level)
+  if (idx >= 0) {
+    templateFilter.severities.splice(idx, 1)
+  } else {
+    templateFilter.severities.push(level)
+  }
+  handleTemplateSearch()
+}
+
+function toggleProtocolFacet(protocol) {
+  const idx = templateFilter.protocols.indexOf(protocol)
+  if (idx >= 0) {
+    templateFilter.protocols.splice(idx, 1)
+  } else {
+    templateFilter.protocols.push(protocol)
+  }
+  handleTemplateSearch()
+}
+
+// CVE true/false 为互斥选择，再次点击取消
+function toggleCveFacet(val) {
+  templateFilter.hasCve = templateFilter.hasCve === val ? null : val
+  handleTemplateSearch()
+}
+
+function resetTemplateFilter() {
+  templateFilter.category = ''
+  templateFilter.severities = []
+  templateFilter.protocols = []
+  templateFilter.products = []
+  templateFilter.hasCve = null
+  templateFilter.tag = ''
+  templateFilter.keyword = ''
+  handleTemplateSearch()
 }
 
 // 打开同步模板对话框
@@ -2085,31 +2333,80 @@ async function loadTagMappings() {
   }
 }
 
+function buildCustomPocFilterPayload() {
+  return {
+    tag: customPocFilter.tag,
+    keyword: customPocFilter.keyword,
+    enabled: customPocFilter.enabled,
+    severities: [...customPocFilter.severities],
+    protocols: [...customPocFilter.protocols],
+    products: [...customPocFilter.products],
+    hasCve: customPocFilter.hasCve
+  }
+}
+
+async function loadCustomPocFacets() {
+  try {
+    const res = await getCustomPocCategories(buildCustomPocFilterPayload())
+    if (res.code === 0) {
+      customPocFacets.severities = res.severities || []
+      customPocFacets.protocols = res.protocols || []
+      customPocFacets.products = res.products || []
+      customPocFacets.tags = res.tags || []
+      customPocFacets.cveTrue = res.cveStats?.true || 0
+      customPocFacets.cveFalse = res.cveStats?.false || 0
+    }
+  } catch (e) {
+    console.error('Failed to load custom poc facets:', e)
+  }
+}
+
+// 应用筛选（重置到第一页，列表与分面计数同时刷新）
+function handlePocSearch() {
+  pocPagination.page = 1
+  loadCustomPocs()
+  loadCustomPocFacets()
+}
+
+function pocSeverityFacetCount(level) {
+  const item = customPocFacets.severities.find(s => s.value === level)
+  return item ? item.count : 0
+}
+
+function togglePocSeverityFacet(level) {
+  const idx = customPocFilter.severities.indexOf(level)
+  if (idx >= 0) {
+    customPocFilter.severities.splice(idx, 1)
+  } else {
+    customPocFilter.severities.push(level)
+  }
+  handlePocSearch()
+}
+
+function togglePocProtocolFacet(protocol) {
+  const idx = customPocFilter.protocols.indexOf(protocol)
+  if (idx >= 0) {
+    customPocFilter.protocols.splice(idx, 1)
+  } else {
+    customPocFilter.protocols.push(protocol)
+  }
+  handlePocSearch()
+}
+
+// CVE true/false 为互斥选择，再次点击取消
+function togglePocCveFacet(val) {
+  customPocFilter.hasCve = customPocFilter.hasCve === val ? null : val
+  handlePocSearch()
+}
+
 async function loadCustomPocs() {
   customPocLoading.value = true
   try {
-    const params = {
+    const res = await getCustomPocList({
+      ...buildCustomPocFilterPayload(),
       page: pocPagination.page,
       pageSize: pocPagination.pageSize
-    }
-    // 添加筛选条件
-    if (customPocFilter.name) {
-      params.name = customPocFilter.name
-    }
-    if (customPocFilter.templateId) {
-      params.templateId = customPocFilter.templateId
-    }
-    if (customPocFilter.severity) {
-      params.severity = customPocFilter.severity
-    }
-    if (customPocFilter.tag) {
-      params.tag = customPocFilter.tag
-    }
-    if (customPocFilter.enabled !== null && customPocFilter.enabled !== '') {
-      params.enabled = customPocFilter.enabled
-    }
-    
-    const res = await getCustomPocList(params)
+    })
     if (res.code === 0) {
       customPocs.value = res.list || []
       pocPagination.total = res.total
@@ -2121,13 +2418,14 @@ async function loadCustomPocs() {
 
 // 重置自定义POC筛选条件
 function resetCustomPocFilter() {
-  customPocFilter.name = ''
-  customPocFilter.templateId = ''
-  customPocFilter.severity = ''
+  customPocFilter.keyword = ''
+  customPocFilter.severities = []
+  customPocFilter.protocols = []
+  customPocFilter.products = []
+  customPocFilter.hasCve = null
   customPocFilter.tag = ''
   customPocFilter.enabled = null
-  pocPagination.page = 1
-  loadCustomPocs()
+  handlePocSearch()
 }
 
 function showTagMappingForm(row = null) {
@@ -2276,7 +2574,7 @@ async function handleSaveCustomPoc() {
     customPocDialogVisible.value = false
     // 保存成功后清除AI生成的缓存
     aiGeneratedPocCache.value = ''
-    loadCustomPocs()
+    handlePocSearch()
   } else {
     ElMessage.error(res.msg)
   }
@@ -2287,7 +2585,7 @@ async function handleDeleteCustomPoc(row) {
   const res = await deleteCustomPoc({ id: row.id })
   if (res.code === 0) {
     ElMessage.success(t('poc.deleteSuccess'))
-    loadCustomPocs()
+    handlePocSearch()
   }
 }
 
@@ -2378,17 +2676,21 @@ async function handleClearAllPocs() {
     ElMessage.warning(t('poc.noPocToClear'))
     return
   }
-  
+
   // 检查是否有筛选条件
-  const hasFilter = customPocFilter.name || customPocFilter.templateId || customPocFilter.severity || customPocFilter.tag || customPocFilter.enabled !== null
-  
+  const hasFilter = customPocFilter.keyword || customPocFilter.severities.length || customPocFilter.protocols.length ||
+    customPocFilter.products.length || customPocFilter.hasCve !== null || customPocFilter.tag || customPocFilter.enabled !== null
+
   // 构建提示信息
   let confirmMsg = ''
   if (hasFilter) {
     const filterDesc = []
-    if (customPocFilter.name) filterDesc.push(t('poc.filterNameContains', { name: customPocFilter.name }))
-    if (customPocFilter.templateId) filterDesc.push(t('poc.filterTemplateIdContains', { id: customPocFilter.templateId }))
-    if (customPocFilter.severity) filterDesc.push(t('poc.filterSeverityIs', { severity: customPocFilter.severity }))
+    if (customPocFilter.keyword) filterDesc.push(t('poc.filterNameContains', { name: customPocFilter.keyword }))
+    if (customPocFilter.severities.length) filterDesc.push(t('poc.filterSeverityIs', { severity: customPocFilter.severities.join('/') }))
+    if (customPocFilter.protocols.length) filterDesc.push(`${t('poc.filterProtocol')}: ${customPocFilter.protocols.join('/')}`)
+    if (customPocFilter.products.length) filterDesc.push(`${t('poc.filterProduct')}: ${customPocFilter.products.join('/')}`)
+    if (customPocFilter.hasCve === true) filterDesc.push(t('poc.cveYes'))
+    if (customPocFilter.hasCve === false) filterDesc.push(t('poc.cveNo'))
     if (customPocFilter.tag) filterDesc.push(t('poc.filterTagContains', { tag: customPocFilter.tag }))
     if (customPocFilter.enabled === true) filterDesc.push(t('poc.filterStatusEnabled'))
     if (customPocFilter.enabled === false) filterDesc.push(t('poc.filterStatusDisabled'))
@@ -2396,7 +2698,7 @@ async function handleClearAllPocs() {
   } else {
     confirmMsg = t('poc.confirmClearPoc', { count: pocPagination.total })
   }
-  
+
   try {
     await ElMessageBox.confirm(
       confirmMsg,
@@ -2408,21 +2710,14 @@ async function handleClearAllPocs() {
         confirmButtonClass: 'el-button--danger'
       }
     )
-    
+
     clearPocLoading.value = true
-    
-    // 传递筛选条件
-    const params = {}
-    if (customPocFilter.name) params.name = customPocFilter.name
-    if (customPocFilter.templateId) params.templateId = customPocFilter.templateId
-    if (customPocFilter.severity) params.severity = customPocFilter.severity
-    if (customPocFilter.tag) params.tag = customPocFilter.tag
-    if (customPocFilter.enabled !== null && customPocFilter.enabled !== '') params.enabled = customPocFilter.enabled
-    
-    const res = await clearAllCustomPoc(params)
+
+    // 传递筛选条件（与列表筛选保持一致）
+    const res = await clearAllCustomPoc(buildCustomPocFilterPayload())
     if (res.code === 0) {
       ElMessage.success(t('poc.clearedPocs', { count: res.deleted || pocPagination.total }))
-      loadCustomPocs()
+      handlePocSearch()
     } else {
       ElMessage.error(res.msg || t('poc.clearFailed'))
     }
@@ -2481,7 +2776,7 @@ function resetImportPocDialog() {
 // 导入完成
 function handleImportPocComplete() {
   importPocDialogVisible.value = false
-  loadCustomPocs()
+  handlePocSearch()
 }
 
 // 上传ZIP包并解析导入
@@ -2595,7 +2890,7 @@ async function handleImportPocZip() {
       importPocLoading.value = false
       // 导入成功后自动关闭对话框并刷新列表
       importPocDialogVisible.value = false
-      loadCustomPocs()
+      handlePocSearch()
       ElMessage.success(t('poc.importComplete', { success: successCount, failed: failCount }))
     } else {
       importPocStatus.value = 'failed'
@@ -2646,12 +2941,14 @@ function parseYamlToPreview(content) {
       result.author = authorMatch[1].trim()
     }
 
-    // severity
+    // severity（已无 Unknown 级别，unknown 归一为 info）
     const severityMatch = infoBlock.match(/^\s+severity:\s*(.+)$/m)
     if (severityMatch) {
       const severity = severityMatch[1].trim().toLowerCase()
-      if (['critical', 'high', 'medium', 'low', 'info', 'unknown'].includes(severity)) {
+      if (['critical', 'high', 'medium', 'low', 'info'].includes(severity)) {
         result.severity = severity
+      } else if (severity === 'unknown') {
+        result.severity = 'info'
       }
     }
 
@@ -2700,7 +2997,7 @@ function getSeverityType(severity) {
   return map[severity] || 'info'
 }
 
-const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4, unknown: 5 }
+const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 }
 function sortBySeverity(a, b) {
   return (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)
 }
@@ -2761,12 +3058,14 @@ function parseYamlContent() {
       customPocForm.author = authorMatch[1].trim()
     }
     
-    // severity
+    // severity（已无 Unknown 级别，unknown 归一为 info）
     const severityMatch = infoBlock.match(/^\s+severity:\s*(.+)$/m)
     if (severityMatch) {
       const severity = severityMatch[1].trim().toLowerCase()
-      if (['critical', 'high', 'medium', 'low', 'info', 'unknown'].includes(severity)) {
+      if (['critical', 'high', 'medium', 'low', 'info'].includes(severity)) {
         customPocForm.severity = severity
+      } else if (severity === 'unknown') {
+        customPocForm.severity = 'info'
       }
     }
     
@@ -4643,6 +4942,111 @@ async function handleResetJSFinderConfig() {
 
   .filter-form {
     margin-bottom: 15px;
+  }
+
+  // 模板库筛选面板（仿官方模板库：筛选项 + 数量统计）
+  .template-filters {
+    margin-bottom: 15px;
+    padding: 12px 15px;
+    background: var(--el-fill-color-light);
+    border-radius: 6px;
+
+    .filter-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+
+      & + .filter-row {
+        margin-top: 10px;
+      }
+    }
+
+    .filter-row-label {
+      flex-shrink: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--el-text-color-regular);
+      min-width: 32px;
+    }
+
+    .filter-row-controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .facet-group {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .facet-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      font-size: 12px;
+      line-height: 20px;
+      border: 1px solid var(--el-border-color);
+      border-radius: 12px;
+      background: var(--el-fill-color-blank);
+      color: var(--el-text-color-regular);
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        border-color: var(--el-color-primary);
+        color: var(--el-color-primary);
+      }
+
+      &.is-active {
+        background: var(--el-color-primary-light-9);
+        border-color: var(--el-color-primary);
+        color: var(--el-color-primary);
+        font-weight: 600;
+      }
+
+      &.is-disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .facet-name {
+        text-transform: capitalize;
+      }
+
+      .facet-count {
+        padding: 0 6px;
+        font-size: 11px;
+        line-height: 16px;
+        border-radius: 8px;
+        background: var(--el-fill-color);
+        color: var(--el-text-color-secondary);
+      }
+
+      &.is-active .facet-count {
+        background: var(--el-color-primary-light-8);
+        color: var(--el-color-primary);
+      }
+
+      // 严重级别色点（与官方模板库配色一致）
+      .facet-sev-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+
+        &.dot-critical { background: #e74856; }
+        &.dot-high { background: #f7630c; }
+        &.dot-medium { background: #ffb900; }
+        &.dot-low { background: #0078d4; }
+        &.dot-info { background: #6b7280; }
+      }
+    }
   }
 
   .stats-bar {

@@ -201,10 +201,7 @@ func parseNucleiTemplateFile(filePath, baseDir string) *model.NucleiTemplate {
 		}
 	}
 
-	severity := strings.ToLower(info.Info.Severity)
-	if severity == "" {
-		severity = "unknown"
-	}
+	severity := template.NormalizeSeverity(info.Info.Severity)
 
 	// Parse additional metadata using template parser
 	content := string(data)
@@ -217,6 +214,7 @@ func parseNucleiTemplateFile(filePath, baseDir string) *model.NucleiTemplate {
 	var cweIds []string
 	var references []string
 	var remediation string
+	var vendor, product string
 
 	// Extract metadata if parsing succeeded
 	if parseErr == nil && templateInfo != nil {
@@ -226,6 +224,14 @@ func parseNucleiTemplateFile(filePath, baseDir string) *model.NucleiTemplate {
 		cweIds = templateInfo.GetCweIds()
 		references = templateInfo.GetReferences()
 		remediation = templateInfo.GetRemediation()
+		vendor = templateInfo.GetVendor()
+		product = templateInfo.GetProduct()
+	}
+
+	// 请求协议：从模板顶层协议键解析，失败时回退用顶级目录
+	protocol := template.ParseProtocol(content)
+	if protocol == "" {
+		protocol = category
 	}
 
 	return &model.NucleiTemplate{
@@ -236,6 +242,9 @@ func parseNucleiTemplateFile(filePath, baseDir string) *model.NucleiTemplate {
 		Description: info.Info.Description,
 		Tags:        tags,
 		Category:    category,
+		Protocol:    protocol,
+		Vendor:      vendor,
+		Product:     product,
 		FilePath:    relPath,
 		Content:     content,
 		Enabled:     true,

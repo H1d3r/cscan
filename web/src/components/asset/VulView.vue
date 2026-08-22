@@ -49,6 +49,10 @@
       </template>
 
       <template #toolbar-right>
+        <el-button plain @click="proTableRef?.loadData()">
+          <el-icon><RefreshRight /></el-icon>
+          {{ $t('common.refresh') }}
+        </el-button>
         <el-button type="danger" plain @click="handleClear">{{ $t('vul.clearData') }}</el-button>
       </template>
 

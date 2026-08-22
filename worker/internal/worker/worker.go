@@ -88,6 +88,10 @@ type Worker struct {
 	mongoClient *mongo.Client
 	mongoDB     *mongo.Database
 
+	// 本地模板库（内容寻址文件 + 内存索引）：POC 扫描优先按 id/标签解析库文件
+	// 硬链接进扫描目录，避免每次扫描从 Mongo 拉内容重写临时文件
+	templateStore *TemplateStore
+
 	// 任务状态写独立连接池（独立持久化）：
 	// current_phase/progress/sub_task_done/MarkTaskCompleted 等状态回写走独立小池，
 	// 与结果数据写（mongoDB，池=20）隔离——数据写入过载时状态回写不会被饿死，
@@ -450,6 +454,19 @@ func (w *Worker) SetMongoDB(client *mongo.Client, db *mongo.Database) {
 	InitMongoLogger(db, w.config.Name)
 	// HTTP 服务映射直连 MongoDB 读取，必须在 db 就绪后加载（不可提前到 NewWorker）
 	w.loadHttpServiceMappings()
+	// 初始化本地模板库并后台首同步（不阻塞启动；同步完成前的扫描回退 Mongo 内容加载）
+	storeDir := os.Getenv("CSCAN_TEMPLATE_STORE_DIR")
+	if storeDir == "" {
+		storeDir = filepath.Join("data", "template-store")
+	}
+	w.templateStore = NewTemplateStore(storeDir, w.logger)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := w.templateStore.EnsureSynced(ctx, db); err != nil {
+			w.logger.Error("TemplateStore initial sync failed: %v (POC scan falls back to Mongo content loading)", err)
+		}
+	}()
 }
 
 // SetStatusMongoDB 设置任务状态写专用 MongoDB 实例（独立连接池，独立持久化）。
@@ -2592,23 +2609,25 @@ domainScanDone:
 				}
 				w.taskLog(task.TaskId, LevelInfo, "POC scan: %d assets, timeout %ds/target", len(allAssets), pocTargetTimeout)
 
-				// 从数据库获取模板（所有模板都存储在数据库中）
+				// 模板解析：优先本地模板库（库文件硬链接进扫描目录），未命中回退 Mongo 内容加载
+				w.ensureTemplateStore(ctx)
 				var templates []string
+				var templateRefs []string
 
 				// 检查是否有模板ID列表（任务创建时已筛选好的模板）
 				if len(config.PocScan.NucleiTemplateIds) > 0 || len(config.PocScan.CustomPocIds) > 0 {
-					// 通过RPC根据ID获取模板内容（包括默认模板和自定义POC)
+					// 按ID获取模板（包括默认模板和自定义POC)
 					w.taskLog(task.TaskId, LevelInfo, "POC template request: nucleiTemplateIds=%d, customPocIds=%d", len(config.PocScan.NucleiTemplateIds), len(config.PocScan.CustomPocIds))
-					templates = w.getTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
-					w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates", len(templates))
+					templates, templateRefs = w.resolveTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
+					w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates (%d from local store)", len(templates)+len(templateRefs), len(templateRefs))
 				} else if config.PocScan.CustomPocOnly {
 					// 只使用自定义POC模式，但没有指定具体ID，获取所有自定义POC
 					severities := []string{}
 					if config.PocScan.Severity != "" {
 						severities = strings.Split(config.PocScan.Severity, ",")
 					}
-					templates = w.getAllCustomPocs(ctx, severities)
-					w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates", len(templates))
+					templates, templateRefs = w.resolveAllCustomPocs(ctx, severities)
+					w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates (%d from local store)", len(templates)+len(templateRefs), len(templateRefs))
 				} else {
 					// 优化：按资产分组，每组只加载相关的POC模板
 					// 当AutoScan或AutomaticScan启用时，按资产的指纹标签进行分组
@@ -2673,25 +2692,26 @@ domainScanDone:
 							severities = strings.Split(config.PocScan.Severity, ",")
 						}
 
-						for _, group := range groups {
-							groupTemplates := w.getTemplatesByTags(ctx, group.Tags, severities)
-							if len(groupTemplates) == 0 {
-								w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v): no templates loaded, skipping", group.Tags)
-								continue
-							}
-							w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v, assets=%d): loaded %d templates", group.Tags, len(group.Assets), len(groupTemplates))
+					for _, group := range groups {
+						groupContents, groupRefs := w.resolveTemplatesByTags(ctx, group.Tags, severities)
+						if len(groupContents) == 0 && len(groupRefs) == 0 {
+							w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v): no templates loaded, skipping", group.Tags)
+							continue
+						}
+						w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v, assets=%d): loaded %d templates (%d from local store)", group.Tags, len(group.Assets), len(groupContents)+len(groupRefs), len(groupRefs))
 
-							// 构建该分组的扫描选项（并发和速率由自适应调度器决定）
-							groupOpts := &scanner.NucleiOptions{
-								Severity:        config.PocScan.Severity,
-								Tags:            group.Tags,
-								ExcludeTags:     config.PocScan.ExcludeTags,
-								TargetTimeout:   targetTimeout,
-								AutoScan:        false,
-								AutomaticScan:   false,
-								CustomPocOnly:   false,
-								CustomTemplates: groupTemplates,
-								TagMappings:     nil,
+						// 构建该分组的扫描选项（并发和速率由自适应调度器决定）
+						groupOpts := &scanner.NucleiOptions{
+							Severity:        config.PocScan.Severity,
+							Tags:            group.Tags,
+							ExcludeTags:     config.PocScan.ExcludeTags,
+							TargetTimeout:   targetTimeout,
+							AutoScan:        false,
+							AutomaticScan:   false,
+							CustomPocOnly:   false,
+							CustomTemplates: groupContents,
+							TemplateFileRefs: groupRefs,
+							TagMappings:     nil,
 								CustomHeaders:   config.PocScan.CustomHeaders,
 								ForceScan:       config.PocScan.ForceScan,
 								OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
@@ -2738,7 +2758,7 @@ domainScanDone:
 				}
 
 				// 统一扫描执行：当模板通过 ID 或 CustomPocOnly 方式加载后，执行扫描
-				if len(templates) > 0 {
+				if len(templates) > 0 || len(templateRefs) > 0 {
 					// 用于统计漏洞数量
 					var vulCount int
 
@@ -2790,6 +2810,7 @@ domainScanDone:
 						AutomaticScan:   false,
 						CustomPocOnly:   config.PocScan.CustomPocOnly,
 						CustomTemplates: templates,
+						TemplateFileRefs: templateRefs,
 						TagMappings:     config.PocScan.TagMappings,
 						CustomHeaders:   config.PocScan.CustomHeaders,
 						ForceScan:       config.PocScan.ForceScan,

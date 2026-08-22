@@ -2,6 +2,7 @@
 package template
 
 import (
+	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -19,15 +20,103 @@ type Classification struct {
 // TemplateInfo represents the info section of a Nuclei template.
 // It contains metadata about the vulnerability including name, severity, references, and remediation.
 type TemplateInfo struct {
-	Name           string            `yaml:"name" json:"name,omitempty"`
-	Author         string            `yaml:"author" json:"author,omitempty"`
-	Severity       string            `yaml:"severity" json:"severity,omitempty"`
-	Description    string            `yaml:"description" json:"description,omitempty"`
-	Reference      []string          `yaml:"reference" json:"reference,omitempty"`
-	Remediation    string            `yaml:"remediation" json:"remediation,omitempty"`
-	Classification *Classification   `yaml:"classification" json:"classification,omitempty"`
-	Tags           string            `yaml:"tags" json:"tags,omitempty"`
-	Metadata       map[string]string `yaml:"metadata" json:"metadata,omitempty"`
+	Name           string                 `yaml:"name" json:"name,omitempty"`
+	Author         interface{}            `yaml:"author" json:"author,omitempty"` // 可能是字符串或数组
+	Severity       string                 `yaml:"severity" json:"severity,omitempty"`
+	Description    string                 `yaml:"description" json:"description,omitempty"`
+	Reference      []string               `yaml:"reference" json:"reference,omitempty"`
+	Remediation    string                 `yaml:"remediation" json:"remediation,omitempty"`
+	Classification *Classification        `yaml:"classification" json:"classification,omitempty"`
+	Tags           string                 `yaml:"tags" json:"tags,omitempty"`
+	Metadata       map[string]interface{} `yaml:"metadata" json:"metadata,omitempty"`
+}
+
+// GetAuthor 规范化作者字段（字符串或数组均支持），多个作者以逗号连接
+func (t *TemplateInfo) GetAuthor() string {
+	if t == nil || t.Author == nil {
+		return ""
+	}
+	switch v := t.Author.(type) {
+	case string:
+		return v
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, a := range v {
+			if s, ok := a.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, ", ")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// validSeverities 官方模板库有效严重级别（不再有 unknown）
+var validSeverities = map[string]bool{
+	"critical": true,
+	"high":     true,
+	"medium":   true,
+	"low":      true,
+	"info":     true,
+}
+
+// NormalizeSeverity 规范化严重级别：非法/空/unknown 一律归为 info（官方模板库已无 Unknown 级别）
+func NormalizeSeverity(severity string) string {
+	s := strings.ToLower(strings.TrimSpace(severity))
+	if validSeverities[s] {
+		return s
+	}
+	return "info"
+}
+
+// protocolKeys Nuclei 模板顶层请求协议键，顺序即展示优先级
+var protocolKeys = []string{"dns", "http", "network", "tcp", "ssl", "file", "websocket", "headless", "code", "cloud", "dast", "javascript", "mcp", "workflow"}
+
+// ParseProtocol 从模板 YAML 内容解析请求协议类型（http/dns/network/ssl/file/headless 等）
+// 返回第一个命中的协议；无法识别时返回空字符串
+func ParseProtocol(content string) string {
+	if content == "" {
+		return ""
+	}
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
+		return ""
+	}
+	for _, key := range protocolKeys {
+		if _, ok := doc[key]; ok {
+			return key
+		}
+	}
+	return ""
+}
+
+// GetVendor 从 metadata 提取厂商名
+func (t *TemplateInfo) GetVendor() string {
+	return metadataString(t, "vendor")
+}
+
+// GetProduct 从 metadata 提取产品名
+func (t *TemplateInfo) GetProduct() string {
+	return metadataString(t, "product")
+}
+
+func metadataString(t *TemplateInfo, key string) string {
+	if t == nil {
+		return ""
+	}
+	v, ok := t.Metadata[key]
+	if !ok {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return strings.TrimSpace(s)
+	case int, int64, float64, bool:
+		return fmt.Sprintf("%v", s)
+	default:
+		return ""
+	}
 }
 
 // templateWrapper is used to extract only the info section from a Nuclei template.

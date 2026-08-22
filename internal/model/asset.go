@@ -213,6 +213,27 @@ func (m *AssetModel) FindByHostPort(ctx context.Context, host string, port int) 
 	return &doc, nil
 }
 
+// InsertIfAbsent 以 (host,port)/authority 为键原子插入：键已存在时不写入并返回 false。
+// 用 $setOnInsert upsert 取代「先查后插」，消除并发写入
+// （异步批量落库通道满回退同步直写时与后台 flush 并发）产生重复文档的竞态，
+// 重复文档会让资产数量虚高且各处统计口径永久对不上。
+func (m *AssetModel) InsertIfAbsent(ctx context.Context, asset *Asset) (bool, error) {
+	var filter bson.M
+	if asset.Port > 0 {
+		filter = bson.M{"host": asset.Host, "port": asset.Port}
+	} else {
+		filter = bson.M{"authority": asset.Authority}
+	}
+	res, err := m.coll.UpdateOne(ctx, filter,
+		bson.M{"$setOnInsert": asset},
+		options.Update().SetUpsert(true),
+	)
+	if err != nil {
+		return false, err
+	}
+	return res.UpsertedCount > 0, nil
+}
+
 func (m *AssetModel) Find(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
 	page, pageSize = NormalizePage(page, pageSize)
 	return m.FindWithSort(ctx, filter, page, pageSize, "update_time")
@@ -616,6 +637,12 @@ func (m *AssetModel) Distinct(ctx context.Context, field string, filter bson.M) 
 // CountByTaskId 根据任务ID统计资产数量
 func (m *AssetModel) CountByTaskId(ctx context.Context, taskId string) (int64, error) {
 	return m.coll.CountDocuments(ctx, bson.M{"taskId": taskId})
+}
+
+// CountByTaskIdWithPort 按任务ID统计有真实端口的服务资产数（port>0），
+// 与资产空间搜索「服务」列表口径一致，剔除端口 0 的子域名占位记录。
+func (m *AssetModel) CountByTaskIdWithPort(ctx context.Context, taskId string) (int64, error) {
+	return m.coll.CountDocuments(ctx, bson.M{"taskId": taskId, "port": bson.M{"$gt": 0}})
 }
 
 // CountNewByTaskId 根据任务ID统计新发现的资产数量

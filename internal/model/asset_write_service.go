@@ -152,29 +152,37 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 			asset.LastStatusChangeTime = now
 
 			attemptedWrites++
-			if err := s.assetModel.Insert(ctx, asset); err != nil {
-				logx.Errorf("[AssetWriteService] Insert asset failed: %v", err)
+			inserted, ierr := s.assetModel.InsertIfAbsent(ctx, asset)
+			if ierr != nil {
+				logx.Errorf("[AssetWriteService] Insert asset failed: %v", ierr)
 				failedWrites++
 				if firstWriteErr == nil {
-					firstWriteErr = err
+					firstWriteErr = ierr
 				}
 				continue
 			}
-			newAsset++
+			if inserted {
+				newAsset++
 
-			// 记录首次发现历史，确保时间线不为空
-			firstFound := SnapshotFromAsset(asset, mainTaskID, now, nil)
-			if err := s.historyModel.Insert(ctx, firstFound); err != nil {
-				logx.Errorf("[AssetWriteService] Insert first-found history failed: %v", err)
+				// 记录首次发现历史，确保时间线不为空
+				firstFound := SnapshotFromAsset(asset, mainTaskID, now, nil)
+				if err := s.historyModel.Insert(ctx, firstFound); err != nil {
+					logx.Errorf("[AssetWriteService] Insert first-found history failed: %v", err)
+				}
+
+				diffs = append(diffs, ScanDiff{
+					TaskId:     mainTaskID,
+					DiffType:   ScanDiffTypeAsset,
+					ChangeType: ScanDiffChangeAdded,
+					TargetKey:  asset.Authority,
+					Summary:    asset.Host,
+				})
+			} else {
+				// 并发竞态：同一 host:port/authority 已被其它协程写入
+				//（异步批量落库通道满回退同步直写时与后台 flush 并发），
+				// 跳过新增记账避免重复文档与双计数，字段值以下次扫描自然收敛
+				logx.Infof("[AssetWriteService] concurrent insert detected, skip new-asset bookkeeping: %s", asset.Authority)
 			}
-
-			diffs = append(diffs, ScanDiff{
-				TaskId:     mainTaskID,
-				DiffType:   ScanDiffTypeAsset,
-				ChangeType: ScanDiffChangeAdded,
-				TargetKey:  asset.Authority,
-				Summary:    asset.Host,
-			})
 		} else {
 			// 更新已存在的资产
 			isDifferentTask := existing.TaskId != mainTaskID

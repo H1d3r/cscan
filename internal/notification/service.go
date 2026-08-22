@@ -64,9 +64,11 @@ func (s *Service) NotifyTaskCompleted(ctx context.Context, mainTaskID, status st
 	}
 
 	// 4. 查询资产和漏洞统计
+	// 资产数用 port>0 的服务资产口径（与资产空间搜索「服务」列表一致），
+	// 剔除端口 0 的子域名占位记录，避免通知数与页面数对不上
 	assetModel := model.NewAssetModel(s.db)
 	vulModel := model.NewVulModel(s.db)
-	assetCount, _ := assetModel.CountByTaskId(ctx, mainTaskID)
+	assetCount, _ := assetModel.CountByTaskIdWithPort(ctx, mainTaskID)
 	vulCount, _ := vulModel.CountByTaskId(ctx, mainTaskID)
 
 	// 5. 获取启用的通知配置

@@ -73,6 +73,10 @@
       </template>
 
       <template #toolbar-right>
+        <el-button plain @click="proTableRef?.loadData()">
+          <el-icon><Refresh /></el-icon>
+          {{ $t('common.refresh') }}
+        </el-button>
         <el-button type="danger" plain @click="handleClear">{{ $t('dirscan.clearData') }}</el-button>
       </template>
 
@@ -182,7 +186,7 @@
 import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Refresh } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import {
   getDirScanDetail,

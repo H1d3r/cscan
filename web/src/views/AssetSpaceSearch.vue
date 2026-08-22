@@ -9,6 +9,7 @@
         </div>
       </div>
       <AssetInventoryCardView
+        ref="cardViewRef"
         @create-target="openAddDialog"
         @start-scan="handleStartScan"
         @view-target="handleViewTarget"
@@ -80,6 +81,7 @@ const { t } = useI18n()
 
 const selectedTargetId = ref('')
 const detailAutoSettings = ref(false)
+const cardViewRef = ref(null)
 
 function handleViewTarget(targetId) {
   detailAutoSettings.value = false
@@ -145,7 +147,8 @@ async function handleAddSubmit() {
       addDialogVisible.value = false
       addForm.targets = ''
       addErrors.value = []
-      // 列表组件 3s 轮询自动刷新，无需手动触发
+      // 已移除列表自动轮询，手动添加成功后主动刷新目标列表
+      cardViewRef.value?.refresh()
     } else {
       ElMessage.error(res.msg || t('asset.addAssetFailed'))
     }

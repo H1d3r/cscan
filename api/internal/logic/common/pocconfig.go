@@ -52,6 +52,13 @@ func InjectPocConfig(ctx context.Context, svcCtx *svc.ServiceContext, taskConfig
 		return taskConfig
 	}
 
+	// 手动选择模式但未选择任何POC：不再自动注入模板，避免与用户手动选择的意图不符
+	if mode, _ := pocscan["mode"].(string); mode == "manual" {
+		logger.Infof("Manual POC selection mode: no POC selected, skipping template injection")
+		taskConfig["pocscan"] = pocscan
+		return taskConfig
+	}
+
 	// 检查是否启用自动扫描模式
 	autoScan, _ := pocscan["autoScan"].(bool)
 	automaticScan, _ := pocscan["automaticScan"].(bool)
@@ -157,25 +164,46 @@ func getBool(m map[string]interface{}, key string) bool {
 }
 
 // resolveNucleiSelectAll 手动全选模式：按筛选条件查询并展开为 template_id 列表
+// 筛选语义与 NucleiTemplateList 列表接口保持一致，保证全选数量与展开数量一致
 func resolveNucleiSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, pocscan map[string]interface{}) []string {
 	filter := bson.M{}
 	if f, ok := pocscan["nucleiSelectAllFilter"].(map[string]interface{}); ok {
 		if s, _ := f["keyword"].(string); s != "" {
 			kw := regexp.QuoteMeta(s)
+			cond := bson.M{"$regex": kw, "$options": "i"}
 			filter["$or"] = []bson.M{
-				{"template_id": bson.M{"$regex": kw, "$options": "i"}},
-				{"name": bson.M{"$regex": kw, "$options": "i"}},
-				{"description": bson.M{"$regex": kw, "$options": "i"}},
+				{"template_id": cond},
+				{"name": cond},
+				{"description": cond},
+				{"tags": cond},
+				{"author": cond},
+				{"cve_ids": cond},
+				{"cwe_ids": cond},
+				{"product": cond},
+				{"vendor": cond},
+				{"category": cond},
+				{"file_path": cond},
 			}
 		}
-		if s, _ := f["severity"].(string); s != "" {
-			filter["severity"] = strings.ToLower(s)
+		if s, _ := f["tag"].(string); s != "" {
+			filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(s), "$options": "i"}
 		}
 		if s, _ := f["category"].(string); s != "" {
 			filter["category"] = s
 		}
-		if s, _ := f["tag"].(string); s != "" {
-			filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(s), "$options": "i"}
+		if severities := mergedSeverities(f); len(severities) == 1 {
+			filter["severity"] = severities[0]
+		} else if len(severities) > 1 {
+			filter["severity"] = bson.M{"$in": severities}
+		}
+		if protocols := getStringSlice(f, "protocols"); len(protocols) > 0 {
+			filter["protocol"] = bson.M{"$in": protocols}
+		}
+		if products := getStringSlice(f, "products"); len(products) > 0 {
+			filter["product"] = bson.M{"$in": products}
+		}
+		if v, ok := f["hasCve"].(bool); ok {
+			filter["cve_ids.0"] = bson.M{"$exists": v}
 		}
 	}
 	docs, err := svcCtx.NucleiTemplateModel.SelectAll(ctx, filter)
@@ -190,17 +218,45 @@ func resolveNucleiSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, poc
 }
 
 // resolveCustomPocSelectAll 手动全选模式：按筛选条件查询并展开为自定义POC ID列表
+// 筛选语义与 CustomPocList 列表接口保持一致，保证全选数量与展开数量一致
 func resolveCustomPocSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, pocscan map[string]interface{}) []string {
 	filter := bson.M{"enabled": true}
 	if f, ok := pocscan["customPocSelectAllFilter"].(map[string]interface{}); ok {
 		if s, _ := f["name"].(string); s != "" {
 			filter["name"] = bson.M{"$regex": regexp.QuoteMeta(s), "$options": "i"}
 		}
-		if s, _ := f["severity"].(string); s != "" {
-			filter["severity"] = s
+		if s, _ := f["keyword"].(string); s != "" {
+			kw := regexp.QuoteMeta(s)
+			cond := bson.M{"$regex": kw, "$options": "i"}
+			filter["$or"] = []bson.M{
+				{"template_id": cond},
+				{"name": cond},
+				{"description": cond},
+				{"tags": cond},
+				{"author": cond},
+				{"cve_ids": cond},
+				{"cwe_ids": cond},
+				{"product": cond},
+				{"vendor": cond},
+				{"protocol": cond},
+			}
 		}
 		if s, _ := f["tag"].(string); s != "" {
 			filter["tags"] = bson.M{"$in": []string{s}}
+		}
+		if severities := mergedSeverities(f); len(severities) == 1 {
+			filter["severity"] = severities[0]
+		} else if len(severities) > 1 {
+			filter["severity"] = bson.M{"$in": severities}
+		}
+		if protocols := getStringSlice(f, "protocols"); len(protocols) > 0 {
+			filter["protocol"] = bson.M{"$in": protocols}
+		}
+		if products := getStringSlice(f, "products"); len(products) > 0 {
+			filter["product"] = bson.M{"$in": products}
+		}
+		if v, ok := f["hasCve"].(bool); ok {
+			filter["cve_ids.0"] = bson.M{"$exists": v}
 		}
 	}
 	docs, err := svcCtx.CustomPocModel.SelectAll(ctx, filter)
@@ -212,4 +268,25 @@ func resolveCustomPocSelectAll(ctx context.Context, svcCtx *svc.ServiceContext, 
 		ids = append(ids, doc.Id.Hex())
 	}
 	return ids
+}
+
+// mergedSeverities 合并筛选条件中的单选 severity 与多选 severities（小写化、去空），
+// 与列表接口 buildFilter 的兼容逻辑一致
+func mergedSeverities(f map[string]interface{}) []string {
+	seen := make(map[string]bool)
+	severities := make([]string, 0, 4)
+	appendSeverity := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s != "" && !seen[s] {
+			seen[s] = true
+			severities = append(severities, s)
+		}
+	}
+	for _, s := range getStringSlice(f, "severities") {
+		appendSeverity(s)
+	}
+	if s, _ := f["severity"].(string); s != "" {
+		appendSeverity(s)
+	}
+	return severities
 }

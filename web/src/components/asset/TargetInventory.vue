@@ -68,6 +68,12 @@
       </el-select>
 
       <el-button link @click="handleReset">{{ $t('asset.targetView.filterReset') }}</el-button>
+
+      <el-button link :class="{ 'is-loading': refreshing }" @click="handleManualRefresh">
+        <el-icon v-if="refreshing" class="is-loading"><Loading /></el-icon>
+        <el-icon v-else><Refresh /></el-icon>
+        {{ $t('common.refresh') }}
+      </el-button>
     </div>
 
     <!-- Sub tabs -->
@@ -442,7 +448,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, Picture, Connection, OfficeBuilding, Briefcase } from '@element-plus/icons-vue'
+import { Search, Picture, Connection, OfficeBuilding, Briefcase, Refresh, Loading } from '@element-plus/icons-vue'
 import { getAssetTargetAssets, getAssetTargetGroups, getAssetTargetCerts, getAssetFilterOptions, getDomainList } from '@/api/asset'
 import { formatRelativeTime, getStatusCodeClass, getStatusCodeText } from './targetViewUtils'
 import { getScreenshotDataUrl } from '@/utils/screenshot'
@@ -481,7 +487,7 @@ const subdomainsTotal = ref(0)
 const subdomainsPage = ref(1)
 const subdomainsPageSize = 20
 
-let pollTimer = null
+const refreshing = ref(false)
 let filterDebounce = null
 
 // host → cert 摘要（Services 列证书徽章用）
@@ -637,13 +643,29 @@ function handleTabChange() {
   else fetchGroups()
 }
 
-// 供详情页气泡下钻调用：切换到指定子 Tab 并拉取数据
+// 手动刷新：重新拉取过滤选项与当前各视图数据（不重置分页）
+async function handleManualRefresh() {
+  refreshing.value = true
+  try {
+    fetchFilterOptions()
+    await Promise.all([fetchServices(), fetchCerts(), fetchSubdomains()])
+    if (activeTab.value !== 'services' && activeTab.value !== 'tls' && activeTab.value !== 'subdomain') {
+      await fetchGroups()
+    }
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// 供详情页气泡下钻调用：切换到指定子 Tab 并拉取数据；
+// refresh 供详情页头部刷新按钮联动
 defineExpose({
   activateTab(name) {
     if (!name) return
     activeTab.value = name
     handleTabChange()
   },
+  refresh: handleManualRefresh,
 })
 
 function handleServicesPage(p) {
@@ -665,14 +687,9 @@ onMounted(() => {
   fetchFilterOptions()
   fetchServices()
   fetchCerts()
-  pollTimer = setInterval(() => {
-    // 扫描进行中轮询刷新（对齐 open-asm 的 refetchInterval）
-    fetchServices()
-  }, 5000)
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
   if (filterDebounce) clearTimeout(filterDebounce)
 })
 </script>

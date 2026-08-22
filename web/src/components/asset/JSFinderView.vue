@@ -78,6 +78,10 @@
       </template>
 
       <template #toolbar-right>
+        <el-button plain @click="proTableRef?.loadData()">
+          <el-icon><Refresh /></el-icon>
+          {{ $t('common.refresh') }}
+        </el-button>
         <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') || '清空数据' }}</el-button>
       </template>
 
@@ -219,7 +223,7 @@
 import { ref, computed, onUnmounted, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Refresh } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { getJSFinderDetail, analyzeJSByAI, batchAnalyzeJSByAI, getBatchAnalyzeProgress, stopBatchAnalyze } from '@/api/jsfinder'
 import ProTable from '@/components/common/ProTable.vue'

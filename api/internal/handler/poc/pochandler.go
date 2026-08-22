@@ -81,6 +81,25 @@ func CustomPocListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// CustomPocCategoriesHandler 自定义POC筛选维度与数量统计
+func CustomPocCategoriesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.CustomPocCategoriesReq
+		// 允许空请求体：所有筛选字段均可选（分面计数随筛选条件联动）
+		if err := httpx.Parse(r, &req); err != nil {
+			req = types.CustomPocCategoriesReq{}
+		}
+
+		l := logic.NewCustomPocCategoriesLogic(r.Context(), svcCtx)
+		resp, err := l.CustomPocCategories(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
 // CustomPocSaveHandler 保存自定义POC
 func CustomPocSaveHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -195,11 +214,17 @@ func NucleiTemplateListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// NucleiTemplateCategoriesHandler Nuclei模板分类
+// NucleiTemplateCategoriesHandler Nuclei模板筛选维度与数量统计
 func NucleiTemplateCategoriesHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.NucleiTemplateCategoriesReq
+		// 允许空请求体：所有筛选字段均可选（分面计数随筛选条件联动）
+		if err := httpx.Parse(r, &req); err != nil {
+			req = types.NucleiTemplateCategoriesReq{}
+		}
+
 		l := logic.NewNucleiTemplateCategoriesLogic(r.Context(), svcCtx)
-		resp, err := l.NucleiTemplateCategories()
+		resp, err := l.NucleiTemplateCategories(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

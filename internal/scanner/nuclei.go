@@ -1,12 +1,12 @@
 package scanner
 
 import (
-	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -127,6 +127,9 @@ type NucleiOptions struct {
 	AutomaticScan        bool                              `json:"automaticScan"`
 	TagMappings          map[string][]string               `json:"tagMappings"`
 	CustomTemplates      []string                          `json:"customTemplates"`
+	// TemplateFileRefs 已落盘的模板文件路径（本地模板库内容寻址文件）。
+	// 扫描时硬链接/复制进本次扫描目录，避免模板内容进内存后重复写盘
+	TemplateFileRefs []string                          `json:"templateFileRefs"`
 	CustomPocOnly        bool                              `json:"customPocOnly"`
 	NucleiTemplates      []string                          `json:"nucleiTemplates"`
 	CustomHeaders        []string                          `json:"customHeaders"`
@@ -253,6 +256,7 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if err != nil {
 		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
+	defer cleanupTemplatePaths(customTemplatePaths)
 
 	// 并发 Worker Pool：每个目标一个 nuclei 进程，完成一个补一个
 	concurrency := opts.Concurrency
@@ -380,6 +384,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	if err != nil {
 		return nil, fmt.Errorf("prepare templates: %w", err)
 	}
+	defer cleanupTemplatePaths(customTemplatePaths)
 	if len(customTemplatePaths) == 0 {
 		taskLog("ERROR", "No usable POC templates loaded")
 		return nil, fmt.Errorf("no usable POC templates")
@@ -500,12 +505,9 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	if templateDir != "" {
 		args = append(args, "-t", templateDir)
 	}
-	if len(opts.Tags) > 0 {
-		args = append(args, "-tags", strings.Join(opts.Tags, ","))
-	}
-	if opts.Severity != "" {
-		args = append(args, "-severity", opts.Severity)
-	}
+	// 不传 -tags/-severity：-t 目录内已是本次扫描的精确模板集合（载入时已按条件过滤），
+	// 运行时再按模板 YAML 元数据过滤会误删所选模板（如手动选择的低危模板、
+	// 未在 YAML 中声明 tags 的自定义 POC）。
 	for _, header := range opts.CustomHeaders {
 		args = append(args, "-header", header)
 	}
@@ -657,29 +659,81 @@ func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions, logFn func(level, 
 	allTemplateContents := make([]string, 0, len(opts.CustomTemplates)+len(opts.NucleiTemplates))
 	allTemplateContents = append(allTemplateContents, opts.CustomTemplates...)
 	allTemplateContents = append(allTemplateContents, opts.NucleiTemplates...)
+	refs := opts.TemplateFileRefs
 
-	if len(allTemplateContents) == 0 {
+	if len(allTemplateContents) == 0 && len(refs) == 0 {
 		return nil, nil
 	}
 
-	cache := getTemplateCache()
-	cache.EvictStale()
+	// 每次扫描写入独立临时目录，-t 目录即本次扫描的精确模板集合。
+	// 不能复用共享缓存目录：其 LRU 容量上限会在模板数超限时删除已写入的文件，
+	// 导致大量模板被静默丢弃（如手动全选数千模板），且并发任务的模板会互相混入。
+	scanDir, err := os.MkdirTemp("", "nuclei-scan-templates-*")
+	if err != nil {
+		return nil, fmt.Errorf("create scan template dir: %w", err)
+	}
 
-	var paths []string
+	paths := make([]string, 0, len(allTemplateContents)+len(refs))
 	for i, content := range allTemplateContents {
 		templateID, err := preValidateTemplate(content)
 		if err != nil {
 			logFn("WARN", "Skip bad template index=%d: %v", i, err)
 			continue
 		}
-		path, err := cache.GetOrWrite(content, templateID)
-		if err != nil {
+		h := sha256.Sum256([]byte(content))
+		path := filepath.Join(scanDir, fmt.Sprintf("%05d-%s.yaml", len(paths), hex.EncodeToString(h[:8])))
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			logFn("ERROR", "Failed to write template %d (%s): %v", i, templateID, err)
 			continue
 		}
 		paths = append(paths, path)
 	}
+	// 本地模板库文件：硬链接进扫描目录（零数据拷贝），文件系统不支持时回退复制
+	for _, ref := range refs {
+		if _, err := os.Stat(ref); err != nil {
+			logFn("WARN", "Template store file missing: %s", ref)
+			continue
+		}
+		dst := filepath.Join(scanDir, fmt.Sprintf("%05d-%s.yaml", len(paths), filepath.Base(ref)))
+		if err := os.Link(ref, dst); err != nil {
+			if err := copyFile(ref, dst); err != nil {
+				logFn("ERROR", "Failed to link/copy template %s: %v", ref, err)
+				continue
+			}
+		}
+		paths = append(paths, dst)
+	}
+	// 全部模板校验/写入失败时回收空目录，避免遗留孤儿目录
+	if len(paths) == 0 {
+		os.RemoveAll(scanDir)
+	}
 	return paths, nil
+}
+
+// copyFile 流式复制文件（硬链接不可用时的回退路径）
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+// cleanupTemplatePaths 删除本次扫描的临时模板目录（整轮扫描结束后由调用方 defer 触发）
+func cleanupTemplatePaths(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	os.RemoveAll(filepath.Dir(paths[0]))
 }
 
 // ValidatePocTemplate 验证POC模板（CLI 模式）
@@ -751,118 +805,6 @@ func preValidateTemplate(content string) (templateID string, err error) {
 		return "", fmt.Errorf("'info' section missing")
 	}
 	return wrapper.Id, nil
-}
-
-const templateCacheMaxSize = 1024
-
-type templateFileCache struct {
-	mu      sync.RWMutex
-	baseDir string
-	entries map[string]*cachedTemplate
-	lruList *list.List
-	lruMap  map[string]*list.Element
-	ttl     time.Duration
-	maxSize int
-}
-
-type cachedTemplate struct {
-	path       string
-	hash       string
-	templateID string
-	lastUsed   time.Time
-}
-
-var (
-	globalTemplateCache     *templateFileCache
-	globalTemplateCacheOnce sync.Once
-)
-
-func getTemplateCache() *templateFileCache {
-	globalTemplateCacheOnce.Do(func() {
-		baseDir := filepath.Join(os.TempDir(), "nuclei-template-cache")
-		os.MkdirAll(baseDir, 0755)
-		globalTemplateCache = &templateFileCache{
-			baseDir: baseDir,
-			entries: make(map[string]*cachedTemplate),
-			lruList: list.New(),
-			lruMap:  make(map[string]*list.Element),
-			ttl:     30 * time.Minute,
-			maxSize: templateCacheMaxSize,
-		}
-	})
-	return globalTemplateCache
-}
-
-func (c *templateFileCache) GetOrWrite(content string, templateID string) (string, error) {
-	h := sha256.Sum256([]byte(content))
-	hashStr := hex.EncodeToString(h[:])
-
-	c.mu.RLock()
-	entry, exists := c.entries[hashStr]
-	c.mu.RUnlock()
-
-	if exists {
-		if _, err := os.Stat(entry.path); err == nil {
-			c.mu.Lock()
-			entry.lastUsed = time.Now()
-			if elem, ok := c.lruMap[hashStr]; ok {
-				c.lruList.MoveToFront(elem)
-			}
-			c.mu.Unlock()
-			return entry.path, nil
-		}
-	}
-
-	path := filepath.Join(c.baseDir, hashStr[:16]+".yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return "", err
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Over capacity: evict tail
-	for c.lruList.Len() >= c.maxSize {
-		elem := c.lruList.Back()
-		if elem != nil {
-			oldHash := elem.Value.(string)
-			if oldEntry, ok := c.entries[oldHash]; ok {
-				os.Remove(oldEntry.path)
-				delete(c.entries, oldHash)
-				delete(c.lruMap, oldHash)
-			}
-			c.lruList.Remove(elem)
-		}
-	}
-
-	now := time.Now()
-	c.entries[hashStr] = &cachedTemplate{
-		path:       path,
-		hash:       hashStr,
-		templateID: templateID,
-		lastUsed:   now,
-	}
-	elem := c.lruList.PushFront(hashStr)
-	c.lruMap[hashStr] = elem
-
-	return path, nil
-}
-
-func (c *templateFileCache) EvictStale() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-	for hash, entry := range c.entries {
-		if now.Sub(entry.lastUsed) > c.ttl {
-			os.Remove(entry.path)
-			delete(c.entries, hash)
-			if elem, ok := c.lruMap[hash]; ok {
-				c.lruList.Remove(elem)
-				delete(c.lruMap, hash)
-			}
-		}
-	}
 }
 
 // parseAppName 解析应用名称，去除来源标识与版本号。

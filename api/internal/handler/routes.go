@@ -354,6 +354,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 		// 自定义POC
 		{Method: http.MethodPost, Path: "/api/v1/poc/custom/list", Handler: poc.CustomPocListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/poc/custom/categories", Handler: poc.CustomPocCategoriesHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/custom/save", Handler: poc.CustomPocSaveHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/custom/delete", Handler: poc.CustomPocDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/poc/custom/batchImport", Handler: poc.CustomPocBatchImportHandler(svcCtx)},

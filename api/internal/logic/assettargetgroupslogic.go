@@ -89,6 +89,11 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 
 	switch strings.TrimSpace(groupBy) {
 	case "host":
+		// 与服务列表同口径：端口 0 是无端口占位记录（纯域名），不计入主机服务数，
+		// 否则主机 Tab 显示的服务数比服务 Tab 实际行数多
+		if _, ok := match["port"]; !ok {
+			match["port"] = bson.M{"$gt": 0}
+		}
 		group = bson.M{
 			"_id": "$host",
 			"count": bson.M{"$sum": 1},

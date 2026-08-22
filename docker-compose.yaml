@@ -128,6 +128,8 @@ services:
       - cscan_network
     volumes:
       - cscan_worker_logs:/app/log
+      # 本地模板库持久化（Nuclei 模板 + 自定义 POC 的内容寻址缓存，避免容器重建后重新全量同步）
+      - cscan_worker_templates:/app/data/template-store
 
 volumes:
   cscan_redis_data:
@@ -139,6 +141,8 @@ volumes:
   cscan_api_data:
     driver: local
   cscan_worker_logs:
+    driver: local
+  cscan_worker_templates:
     driver: local
 
 networks:

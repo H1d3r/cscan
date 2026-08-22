@@ -13,6 +13,7 @@ import (
 	"cscan/internal/model"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
+	"cscan/pkg/template"
 
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -136,24 +137,122 @@ func NewCustomPocListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Cus
 	}
 }
 
+// customPocFilterQuery 自定义POC筛选条件（列表查询与分面统计共用）
+type customPocFilterQuery struct {
+	Name       string
+	TemplateId string
+	Severity   string
+	Tag        string
+	Enabled    *bool
+	Keyword    string
+	Severities []string
+	Protocols  []string
+	Products   []string
+	HasCve     *bool
+}
+
+// buildFilter 构建Mongo查询条件
+// excludeFacet 非空时剔除该筛选维度的条件，用于分面统计（其余条件生效，保证计数与实际可选结果一致）
+func (q customPocFilterQuery) buildFilter(excludeFacet string) bson.M {
+	filter := bson.M{}
+	if q.Name != "" {
+		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(q.Name), "$options": "i"}
+	}
+	if q.TemplateId != "" {
+		filter["template_id"] = bson.M{"$regex": regexp.QuoteMeta(q.TemplateId), "$options": "i"}
+	}
+	// 兼容单选severity + 多选severities
+	severities := make([]string, 0, len(q.Severities)+1)
+	for _, s := range q.Severities {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			severities = append(severities, s)
+		}
+	}
+	if q.Severity != "" {
+		if s := strings.ToLower(strings.TrimSpace(q.Severity)); s != "" {
+			severities = append(severities, s)
+		}
+	}
+	if len(severities) > 0 && excludeFacet != "severity" {
+		if len(severities) == 1 {
+			filter["severity"] = severities[0]
+		} else {
+			filter["severity"] = bson.M{"$in": severities}
+		}
+	}
+	if len(q.Protocols) > 0 && excludeFacet != "protocol" {
+		filter["protocol"] = bson.M{"$in": q.Protocols}
+	}
+	if len(q.Products) > 0 && excludeFacet != "product" {
+		filter["product"] = bson.M{"$in": q.Products}
+	}
+	if q.Tag != "" && excludeFacet != "tag" {
+		filter["tags"] = bson.M{"$in": []string{q.Tag}}
+	}
+	if q.Enabled != nil && excludeFacet != "enabled" {
+		filter["enabled"] = *q.Enabled
+	}
+	if q.Keyword != "" {
+		// 全字段模糊搜索：一个输入框覆盖所有POC字段
+		kw := regexp.QuoteMeta(q.Keyword)
+		cond := bson.M{"$regex": kw, "$options": "i"}
+		filter["$or"] = []bson.M{
+			{"template_id": cond},
+			{"name": cond},
+			{"description": cond},
+			{"tags": cond},
+			{"author": cond},
+			{"cve_ids": cond},
+			{"cwe_ids": cond},
+			{"product": cond},
+			{"vendor": cond},
+			{"protocol": cond},
+		}
+	}
+	if q.HasCve != nil && excludeFacet != "cve" {
+		filter["cve_ids.0"] = bson.M{"$exists": *q.HasCve}
+	}
+	return filter
+}
+
+// newCustomPocFilterQuery 从请求构造筛选条件
+func newCustomPocFilterQuery(name, templateId, severity, tag, keyword string, enabled, hasCve *bool, severities, protocols, products []string) customPocFilterQuery {
+	return customPocFilterQuery{
+		Name:       name,
+		TemplateId: templateId,
+		Severity:   severity,
+		Tag:        tag,
+		Enabled:    enabled,
+		Keyword:    keyword,
+		Severities: severities,
+		Protocols:  protocols,
+		Products:   products,
+		HasCve:     hasCve,
+	}
+}
+
+// enrichCustomPoc 从POC内容解析 协议/厂商/产品/漏洞知识库 字段
+func enrichCustomPoc(doc *model.CustomPoc) {
+	if doc == nil || doc.Content == "" {
+		return
+	}
+	doc.Severity = template.NormalizeSeverity(doc.Severity)
+	doc.Protocol = template.ParseProtocol(doc.Content)
+	if info, err := template.ParseTemplateInfo(doc.Content); err == nil && info != nil {
+		doc.Vendor = info.GetVendor()
+		doc.Product = info.GetProduct()
+		doc.CvssScore = info.GetCvssScore()
+		doc.CvssMetrics = info.GetCvssMetrics()
+		doc.CveIds = info.GetCveIds()
+		doc.CweIds = info.GetCweIds()
+		doc.References = info.GetReferences()
+		doc.Remediation = info.GetRemediation()
+	}
+}
+
 func (l *CustomPocListLogic) CustomPocList(req *types.CustomPocListReq) (resp *types.CustomPocListResp, err error) {
 	// 构建筛选条件
-	filter := bson.M{}
-	if req.Name != "" {
-		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Name), "$options": "i"}
-	}
-	if req.TemplateId != "" {
-		filter["template_id"] = bson.M{"$regex": regexp.QuoteMeta(req.TemplateId), "$options": "i"}
-	}
-	if req.Severity != "" {
-		filter["severity"] = req.Severity
-	}
-	if req.Tag != "" {
-		filter["tags"] = bson.M{"$in": []string{req.Tag}}
-	}
-	if req.Enabled != nil {
-		filter["enabled"] = *req.Enabled
-	}
+	filter := newCustomPocFilterQuery(req.Name, req.TemplateId, req.Severity, req.Tag, req.Keyword, req.Enabled, req.HasCve, req.Severities, req.Protocols, req.Products).buildFilter("")
 
 	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
 	docs, err := l.svcCtx.CustomPocModel.FindWithFilter(l.ctx, filter, req.Page, req.PageSize)
@@ -173,6 +272,11 @@ func (l *CustomPocListLogic) CustomPocList(req *types.CustomPocListReq) (resp *t
 			Tags:        doc.Tags,
 			Author:      doc.Author,
 			Description: doc.Description,
+			Protocol:    doc.Protocol,
+			Vendor:      doc.Vendor,
+			Product:     doc.Product,
+			CvssScore:   doc.CvssScore,
+			CveIds:      doc.CveIds,
 			Content:     doc.Content,
 			Enabled:     doc.Enabled,
 			CreateTime:  doc.CreateTime.Local().Format("2006-01-02 15:04:05"),
@@ -184,6 +288,76 @@ func (l *CustomPocListLogic) CustomPocList(req *types.CustomPocListReq) (resp *t
 		Msg:   "success",
 		Total: int(total),
 		List:  list,
+	}, nil
+}
+
+// CustomPocCategoriesLogic 自定义POC筛选维度统计
+type CustomPocCategoriesLogic struct {
+	logx.Logger
+	ctx    context.Context
+	svcCtx *svc.ServiceContext
+}
+
+func NewCustomPocCategoriesLogic(ctx context.Context, svcCtx *svc.ServiceContext) *CustomPocCategoriesLogic {
+	return &CustomPocCategoriesLogic{
+		Logger: logx.WithContext(ctx),
+		ctx:    ctx,
+		svcCtx: svcCtx,
+	}
+}
+
+func (l *CustomPocCategoriesLogic) CustomPocCategories(req *types.CustomPocCategoriesReq) (resp *types.CustomPocCategoriesResp, err error) {
+	q := newCustomPocFilterQuery(req.Name, req.TemplateId, req.Severity, req.Tag, req.Keyword, req.Enabled, req.HasCve, req.Severities, req.Protocols, req.Products)
+
+	m := l.svcCtx.CustomPocModel
+
+	// 各分面统计时剔除自身维度条件，展示"点击后可得"的数量
+	severityFacets, err := m.GetFacetCounts(l.ctx, q.buildFilter("severity"), "severity", 0)
+	if err != nil {
+		l.Logger.Errorf("get custom poc severity facets failed: %v", err)
+		severityFacets = []model.FacetItem{}
+	}
+	// 严重级别按固定顺序展示
+	severities := orderFacetsByValue(severityFacets, severityDisplayOrder)
+
+	protocols, err := m.GetFacetCounts(l.ctx, q.buildFilter("protocol"), "protocol", 0)
+	if err != nil {
+		l.Logger.Errorf("get custom poc protocol facets failed: %v", err)
+		protocols = []model.FacetItem{}
+	}
+
+	products, err := m.GetFacetCounts(l.ctx, q.buildFilter("product"), "product", 50)
+	if err != nil {
+		l.Logger.Errorf("get custom poc product facets failed: %v", err)
+		products = []model.FacetItem{}
+	}
+
+	tags, err := m.GetTagFacetCounts(l.ctx, q.buildFilter("tag"), 100)
+	if err != nil {
+		l.Logger.Errorf("get custom poc tag facets failed: %v", err)
+		tags = []model.FacetItem{}
+	}
+
+	withCve, withoutCve, err := m.GetCveFacetCounts(l.ctx, q.buildFilter("cve"))
+	if err != nil {
+		l.Logger.Errorf("get custom poc cve facets failed: %v", err)
+	}
+
+	// 总数按当前全部筛选条件统计
+	total, err := m.CountWithFilter(l.ctx, q.buildFilter(""))
+	if err != nil {
+		total = 0
+	}
+
+	return &types.CustomPocCategoriesResp{
+		Code:       0,
+		Msg:        "success",
+		Severities: facetItems(severities),
+		Protocols:  facetItems(protocols),
+		Products:   facetItems(products),
+		Tags:       facetItems(tags),
+		CveStats:   map[string]int{"true": int(withCve), "false": int(withoutCve)},
+		Stats:      map[string]int{"total": int(total)},
 	}, nil
 }
 
@@ -239,6 +413,8 @@ func (l *CustomPocSaveLogic) CustomPocSave(req *types.CustomPocSaveReq) (resp *t
 		Content:     req.Content,
 		Enabled:     pocEnabled,
 	}
+	// 从内容解析 协议/厂商/产品/知识库 字段
+	enrichCustomPoc(doc)
 
 	if req.Id != "" {
 		err = l.svcCtx.CustomPocModel.Update(l.ctx, req.Id, doc)
@@ -352,6 +528,8 @@ func (l *CustomPocBatchImportLogic) CustomPocBatchImport(req *types.CustomPocBat
 			Content:     poc.Content,
 			Enabled:     pocEnabled,
 		}
+		// 从内容解析 协议/厂商/产品/知识库 字段
+		enrichCustomPoc(doc)
 
 		err := l.svcCtx.CustomPocModel.Insert(l.ctx, doc)
 		if err != nil {
@@ -395,36 +573,100 @@ func NewNucleiTemplateListLogic(ctx context.Context, svcCtx *svc.ServiceContext)
 	}
 }
 
-func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateListReq) (resp *types.NucleiTemplateListResp, err error) {
-	// 构建查询条件
+// nucleiTemplateFilterQuery 模板库筛选条件（列表查询与分面统计共用）
+type nucleiTemplateFilterQuery struct {
+	Category     string
+	Severity     string
+	Tag          string
+	Keyword      string
+	MinCvssScore float64
+	CveId        string
+	Severities   []string
+	Protocols    []string
+	Products     []string
+	HasCve       *bool
+}
+
+// buildFilter 构建Mongo查询条件
+// excludeFacet 非空时剔除该筛选维度的条件，用于分面统计（其余条件生效，保证计数与实际可选结果一致）
+func (q nucleiTemplateFilterQuery) buildFilter(excludeFacet string) bson.M {
 	filter := bson.M{}
-	if req.Category != "" {
-		filter["category"] = req.Category
+	if q.Category != "" && excludeFacet != "category" {
+		filter["category"] = q.Category
 	}
-	if req.Severity != "" {
-		filter["severity"] = strings.ToLower(req.Severity)
-	}
-	if req.Tag != "" {
-		// 标签模糊匹配
-		filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(req.Tag), "$options": "i"}
-	}
-	if req.Keyword != "" {
-		// 使用正则表达式进行模糊搜索
-		kw := regexp.QuoteMeta(req.Keyword)
-		filter["$or"] = []bson.M{
-			{"template_id": bson.M{"$regex": kw, "$options": "i"}},
-			{"name": bson.M{"$regex": kw, "$options": "i"}},
-			{"description": bson.M{"$regex": kw, "$options": "i"}},
+	// 兼容单选severity + 多选severities
+	severities := make([]string, 0, len(q.Severities)+1)
+	for _, s := range q.Severities {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			severities = append(severities, s)
 		}
 	}
-	// 新增 - CVSS评分筛选
-	if req.MinCvssScore > 0 {
-		filter["cvss_score"] = bson.M{"$gte": req.MinCvssScore}
+	if q.Severity != "" {
+		if s := strings.ToLower(strings.TrimSpace(q.Severity)); s != "" {
+			severities = append(severities, s)
+		}
 	}
-	// 新增 - CVE编号搜索
-	if req.CveId != "" {
-		filter["cve_ids"] = bson.M{"$regex": regexp.QuoteMeta(req.CveId), "$options": "i"}
+	if len(severities) > 0 && excludeFacet != "severity" {
+		if len(severities) == 1 {
+			filter["severity"] = severities[0]
+		} else {
+			filter["severity"] = bson.M{"$in": severities}
+		}
 	}
+	if len(q.Protocols) > 0 && excludeFacet != "protocol" {
+		filter["protocol"] = bson.M{"$in": q.Protocols}
+	}
+	if len(q.Products) > 0 && excludeFacet != "product" {
+		filter["product"] = bson.M{"$in": q.Products}
+	}
+	if q.Tag != "" && excludeFacet != "tag" {
+		// 标签模糊匹配
+		filter["tags"] = bson.M{"$regex": regexp.QuoteMeta(q.Tag), "$options": "i"}
+	}
+	if q.Keyword != "" {
+		// 全字段模糊搜索：一个输入框覆盖所有模板字段
+		kw := regexp.QuoteMeta(q.Keyword)
+		cond := bson.M{"$regex": kw, "$options": "i"}
+		filter["$or"] = []bson.M{
+			{"template_id": cond},
+			{"name": cond},
+			{"description": cond},
+			{"tags": cond},
+			{"author": cond},
+			{"cve_ids": cond},
+			{"cwe_ids": cond},
+			{"product": cond},
+			{"vendor": cond},
+			{"category": cond},
+			{"file_path": cond},
+		}
+	}
+	if q.MinCvssScore > 0 {
+		filter["cvss_score"] = bson.M{"$gte": q.MinCvssScore}
+	}
+	if q.CveId != "" && excludeFacet != "cve" {
+		filter["cve_ids"] = bson.M{"$regex": regexp.QuoteMeta(q.CveId), "$options": "i"}
+	}
+	if q.HasCve != nil && excludeFacet != "cve" {
+		filter["cve_ids.0"] = bson.M{"$exists": *q.HasCve}
+	}
+	return filter
+}
+
+func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateListReq) (resp *types.NucleiTemplateListResp, err error) {
+	// 构建查询条件
+	filter := nucleiTemplateFilterQuery{
+		Category:     req.Category,
+		Severity:     req.Severity,
+		Tag:          req.Tag,
+		Keyword:      req.Keyword,
+		MinCvssScore: req.MinCvssScore,
+		CveId:        req.CveId,
+		Severities:   req.Severities,
+		Protocols:    req.Protocols,
+		Products:     req.Products,
+		HasCve:       req.HasCve,
+	}.buildFilter("")
 
 	// 查询总数
 	total, err := l.svcCtx.NucleiTemplateModel.Count(l.ctx, filter)
@@ -449,6 +691,9 @@ func (l *NucleiTemplateListLogic) NucleiTemplateList(req *types.NucleiTemplateLi
 			Description: doc.Description,
 			Tags:        doc.Tags,
 			Category:    doc.Category,
+			Protocol:    doc.Protocol,
+			Vendor:      doc.Vendor,
+			Product:     doc.Product,
 			FilePath:    doc.FilePath,
 			// 新增字段 - 漏洞知识库
 			CvssScore:   doc.CvssScore,
@@ -482,33 +727,113 @@ func NewNucleiTemplateCategoriesLogic(ctx context.Context, svcCtx *svc.ServiceCo
 	}
 }
 
-func (l *NucleiTemplateCategoriesLogic) NucleiTemplateCategories() (resp *types.NucleiTemplateCategoriesResp, err error) {
-	// 直接从数据库查询，不使用缓存
-	categories, err := l.svcCtx.NucleiTemplateModel.GetCategories(l.ctx)
-	if err != nil {
-		categories = []string{}
+// severityDisplayOrder 严重级别固定展示顺序（官方模板库已无 unknown）
+var severityDisplayOrder = []string{"critical", "high", "medium", "low", "info"}
+
+func (l *NucleiTemplateCategoriesLogic) NucleiTemplateCategories(req *types.NucleiTemplateCategoriesReq) (resp *types.NucleiTemplateCategoriesResp, err error) {
+	q := nucleiTemplateFilterQuery{
+		Category:     req.Category,
+		Severity:     req.Severity,
+		Tag:          req.Tag,
+		Keyword:      req.Keyword,
+		MinCvssScore: req.MinCvssScore,
+		CveId:        req.CveId,
+		Severities:   req.Severities,
+		Protocols:    req.Protocols,
+		Products:     req.Products,
+		HasCve:       req.HasCve,
 	}
 
-	tags, err := l.svcCtx.NucleiTemplateModel.GetTags(l.ctx, 100)
+	m := l.svcCtx.NucleiTemplateModel
+
+	// 各分面统计时剔除自身维度条件，展示"点击后可得"的数量
+	categories, err := m.GetFacetCounts(l.ctx, q.buildFilter("category"), "category", 0)
 	if err != nil {
-		tags = []string{}
+		l.Logger.Errorf("get category facets failed: %v", err)
+		categories = []model.FacetItem{}
 	}
 
-	stats, err := l.svcCtx.NucleiTemplateModel.GetStats(l.ctx)
+	severityFacets, err := m.GetFacetCounts(l.ctx, q.buildFilter("severity"), "severity", 0)
 	if err != nil {
-		stats = map[string]int{"total": 0}
+		l.Logger.Errorf("get severity facets failed: %v", err)
+		severityFacets = []model.FacetItem{}
+	}
+	// 严重级别按固定顺序展示
+	severities := orderFacetsByValue(severityFacets, severityDisplayOrder)
+
+	protocols, err := m.GetFacetCounts(l.ctx, q.buildFilter("protocol"), "protocol", 0)
+	if err != nil {
+		l.Logger.Errorf("get protocol facets failed: %v", err)
+		protocols = []model.FacetItem{}
 	}
 
-	severities := []string{"critical", "high", "medium", "low", "info", "unknown"}
+	products, err := m.GetFacetCounts(l.ctx, q.buildFilter("product"), "product", 50)
+	if err != nil {
+		l.Logger.Errorf("get product facets failed: %v", err)
+		products = []model.FacetItem{}
+	}
+
+	tags, err := m.GetTagFacetCounts(l.ctx, q.buildFilter("tag"), 100)
+	if err != nil {
+		l.Logger.Errorf("get tag facets failed: %v", err)
+		tags = []model.FacetItem{}
+	}
+
+	withCve, withoutCve, err := m.GetCveFacetCounts(l.ctx, q.buildFilter("cve"))
+	if err != nil {
+		l.Logger.Errorf("get cve facets failed: %v", err)
+	}
+
+	// 总数按当前全部筛选条件统计
+	total, err := m.Count(l.ctx, q.buildFilter(""))
+	if err != nil {
+		total = 0
+	}
 
 	return &types.NucleiTemplateCategoriesResp{
 		Code:       0,
 		Msg:        "success",
-		Categories: categories,
-		Severities: severities,
-		Tags:       tags,
-		Stats:      stats,
+		Categories: facetItems(categories),
+		Severities: facetItems(severities),
+		Protocols:  facetItems(protocols),
+		Products:   facetItems(products),
+		Tags:       facetItems(tags),
+		CveStats:   map[string]int{"true": int(withCve), "false": int(withoutCve)},
+		Stats:      map[string]int{"total": int(total)},
 	}, nil
+}
+
+// facetItems 模型分面项转API类型（保证非nil便于前端遍历）
+func facetItems(items []model.FacetItem) []types.FacetItem {
+	result := make([]types.FacetItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, types.FacetItem{Value: item.Value, Count: item.Count})
+	}
+	return result
+}
+
+// orderFacetsByValue 按给定顺序排列分面项（未在顺序表中的排到最后，保持原有数量降序）
+func orderFacetsByValue(items []model.FacetItem, order []string) []model.FacetItem {
+	rank := make(map[string]int, len(order))
+	for i, v := range order {
+		rank[v] = i
+	}
+	ordered := make([]model.FacetItem, 0, len(items))
+	rest := make([]model.FacetItem, 0, len(items))
+	for _, v := range order {
+		for _, item := range items {
+			if item.Value == v {
+				ordered = append(ordered, item)
+				break
+			}
+		}
+	}
+	for _, item := range items {
+		if _, ok := rank[item.Value]; !ok {
+			rest = append(rest, item)
+		}
+	}
+	return append(ordered, rest...)
 }
 
 // ==================== Nuclei模板启用/禁用 ====================
@@ -580,6 +905,10 @@ func (l *NucleiTemplateDetailLogic) GetDetail(req *types.NucleiTemplateDetailReq
 			Severity:    doc.Severity,
 			Description: doc.Description,
 			Tags:        doc.Tags,
+			Category:    doc.Category,
+			Protocol:    doc.Protocol,
+			Vendor:      doc.Vendor,
+			Product:     doc.Product,
 			FilePath:    doc.FilePath,
 			Content:     doc.Content,
 			// 新增字段 - 漏洞知识库
@@ -901,23 +1230,8 @@ func NewCustomPocClearAllLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 }
 
 func (l *CustomPocClearAllLogic) CustomPocClearAll(req *types.CustomPocClearAllReq) (resp *types.CustomPocClearAllResp, err error) {
-	// 构建筛选条件
-	filter := bson.M{}
-	if req.Name != "" {
-		filter["name"] = bson.M{"$regex": regexp.QuoteMeta(req.Name), "$options": "i"}
-	}
-	if req.TemplateId != "" {
-		filter["template_id"] = bson.M{"$regex": regexp.QuoteMeta(req.TemplateId), "$options": "i"}
-	}
-	if req.Severity != "" {
-		filter["severity"] = req.Severity
-	}
-	if req.Tag != "" {
-		filter["tags"] = bson.M{"$in": []string{req.Tag}}
-	}
-	if req.Enabled != nil {
-		filter["enabled"] = *req.Enabled
-	}
+	// 构建筛选条件（与列表筛选保持一致）
+	filter := newCustomPocFilterQuery(req.Name, req.TemplateId, req.Severity, req.Tag, req.Keyword, req.Enabled, req.HasCve, req.Severities, req.Protocols, req.Products).buildFilter("")
 
 	// 先获取符合条件的总数
 	total, _ := l.svcCtx.CustomPocModel.CountWithFilter(l.ctx, filter)
@@ -1190,23 +1504,30 @@ func (l *NucleiTemplateSyncLogic) SyncFromUpload(req *types.NucleiTemplateSyncRe
 		// 处理Author字段（可能是string或[]interface{}）
 		author := parseAuthor(templateInfo.Author)
 
-		// 构建模板文档
+	// 构建模板文档
 		doc := &model.NucleiTemplate{
 			TemplateId:  templateId,
 			Name:        templateInfo.Name,
 			Author:      author,
-			Severity:    strings.ToLower(templateInfo.Severity),
+			Severity:    template.NormalizeSeverity(templateInfo.Severity),
 			Description: templateInfo.Description,
 			Tags:        parseTemplateTags(templateInfo.Tags),
 			Category:    category,
+			Protocol:    template.ParseProtocol(item.Content),
 			FilePath:    item.Path,
 			Content:     item.Content,
 			Enabled:     true,
 		}
 
-		// 设置默认severity
-		if doc.Severity == "" {
-			doc.Severity = "unknown"
+		// 提取厂商/产品（metadata.vendor / metadata.product）
+		if meta, _ := template.ParseTemplateInfo(item.Content); meta != nil {
+			doc.Vendor = meta.GetVendor()
+			doc.Product = meta.GetProduct()
+		}
+
+		// 协议解析失败时回退用分类目录
+		if doc.Protocol == "" {
+			doc.Protocol = category
 		}
 
 		// 提取漏洞知识库信息

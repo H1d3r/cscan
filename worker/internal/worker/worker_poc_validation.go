@@ -49,6 +49,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 	}
 
 	var templates []string
+	var templateRefs []string
 	var pocName string
 	var pocSeverity string
 
@@ -96,10 +97,10 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		}
 
 		if len(tags) > 0 {
-			templates = w.getTemplatesByTags(ctx, tags, severities)
+			templates, templateRefs = w.resolveTemplatesByTags(ctx, tags, severities)
 		}
 
-		if len(templates) == 0 {
+		if len(templates) == 0 && len(templateRefs) == 0 {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: no POC templates found", task.TaskId)
 			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "No POC templates found")
 			return
@@ -109,10 +110,11 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 	w.taskLog(task.TaskId, LevelInfo, "[%s] Initializing Nuclei scan engine...", task.TaskId)
 
 	nucleiOpts := &scanner.NucleiOptions{
-		RateLimit:       50,
-		Concurrency:     10,
-		CustomTemplates: templates,
-		CustomPocOnly:   true,
+		RateLimit:        50,
+		Concurrency:      10,
+		CustomTemplates:  templates,
+		TemplateFileRefs: templateRefs,
+		CustomPocOnly:    true,
 	}
 
 	w.taskLog(task.TaskId, LevelInfo, "[%s] Scanning target: %s", task.TaskId, url)

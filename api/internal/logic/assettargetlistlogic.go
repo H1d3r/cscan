@@ -50,6 +50,11 @@ func (l *AssetTargetListLogic) AssetTargetList(req *types.AssetTargetListReq) (*
 	}
 
 	cacheKey := buildAssetTargetListCacheKey(req)
+	// 手动刷新：清掉该 key 的缓存再走 GetOrSet 重建，
+	// 确保刷新按钮拿到的是扫描完成后的最新数量而不是 30s 内的旧快照
+	if req.Refresh {
+		l.svcCtx.QueryCache.Delete(cacheKey)
+	}
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, assetTargetListCacheTTL, func() (interface{}, error) {
 		return l.buildList(req)
 	})

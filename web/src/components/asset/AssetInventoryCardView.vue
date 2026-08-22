@@ -43,6 +43,11 @@
           <el-icon><Delete /></el-icon>
           {{ $t('common.delete') }}{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
         </el-button>
+
+        <el-button plain :loading="loading" @click="fetchData(true)">
+          <el-icon><Refresh /></el-icon>
+          {{ $t('common.refresh') }}
+        </el-button>
       </div>
     </div>
 
@@ -183,7 +188,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Search, Plus, Link, Delete, EditPen } from '@element-plus/icons-vue'
+import { Search, Plus, Link, Delete, EditPen, Refresh } from '@element-plus/icons-vue'
 import TargetTypeFilter from './TargetTypeFilter.vue'
 import ScanStatusFilter from './ScanStatusFilter.vue'
 import ScopeFilter from './ScopeFilter.vue'
@@ -210,10 +215,10 @@ const typeFilter = ref('')
 const statusFilter = ref('')
 const scopeFilter = ref('')
 
-let pollTimer = null
 let searchDebounce = null
 
-async function fetchData() {
+// force=true 时携带 refresh 参数，后端跳过 30s 查询缓存强制重算（手动刷新按钮触发）
+async function fetchData(force = false) {
   loading.value = true
   try {
     const params = {
@@ -224,6 +229,7 @@ async function fetchData() {
       targetType: typeFilter.value || undefined,
       scanStatus: statusFilter.value || undefined,
       scope: scopeFilter.value || undefined,
+      refresh: force || undefined,
     }
 
     // 响应拦截器返回 {code,msg,total,list}（顶层无 data 包裹）
@@ -235,18 +241,6 @@ async function fetchData() {
     console.error('[TargetsView] fetchData error:', err)
   } finally {
     loading.value = false
-  }
-}
-
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(fetchData, 3000)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
   }
 }
 
@@ -313,15 +307,14 @@ watch([typeFilter, statusFilter, scopeFilter], () => {
   fetchData()
 })
 
-onMounted(() => {
-  fetchData()
-  startPolling()
-})
+onMounted(fetchData)
 
 onUnmounted(() => {
-  stopPolling()
   if (searchDebounce) clearTimeout(searchDebounce)
 })
+
+// 供父页面手动刷新（如手动添加资产后），强制绕过后端缓存
+defineExpose({ refresh: () => fetchData(true) })
 </script>
 
 <style scoped lang="scss">

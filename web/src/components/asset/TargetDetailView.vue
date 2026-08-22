@@ -30,6 +30,11 @@
         <span v-if="lastScanTime" class="last-scan-time">
           {{ formatRelativeTime(lastScanTime) }}
         </span>
+        <el-tooltip :content="$t('common.refresh')" placement="top">
+          <el-button circle :loading="refreshing" @click="handleRefresh">
+            <el-icon><Refresh /></el-icon>
+          </el-button>
+        </el-tooltip>
         <el-tooltip :content="$t('asset.targetView.settings')" placement="top">
           <el-button circle @click="settingsOpen = true">
             <el-icon><Setting /></el-icon>
@@ -150,9 +155,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Setting, EditPen } from '@element-plus/icons-vue'
+import { ArrowLeft, Setting, EditPen, Refresh } from '@element-plus/icons-vue'
 import TargetStatusBadge from './TargetStatusBadge.vue'
 import TargetSwitcher from './TargetSwitcher.vue'
 import TargetSettingsDrawer from './TargetSettingsDrawer.vue'
@@ -192,12 +197,11 @@ const exposure = reactive({
   screenshots: 0,
 })
 const settingsOpen = ref(false)
+const refreshing = ref(false)
 
 // 资产详情抽屉（Inventory 服务行点击打开）
 const assetSheetOpen = ref(false)
 const assetSheetId = ref('')
-
-let pollTimer = null
 
 const lastScanTime = computed(() => meta.value?.lastScanTime || 0)
 
@@ -288,15 +292,16 @@ function severityTagType(severity) {
   return 'info'
 }
 
-function startPolling() {
-  stopPolling()
-  pollTimer = setInterval(fetchMeta, 5000)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+// 手动刷新：详情统计 + 目标清单一起刷新
+async function handleRefresh() {
+  refreshing.value = true
+  try {
+    await Promise.all([
+      fetchMeta(),
+      Promise.resolve(inventoryRef.value?.refresh()),
+    ])
+  } finally {
+    refreshing.value = false
   }
 }
 
@@ -309,12 +314,7 @@ watch(() => props.autoOpenSettings, (open) => {
   if (open) settingsOpen.value = true
 }, { immediate: true })
 
-onMounted(() => {
-  fetchMeta()
-  startPolling()
-})
-
-onUnmounted(stopPolling)
+onMounted(fetchMeta)
 </script>
 
 <style scoped lang="scss">

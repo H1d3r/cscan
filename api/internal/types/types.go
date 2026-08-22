@@ -1418,6 +1418,11 @@ type CustomPoc struct {
 	Tags        []string `json:"tags"`
 	Author      string   `json:"author"`
 	Description string   `json:"description"`
+	Protocol    string   `json:"protocol"`            // 请求协议
+	Vendor      string   `json:"vendor,omitempty"`    // 厂商
+	Product     string   `json:"product,omitempty"`   // 产品
+	CvssScore   float64  `json:"cvssScore,omitempty"` // CVSS评分
+	CveIds      []string `json:"cveIds,omitempty"`    // CVE编号列表
 	Content     string   `json:"content"`
 	Enabled     bool     `json:"enabled"`
 	CreateTime  string   `json:"createTime"`
@@ -1426,11 +1431,17 @@ type CustomPoc struct {
 type CustomPocListReq struct {
 	Page       int    `json:"page,default=1"`
 	PageSize   int    `json:"pageSize,default=20"`
-	Name       string `json:"name,optional"`       // 按名称筛选
-	TemplateId string `json:"templateId,optional"` // 按模板ID筛选
-	Severity   string `json:"severity,optional"`   // 按严重级别筛选
+	Name       string `json:"name,optional"`       // 按名称筛选（兼容旧版）
+	TemplateId string `json:"templateId,optional"` // 按模板ID筛选（兼容旧版）
+	Severity   string `json:"severity,optional"`   // 按严重级别筛选（兼容旧版）
 	Tag        string `json:"tag,optional"`        // 按标签筛选
 	Enabled    *bool  `json:"enabled,optional"`    // 按状态筛选
+	// 新增字段 - 仿默认模板库筛选
+	Keyword    string   `json:"keyword,optional"`   // 全字段模糊搜索
+	Severities []string `json:"severities,optional"` // 严重级别多选
+	Protocols  []string `json:"protocols,optional"`  // 协议多选
+	Products   []string `json:"products,optional"`   // 产品多选
+	HasCve     *bool    `json:"hasCve,optional"`     // 是否有CVE（true/false）
 }
 
 type CustomPocListResp struct {
@@ -1485,11 +1496,43 @@ type CustomPocBatchImportResp struct {
 
 // CustomPocClearAllReq 清空自定义POC请求（支持按筛选条件清空）
 type CustomPocClearAllReq struct {
-	Name       string `json:"name,optional"`       // 按名称筛选
-	TemplateId string `json:"templateId,optional"` // 按模板ID筛选
-	Severity   string `json:"severity,optional"`   // 按严重级别筛选
+	Name       string `json:"name,optional"`       // 按名称筛选（兼容旧版）
+	TemplateId string `json:"templateId,optional"` // 按模板ID筛选（兼容旧版）
+	Severity   string `json:"severity,optional"`   // 按严重级别筛选（兼容旧版）
 	Tag        string `json:"tag,optional"`        // 按标签筛选
 	Enabled    *bool  `json:"enabled,optional"`    // 按状态筛选
+	// 新增字段 - 仿默认模板库筛选
+	Keyword    string   `json:"keyword,optional"`   // 全字段模糊搜索
+	Severities []string `json:"severities,optional"` // 严重级别多选
+	Protocols  []string `json:"protocols,optional"`  // 协议多选
+	Products   []string `json:"products,optional"`   // 产品多选
+	HasCve     *bool    `json:"hasCve,optional"`     // 是否有CVE（true/false）
+}
+
+// CustomPocCategoriesReq 自定义POC筛选条件（用于计算各筛选维度的数量统计）
+type CustomPocCategoriesReq struct {
+	Name       string `json:"name,optional"`
+	TemplateId string `json:"templateId,optional"`
+	Severity   string `json:"severity,optional"`
+	Tag        string `json:"tag,optional"`
+	Enabled    *bool  `json:"enabled,optional"`
+	Keyword    string `json:"keyword,optional"`
+	Severities []string `json:"severities,optional"`
+	Protocols  []string `json:"protocols,optional"`
+	Products   []string `json:"products,optional"`
+	HasCve     *bool    `json:"hasCve,optional"`
+}
+
+// CustomPocCategoriesResp 自定义POC筛选维度与数量统计
+type CustomPocCategoriesResp struct {
+	Code       int            `json:"code"`
+	Msg        string         `json:"msg"`
+	Severities []FacetItem    `json:"severities"` // 严重级别列表(带数量)
+	Protocols  []FacetItem    `json:"protocols"`  // 协议列表(带数量)
+	Products   []FacetItem    `json:"products"`   // 产品列表(带数量)
+	Tags       []FacetItem    `json:"tags"`       // 热门标签(带数量)
+	CveStats   map[string]int `json:"cveStats"`   // CVE统计: {"true": n, "false": m}
+	Stats      map[string]int `json:"stats"`      // 统计信息(total)
 }
 
 // CustomPocClearAllResp 清空自定义POC响应
@@ -1530,7 +1573,7 @@ type CustomPocScanVulnItem struct {
 // ==================== Nuclei默认模板 ====================
 type NucleiTemplateListReq struct {
 	Category string `json:"category,optional"` // 分类筛选
-	Severity string `json:"severity,optional"` // 严重级别筛选
+	Severity string `json:"severity,optional"` // 严重级别筛选（单选，兼容旧版）
 	Tag      string `json:"tag,optional"`      // 标签筛选
 	Keyword  string `json:"keyword,optional"`  // 关键词搜索
 	Page     int    `json:"page,default=1"`
@@ -1538,6 +1581,11 @@ type NucleiTemplateListReq struct {
 	// 新增字段 - CVSS评分筛选和CVE搜索
 	MinCvssScore float64 `json:"minCvssScore,optional"` // 最小CVSS评分筛选
 	CveId        string  `json:"cveId,optional"`        // CVE编号搜索
+	// 新增字段 - 多选筛选（仿官方模板库）
+	Severities []string `json:"severities,optional"` // 严重级别多选
+	Protocols  []string `json:"protocols,optional"`  // 协议多选
+	Products   []string `json:"products,optional"`   // 产品多选
+	HasCve     *bool    `json:"hasCve,optional"`     // 是否有CVE（true/false）
 }
 
 type NucleiTemplate struct {
@@ -1548,6 +1596,9 @@ type NucleiTemplate struct {
 	Description string   `json:"description"` // 描述
 	Tags        []string `json:"tags"`        // 标签
 	Category    string   `json:"category"`    // 分类(目录名)
+	Protocol    string   `json:"protocol"`    // 请求协议: http/dns/network/ssl/file/headless等
+	Vendor      string   `json:"vendor,omitempty"`   // 厂商
+	Product     string   `json:"product,omitempty"`  // 产品
 	FilePath    string   `json:"filePath"`    // 文件路径
 	// 新增字段 - 漏洞知识库
 	CvssScore   float64  `json:"cvssScore,omitempty"`   // CVSS评分
@@ -1565,13 +1616,36 @@ type NucleiTemplateListResp struct {
 	List  []NucleiTemplate `json:"list"`
 }
 
+// FacetItem 分面统计项（筛选值 + 数量）
+type FacetItem struct {
+	Value string `json:"value"` // 筛选值
+	Count int    `json:"count"` // 数量统计
+}
+
+// NucleiTemplateCategoriesReq 模板库筛选条件（用于计算各筛选维度的数量统计）
+type NucleiTemplateCategoriesReq struct {
+	Category    string   `json:"category,optional"`
+	Severity    string   `json:"severity,optional"`
+	Tag         string   `json:"tag,optional"`
+	Keyword     string   `json:"keyword,optional"`
+	MinCvssScore float64 `json:"minCvssScore,optional"`
+	CveId       string   `json:"cveId,optional"`
+	Severities  []string `json:"severities,optional"`
+	Protocols   []string `json:"protocols,optional"`
+	Products    []string `json:"products,optional"`
+	HasCve      *bool    `json:"hasCve,optional"`
+}
+
 type NucleiTemplateCategoriesResp struct {
 	Code       int            `json:"code"`
 	Msg        string         `json:"msg"`
-	Categories []string       `json:"categories"` // 分类列表
-	Severities []string       `json:"severities"` // 严重级别列表
-	Tags       []string       `json:"tags"`       // 常用标签列表
-	Stats      map[string]int `json:"stats"`      // 统计信息
+	Categories []FacetItem    `json:"categories"`  // 分类列表(带数量)
+	Severities []FacetItem    `json:"severities"`  // 严重级别列表(带数量)
+	Protocols  []FacetItem    `json:"protocols"`   // 协议列表(带数量)
+	Products   []FacetItem    `json:"products"`    // 产品列表(带数量)
+	Tags       []FacetItem    `json:"tags"`        // 热门标签(带数量)
+	CveStats   map[string]int `json:"cveStats"`    // CVE统计: {"true": n, "false": m}
+	Stats      map[string]int `json:"stats"`       // 统计信息(total)
 }
 
 type NucleiTemplateUpdateEnabledReq struct {
@@ -1616,6 +1690,10 @@ type NucleiTemplateWithContent struct {
 	Severity    string   `json:"severity"`    // 严重级别
 	Description string   `json:"description"` // 描述
 	Tags        []string `json:"tags"`        // 标签
+	Category    string   `json:"category"`    // 分类(目录名)
+	Protocol    string   `json:"protocol"`    // 请求协议
+	Vendor      string   `json:"vendor,omitempty"`   // 厂商
+	Product     string   `json:"product,omitempty"`  // 产品
 	FilePath    string   `json:"filePath"`    // 文件路径
 	Content     string   `json:"content"`     // YAML内容
 	// 新增字段 - 漏洞知识库
@@ -3871,9 +3949,12 @@ type AssetTargetListReq struct {
 	TargetType string   `json:"targetType,optional"` // "" | "ip" | "domain"
 	Query      string   `json:"query,optional"`
 	Labels     []string `json:"labels,optional"`
-	ScanStatus string   `json:"scanStatus,optional"`   // pending/in_progress/completed/failed/cancelled
-	Source     string   `json:"source,optional"`       // MANUAL/INTERNAL_NETWORK
-	Scope      string   `json:"scope,optional"`        // internal/external
+	ScanStatus string   `json:"scanStatus,optional"` // pending/in_progress/completed/failed/cancelled
+	Source     string   `json:"source,optional"`     // MANUAL/INTERNAL_NETWORK
+	Scope      string   `json:"scope,optional"`      // internal/external
+	// 手动刷新时置 true：跳过 30s 查询缓存强制重算（前端刷新按钮传参），
+	// 避免扫描完成后点刷新仍命中旧缓存导致数量滞后
+	Refresh bool `json:"refresh,optional"`
 }
 
 type AssetTargetListItem struct {

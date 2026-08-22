@@ -119,11 +119,12 @@ func (l *AssetTargetDetailLogic) writebackDenormalized(meta *model.AssetTargetMe
 
 // computeExposure 通过 AggregateGroupByDomain 一次扫描 owning ws 的 asset 集合，
 // 按根域名/IP 归并到该目标，再累加 asset 的字段维度。
-// 各字段统计口径与暴露面管理页面保持一致：
+// 各字段统计口径与目标详情 Inventory 各子 Tab 保持一致，保证气泡数与点进去的列表总数对得上：
 //   - 子域名(Subdomains): 归属该目标的非IP主机（按distinct host去重，同一host多端口只计一次）
-//   - IP(Ips): 归属该目标的IP主机（按distinct host去重）
-//   - 端口(Ports): distinct端口数（与端口管理页一致）
-//   - 站点(Sites): Web资产数（与站点管理页webFilter一致：is_http/service=http,https/有title/有screenshot）
+//   - IP(Ips): 资产解析到的 distinct IPv4（与 Inventory IP Tab 的 ip.ipv4.ip 分组一致）
+//   - 端口(Ports): distinct端口数（与端口管理页及 Ports Tab 一致，均限 port>0）
+//   - 站点(Sites): Web服务资产数（is_http/service=http,https/有title/有screenshot，限 port>0，
+//     与 Services Tab 同基准——端口 0 的子域名占位记录不计入）
 //   - 图标(Icons): distinct icon_hash数
 //   - 应用(Apps): distinct app数
 func (l *AssetTargetDetailLogic) computeExposure(tType model.AssetTargetType, tValue string) types.AssetTargetExposureStats {
@@ -138,31 +139,27 @@ func (l *AssetTargetDetailLogic) computeExposure(tType model.AssetTargetType, tV
 	hostFilter := hostFilterForTarget(tType, tValue)
 
 	seenHosts := make(map[string]struct{})
-	seenDomains := make(map[string]struct{})
-	webAssetCount := 0
 
 	for _, row := range rows {
 		if !rowMatchesTarget(row.Host, row.Domain, tType, tValue) {
 			continue
 		}
 
-		// 站点(Sites)：Web资产（与SiteStat的webFilter口径一致）
-		// 由于AggregateGroupByDomain只投影了host/domain，需要通过hostFilter二次查询
-		// 这里先统计distinct host，后续通过Count查询web资产数
 		if _, dup := seenHosts[row.Host]; !dup {
 			seenHosts[row.Host] = struct{}{}
-			if utils.IsIPAddress(row.Host) {
-				stats.Ips++
-			} else if row.Host != "" {
+			if !utils.IsIPAddress(row.Host) && row.Host != "" {
 				// 子域名：非IP主机（每个host算一个子域名）
 				stats.Subdomains++
-				// 同时记录domain维度的去重
-				if row.Domain != "" {
-					seenDomains[row.Domain] = struct{}{}
-				}
 			}
 		}
 	}
+
+	// IP(Ips)：资产解析到的 distinct IPv4（与 Inventory IP Tab 的分组键一致；
+	// 旧口径只统计 host 本身是 IP 的资产，域名目标解析出的 IP 永远为 0，与 IP Tab 对不上）
+	ipVals, _ := assetModel.Distinct(l.ctx, "ip.ipv4.ip", bson.M{
+		"host": hostFilter,
+	})
+	stats.Ips = countNonEmpty(ipVals)
 
 	// 端口(Ports)：distinct端口数（与端口管理页一致：$group by port）
 	portVals, _ := assetModel.Distinct(l.ctx, "port", bson.M{
@@ -171,7 +168,8 @@ func (l *AssetTargetDetailLogic) computeExposure(tType model.AssetTargetType, tV
 	})
 	stats.Ports = countNonEmpty(portVals)
 
-	// 站点(Sites)：Web资产数（与SiteStat的webFilter一致）
+	// 站点(Sites)：Web服务资产数（限 port>0，与 Services Tab 同基准，
+	// 端口 0 的子域名占位记录不会出现在任何服务列表里，不应计入站点数）
 	webFilter := bson.M{
 		"$or": bson.A{
 			bson.M{"is_http": true},
@@ -179,11 +177,11 @@ func (l *AssetTargetDetailLogic) computeExposure(tType model.AssetTargetType, tV
 			bson.M{"title": bson.M{"$exists": true, "$ne": ""}},
 			bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}},
 		},
-		"host": hostFilter,
+		"port": bson.M{"$gt": 0},
+		"host":  hostFilter,
 	}
 	siteCount, _ := assetModel.Count(l.ctx, webFilter)
 	stats.Sites = int(siteCount)
-	_ = webAssetCount // 预留
 
 	// Icon/App 用 Distinct 按值去重，与 IconList/AppList 页面聚合逻辑一致
 	iconVals, _ := assetModel.Distinct(l.ctx, "icon_hash", bson.M{
@@ -272,19 +270,21 @@ func (l *AssetTargetDetailLogic) computeRisk(tType model.AssetTargetType, tValue
 	return stats
 }
 
-// computeTotalAssetServices 统计归属该目标的 distinct 服务数（基于 asset.service 字段去重）。
+// computeTotalAssetServices 统计归属该目标的服务资产数（host 匹配 + port>0 的资产条数），
+// 与 /asset/target/assets 服务列表同口径，保证列表卡片「N 个服务」点进详情后总数一致。
+// 旧实现按 distinct service 名称计数（http/https... 仅个位数），与服务列表条数对不上。
 func (l *AssetTargetDetailLogic) computeTotalAssetServices(tType model.AssetTargetType, tValue string) int {
 	assetModel := l.svcCtx.GetAssetModel()
 	hostFilter := hostFilterForTarget(tType, tValue)
-	svcVals, err := assetModel.Distinct(l.ctx, "service", bson.M{
-		"host":    hostFilter,
-		"service": bson.M{"$ne": ""},
+	n, err := assetModel.Count(l.ctx, bson.M{
+		"host": hostFilter,
+		"port": bson.M{"$gt": 0},
 	})
 	if err != nil {
-		l.Logger.Errorf("[AssetTargetDetail] computeTotalAssetServices Distinct fail: %v", err)
+		l.Logger.Errorf("[AssetTargetDetail] computeTotalAssetServices Count fail: %v", err)
 		return 0
 	}
-	return countNonEmpty(svcVals)
+	return int(n)
 }
 
 // countRiskByKeyword 在 vul 上按 host 后缀 + is_risk=true + risk_source=auto:info-leak + 关键字分桶计数。

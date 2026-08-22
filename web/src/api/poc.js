@@ -18,6 +18,11 @@ export function getCustomPocList(data) {
   return request.post('/poc/custom/list', data)
 }
 
+// 自定义POC筛选维度与数量统计
+export function getCustomPocCategories(data = {}) {
+  return request.post('/poc/custom/categories', data)
+}
+
 export function saveCustomPoc(data) {
   return request.post('/poc/custom/save', data)
 }
@@ -41,8 +46,8 @@ export function getNucleiTemplateList(data) {
   return request.post('/poc/nuclei/templates', data)
 }
 
-export function getNucleiTemplateCategories() {
-  return request.post('/poc/nuclei/categories')
+export function getNucleiTemplateCategories(data = {}) {
+  return request.post('/poc/nuclei/categories', data)
 }
 
 
