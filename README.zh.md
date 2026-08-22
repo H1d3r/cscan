@@ -9,7 +9,7 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.4-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.5-green)](VERSION)
 
 
 </div>
@@ -49,6 +49,11 @@ docker compose pull && docker compose up -d
 
 - 访问 `https://ip:7777`
 - 生产部署请覆盖内置默认密钥：`cp .env.example .env`，填入强随机值后再 `docker compose up -d`
+
+## 自定义高级 POC
+
+下载地址：[lasest-cscan-poc.zip](http://www.txf7.cn/upload/lasest-cscan-poc.zip)
+
 ---
 
 ## 本地开发
