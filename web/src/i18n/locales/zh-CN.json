@@ -37,6 +37,7 @@
     "regexMode": "正则",
     "levelFilter": "级别筛选",
     "allLevels": "全部",
+    "allWithDebug": "全部(含DEBUG)",
     "scrollToBottom": "滚动到底部",
     "noTabs": "点击左侧容器查看日志",
     "lines": "行",

@@ -299,10 +299,10 @@ func main() {
 	}
 	logx.MustSetup(logx.LogConf{
 		ServiceName: "cscan-worker",
-		Mode:        "console",  // 开启控制台颜色
-		Encoding:    "plain",    // 纯文本格式
-		TimeFormat:  "15:04:05", // 简洁时间格式
-		Level:       "info",     // 日志级别
+		Mode:        "console",                // 开启控制台颜色
+		Encoding:    "plain",                  // 纯文本格式
+		TimeFormat:  "2006-01-02 15:04:05",    // 完整日期时间
+		Level:       "debug",                  // 任务流水日志以 DEBUG 级别输出到控制台（前端默认隐藏）
 		Stat:        false,      // 关闭资源统计
 		// 6/29 OOM 修复：单条日志最大 4KB，截断超长内容（如完整 HTTP 响应体）；
 		// 可通过环境变量 CSCAN_WORKER_LOG_MAX_CONTENT_LENGTH 调整

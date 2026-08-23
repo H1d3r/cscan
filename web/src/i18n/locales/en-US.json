@@ -37,6 +37,7 @@
     "regexMode": "Regex",
     "levelFilter": "Level",
     "allLevels": "All",
+    "allWithDebug": "All (incl. DEBUG)",
     "scrollToBottom": "Scroll to bottom",
     "noTabs": "Click a container on the left to view logs",
     "lines": "lines",

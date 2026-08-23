@@ -2,7 +2,6 @@ package worker
 
 import (
 	"fmt"
-	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -33,6 +32,28 @@ type Logger interface {
 	Error(format string, args ...interface{})
 }
 
+// logConsole 按业务等级输出到控制台，时间/等级前缀由 logx 统一附加，消息内不再重复。
+// 任务流水日志（taskId 非空）降级为 DEBUG 输出，容器日志页默认隐藏（完整分级日志仍直写 MongoDB）；
+// WARN/ERROR 保持原级别确保异常默认可见。go-zero 无 WARN 级别，借用 slow 输出（前端映射为 WARN）。
+func logConsole(level, taskId, msg string) {
+	if taskId != "" {
+		msg = fmt.Sprintf("[Task:%s] %s", taskId, msg)
+		if level == LevelInfo {
+			level = LevelDebug
+		}
+	}
+	switch level {
+	case LevelError:
+		logx.Error(msg)
+	case LevelWarn:
+		logx.Slow(msg)
+	case LevelDebug:
+		logx.Debug(msg)
+	default:
+		logx.Info(msg)
+	}
+}
+
 // ==================== Local Logger (No Redis) ====================
 
 // WorkerLogger Worker 日志记录器（本地输出）
@@ -49,11 +70,7 @@ func NewWorkerLoggerLocal(workerName string) *WorkerLogger {
 
 // log 内部日志方法，输出到控制台
 func (l *WorkerLogger) log(level, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
-
-	// 输出到控制台
-	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
+	logConsole(level, "", fmt.Sprintf(format, args...))
 }
 
 func (l *WorkerLogger) Debug(format string, args ...interface{}) {
@@ -90,10 +107,7 @@ func NewWorkerLoggerWS(workerName string) *WorkerLoggerWS {
 // log 内部日志方法
 func (l *WorkerLoggerWS) log(level, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
-
-	// 输出到控制台
-	logx.Infof("%s [%s] [%s] %s", timestamp, level, l.workerName, msg)
+	logConsole(level, "", msg)
 
 	// 直写 MongoDB（动态引用 globalMongoLogger，支持 SetMongoDB 后懒初始化）
 	if globalMongoLogger != nil {
@@ -135,10 +149,7 @@ func NewTaskLoggerWS(workerName, taskId string) *TaskLoggerWS {
 // log 内部日志方法
 func (l *TaskLoggerWS) log(level, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	timestamp := time.Now().Local().Format("2006-01-02 15:04:05")
-
-	// 输出到控制台
-	logx.Infof("%s [%s] [%s] [Task:%s] %s", timestamp, level, l.workerName, l.taskId, msg)
+	logConsole(level, l.taskId, msg)
 
 	// 直写 MongoDB（动态引用 globalMongoLogger，支持 SetMongoDB 后懒初始化）
 	// 说明：不在写入端丢弃 DEBUG 级别日志。DEBUG 默认在 API 读取端（GetTaskLogs）

@@ -37,14 +37,14 @@
                   <el-icon><Search /></el-icon>
                 </template>
               </el-input>
-              <el-select v-model="levelFilter" size="small" style="width: 100px">
+              <el-select v-model="levelFilter" size="small" style="width: 140px">
                 <el-option :label="$t('container.allLevels')" value="all" />
+                <el-option :label="$t('container.allWithDebug')" value="all_debug" />
                 <el-option label="ERROR" value="ERROR" />
                 <el-option label="WARN" value="WARN" />
                 <el-option label="INFO" value="INFO" />
                 <el-option label="DEBUG" value="DEBUG" />
               </el-select>
-              <el-checkbox v-model="includeDebug" size="small">{{ $t('common.includeDebug') }}</el-checkbox>
               <el-dropdown size="small" @command="exportLogs">
                 <el-button size="small">{{ $t('container.export') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
                 <template #dropdown>
@@ -89,7 +89,6 @@
               <span class="log-ln">{{ idx + 1 }}</span>
               <span class="log-time">{{ l.time || '--:--:--' }}</span>
               <span class="log-level" :class="levelClass(l.level)">{{ l.level || 'LOG' }}</span>
-              <span v-if="l.container" class="log-container">{{ l.container }}</span>
               <span class="log-body">{{ l.body }}</span>
             </div>
           </div>
@@ -123,7 +122,6 @@ const { t } = useI18n()
 // ==================== 通用状态 ====================
 const searchKeyword = ref('')
 const levelFilter = ref('all')
-const includeDebug = ref(false)
 const logBox = ref(null)
 const showScrollBtn = ref(false)
 
@@ -206,12 +204,13 @@ function parseHistoryLine(raw) {
 }
 
 // ==================== 过滤 ====================
+// all: 默认隐藏 DEBUG（任务流水日志）；all_debug: 全量显示
 const filteredLines = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
   const lf = levelFilter.value
   return historyLines.value.filter(l => {
-    if (!includeDebug.value && lf === 'all' && l.level === 'DEBUG') return false
-    if (lf !== 'all' && l.level !== lf) return false
+    if (lf === 'all' && l.level === 'DEBUG') return false
+    if (lf !== 'all' && lf !== 'all_debug' && l.level !== lf) return false
     if (kw && !(l.raw || l.body || '').toLowerCase().includes(kw)) return false
     return true
   })
@@ -219,8 +218,9 @@ const filteredLines = computed(() => {
 
 // ==================== 日志解析(多格式) ====================
 const ANSI_RE = /\x1b\[[0-9;]*m/g
-const GOZERO_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\t(info|error|debug|slow|stat|alert|fatal)\t([\s\S]*)$/i
-const GOZERO_SHORT_RE = /^(\d{2}:\d{2}:\d{2})\t(info|error|debug|slow|stat|alert|fatal)\t([\s\S]*)$/i
+// go-zero plain 编码的等级字段带空格填充（" info "），需容忍；含 severe
+const GOZERO_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\t[ \t]*(info|error|debug|slow|stat|alert|severe|fatal)[ \t]*\t([\s\S]*)$/i
+const GOZERO_SHORT_RE = /^(\d{2}:\d{2}:\d{2})\t[ \t]*(info|error|debug|slow|stat|alert|severe|fatal)[ \t]*\t([\s\S]*)$/i
 const REDIS_RE = /^(\d+):([A-Z])\s+(\d{2}\s+\w{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+([*#-])\s+(.*)$/
 const NGINX_ACCESS_RE = /^([\d.]+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"(\S+)\s+(\S+)\s+(\S+)"\s+(\d{3})\s+(\d+|-)/
 const NGINX_ERROR_RE = /^(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+(\d+)#(\d+):\s+(.*)$/
@@ -269,6 +269,7 @@ function parseLogLine(obj) {
   if (gzMatch) {
     time = gzMatch[1]
     level = gzMatch[2].toUpperCase()
+    if (level === 'SLOW') level = 'WARN'
     const parts = gzMatch[3].split('\t')
     body = parts[0] || gzMatch[3]
     const innerMatch = body.match(WORKER_INNER_RE)
@@ -282,7 +283,6 @@ function parseLogLine(obj) {
       if (statusMatch) {
         const code = parseInt(statusMatch[1])
         if (code >= 500) level = 'ERROR'
-        else if (level === 'SLOW') level = 'WARN'
       }
     }
     return { stream: obj.stream || 'stdout', level, time: formatTimeShort(time), body, container: containerName, raw }
@@ -566,16 +566,6 @@ loadLogDates()
 .level-warn { color: #1a1b26; background: rgba(224, 175, 104, 0.85); }
 .level-info { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
 .level-debug { color: #565f89; background: rgba(86, 95, 137, 0.15); }
-.log-container {
-  display: inline-block;
-  padding: 0 5px;
-  margin-right: 6px;
-  font-size: 11px;
-  color: #7aa2f7;
-  background: rgba(122, 162, 247, 0.1);
-  border-radius: 3px;
-  flex-shrink: 0;
-}
 .log-time {
   color: #7aa2f7;
   font-size: 12px;
@@ -633,7 +623,6 @@ loadLogDates()
 :global(html:not(.dark) .level-warn) { color: #fff; background: #e6a23c; }
 :global(html:not(.dark) .level-info) { color: #2d7d2d; background: rgba(103, 194, 58, 0.15); }
 :global(html:not(.dark) .level-debug) { color: #606266; background: rgba(144, 147, 153, 0.12); }
-:global(html:not(.dark) .log-container) { color: #3b6ff5; background: rgba(59, 111, 245, 0.08); }
 :global(html:not(.dark) .log-body) { color: #343b58; }
 :global(html:not(.dark) .log-stderr .log-body),
 :global(html:not(.dark) .log-error .log-body) { color: #c64343; }
