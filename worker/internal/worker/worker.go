@@ -955,14 +955,17 @@ func (w *Worker) pullTask() bool {
 	ctx := context.Background()
 
 	// 修复 #27：读取 concurrency 时加 RLock，避免与 applyConcurrency 写入竞争
+	// taskStarted/taskExecuted 同样在 mu 下写（executeTask），一并持锁读取
 	w.mu.RLock()
 	concurrency := w.config.Concurrency
+	// 在途任务数 = 正在执行 + 排队等待。此前只统计排队数，
+	// 执行协程取走任务后槽位立即释放，实际在途可达 2×Concurrency
+	pendingCount := w.taskStarted - w.taskExecuted
 	w.mu.RUnlock()
-
-	// 检查是否有空闲槽位
-	pendingCount := len(w.taskChan)
 	if w.taskQueue != nil {
 		pendingCount += w.taskQueue.Size()
+	} else {
+		pendingCount += len(w.taskChan)
 	}
 	if pendingCount >= concurrency {
 		return false
