@@ -47,6 +47,7 @@ type fingerprintBatchTaskState struct {
 	Completed  int64
 	Matched    int64
 	Status     string // running / completed / failed / stopped / stopping
+	ErrMsg     string // 失败原因（Status=failed 时透出给前端）
 	Results    []types.MatchedFingerprintInfo
 	StopCh     chan struct{}
 	CreateTime time.Time
@@ -1601,6 +1602,12 @@ func matchSingleConditionWithDetails(condition string, data *FingerprintData) (b
 		return false, ""
 	}
 
+	// 空值条件（如 body="" 或 body=）无意义，且 contains(x, "") 恒为 true，
+	// 会让规则无条件匹配任何响应，直接判不匹配
+	if value == "" {
+		return false, ""
+	}
+
 	var result bool
 	var matchedValue string
 	condTypeLower := strings.ToLower(condType)
@@ -1768,6 +1775,10 @@ func containsIgnoreCase(s, substr string) bool {
 
 // matchBodyWithEncoding 同时支持UTF-8和GBK编码匹配（与扫描器一致）
 func matchBodyWithEncoding(data *FingerprintData, keyword string) bool {
+	// 空关键字 contains 恒为 true，直接判不匹配（防止ARL html字段中的空串规则恒命中）
+	if keyword == "" {
+		return false
+	}
 	// 1. 先尝试UTF-8匹配
 	if containsIgnoreCase(data.Body, keyword) {
 		return true
@@ -2093,8 +2104,10 @@ func matchWappalyzerRulesWithDetails(fp *model.Fingerprint, data *FingerprintDat
 
 // matchRegexOrContains 尝试正则匹配，如果正则无效则回退到字符串包含匹配
 func matchRegexOrContains(text, pattern string) bool {
+	// 空pattern恒匹配任何文本（Wappalyzer字段中的空串规则会恒命中），判不匹配；
+	// header的"仅存在性检查"语义在调用方单独处理，不经过此处
 	if pattern == "" {
-		return true
+		return false
 	}
 	// 尝试编译为正则表达式
 	re, err := regexp.Compile("(?i)" + pattern)
@@ -2265,9 +2278,13 @@ func (l *FingerprintBatchValidateLogic) runPassiveFingerprintBatch(ctx context.C
 	// 只发1次HTTP请求获取目标数据
 	data, err := fetchFingerprintData(url)
 	if err != nil {
+		// 目标获取失败必须显式失败，不能伪装成"完成、0匹配"
 		l.Logger.Errorf("runPassiveFingerprintBatch: fetch data failed: %v", err)
+		errMsg := fmt.Sprintf("请求目标失败: %v", err)
 		state.mu.Lock()
 		state.Completed += int64(len(fps))
+		state.Status = "failed"
+		state.ErrMsg = errMsg
 		state.mu.Unlock()
 		return
 	}
@@ -2438,8 +2455,13 @@ func (l *FingerprintBatchProgressLogic) FingerprintBatchProgress(req *types.Fing
 		state := v.(*fingerprintBatchTaskState)
 		state.mu.Lock()
 		defer state.mu.Unlock()
+		msg := ""
+		if state.Status == "failed" {
+			msg = state.ErrMsg
+		}
 		return &types.FingerprintBatchProgressResp{
 			Code:      0,
+			Msg:       msg,
 			TaskId:    state.TaskId,
 			Status:    state.Status,
 			Total:     state.Total,
@@ -2476,8 +2498,13 @@ func (l *FingerprintBatchResultLogic) FingerprintBatchResult(req *types.Fingerpr
 		state := v.(*fingerprintBatchTaskState)
 		state.mu.Lock()
 		defer state.mu.Unlock()
+		msg := ""
+		if state.Status == "failed" {
+			msg = state.ErrMsg
+		}
 		return &types.FingerprintBatchResultResp{
 			Code:    0,
+			Msg:     msg,
 			TaskId:  state.TaskId,
 			Status:  state.Status,
 			Total:   state.Total,
@@ -2636,10 +2663,11 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 
 			// 如果需要更新资产，将指纹添加到资产的app字段
 			if req.UpdateAsset {
-				// 检查指纹是否已存在
+				// 检查指纹是否已存在（按归一化键比较，"Nginx" 能命中 "Nginx[httpx]" 这类带来源后缀的变体）
+				fpKey := model.NormalizeAppKey(fp.Name)
 				fpExists := false
 				for _, app := range asset.App {
-					if app == fp.Name {
+					if model.NormalizeAppKey(app) == fpKey {
 						fpExists = true
 						break
 					}
@@ -2651,7 +2679,7 @@ func (l *FingerprintMatchAssetsLogic) FingerprintMatchAssets(req *types.Fingerpr
 
 					assetModel := l.svcCtx.GetAssetModel()
 
-					// 通过 helper 构造更新文档：app 走 $addToSet，diff 触发 update_time 推进。
+					// 通过 helper 构造更新文档：app 走归一化合并去重后 $set，diff 触发 update_time 推进。
 					// 指纹匹配是管理员触发的"主动发现"，标记资产为已更新并推进
 					// last_status_change_time，但不变更 new / last_task_id（无跨任务语义）。
 					updatedAsset := &model.Asset{

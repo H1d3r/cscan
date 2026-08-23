@@ -135,9 +135,10 @@ func (l *ScreenshotsLogic) Screenshots(req *types.ScreenshotsReq) (resp *types.S
 			}
 		}
 
-		// 转换技术栈
-		technologies := make([]types.Technology, 0, len(asset.App))
-		for _, app := range asset.App {
+		// 转换技术栈（同一技术的来源后缀变体折叠为一条展示）
+		dedupedApps := model.MergeAppsDedup(nil, asset.App)
+		technologies := make([]types.Technology, 0, len(dedupedApps))
+		for _, app := range dedupedApps {
 			technologies = append(technologies, types.Technology{Name: app})
 		}
 

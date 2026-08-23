@@ -389,7 +389,6 @@ func main() {
 		ServerAddr:  apiServer,
 		InstallKey:  *installKey,
 		Concurrency: *concurrency,
-		Timeout:     3600,
 	}
 
 	w, err := worker.NewWorker(config)

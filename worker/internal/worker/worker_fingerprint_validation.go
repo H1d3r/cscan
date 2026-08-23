@@ -17,8 +17,6 @@ import (
 	"cscan/internal/model"
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // ==================== 指纹验证任务处理 ====================
@@ -75,190 +73,64 @@ func (w *Worker) executeFingerprintValidateTask(ctx context.Context, task *sched
 		return
 	}
 
-	// 2. 从服务端获取指纹列表（包含目标指纹）
-	fpResp, err := w.loadFingerprints(ctx, false)
-	if err != nil || !fpResp.Success {
-		errMsg := "获取指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+	// 2. 按ID直查指纹（避免全量加载指纹库），文档自带全部结构化字段
+	if w.mongoDB == nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
+		return
+	}
+	fp, err := model.NewFingerprintModel(w.mongoDB).FindById(ctx, fpId)
+	if err != nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "查询指纹失败: " + err.Error()})
+		return
+	}
+	if fp == nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "指纹不存在"})
 		return
 	}
 
-	// 3. 找到目标指纹并匹配
+	// 3. 匹配
 	var result FingerprintValidationResult
-	for _, doc := range fpResp.Fingerprints {
-		if doc.Id == fpId {
-			// 将文档转为 model.Fingerprint 格式
-			fp := &model.Fingerprint{
-				Name:    doc.Name,
-				Rule:    doc.Rule,
-				Source:  doc.Source,
-				Enabled: true,
-			}
-			fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
 
-			// 使用 wappalyzer 库检测（内置/wappalyzer来源）
-			if doc.Source == "wappalyzer" || doc.IsBuiltin {
-				wappalyzerClient := w.getWappalyzerClient()
-				if wappalyzerClient != nil {
-					apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
-					fpNameLower := strings.ToLower(doc.Name)
-					for app := range apps {
-						if strings.ToLower(app) == fpNameLower {
-							result = FingerprintValidationResult{
-								Matched: true,
-								Details: fmt.Sprintf("wappalyzergo 库检测匹配: %s", doc.Name),
-							}
-							break
-						}
+	// 使用 wappalyzer 库检测（内置/wappalyzer来源，按应用名比对）
+	if fp.Source == "wappalyzer" || fp.IsBuiltin {
+		wappalyzerClient := w.getWappalyzerClient()
+		if wappalyzerClient != nil {
+			apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
+			fpNameLower := strings.ToLower(fp.Name)
+			for app := range apps {
+				if strings.ToLower(app) == fpNameLower {
+					result = FingerprintValidationResult{
+						Matched: true,
+						Details: fmt.Sprintf("wappalyzergo 库检测匹配: %s", fp.Name),
 					}
+					break
 				}
 			}
+		}
+	}
 
-			// 如果wappalyzer没匹配，使用自定义引擎（MatchWithId返回匹配的指纹列表）
-			if !result.Matched {
-				engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
-				matchedFps := engine.MatchWithId(data)
-				matched := len(matchedFps) > 0
-				details := "未匹配"
-				if matched {
-					var matchedNames []string
-					for _, m := range matchedFps {
-						matchedNames = append(matchedNames, m.Name)
-					}
-					details = fmt.Sprintf("自定义引擎匹配: %s", strings.Join(matchedNames, ", "))
-				}
-				result = FingerprintValidationResult{
-					Matched: matched,
-					Details: details,
-				}
+	// 如果wappalyzer没匹配，使用自定义引擎（Rule + ARL/Wappalyzer结构化字段全量匹配，
+	// 与API侧批量验证能力对齐）
+	if !result.Matched {
+		engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
+		matchedFps := engine.MatchWithId(data)
+		matched := len(matchedFps) > 0
+		details := "未匹配"
+		if matched {
+			var matchedNames []string
+			for _, m := range matchedFps {
+				matchedNames = append(matchedNames, m.Name)
 			}
-			break
+			details = fmt.Sprintf("自定义引擎匹配: %s", strings.Join(matchedNames, ", "))
+		}
+		result = FingerprintValidationResult{
+			Matched: matched,
+			Details: details,
 		}
 	}
 
 	duration := time.Since(startTime).Seconds()
 	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("验证完成, 耗时%.2fs", duration), result)
-}
-
-// executeFingerprintBatchValidateTask 执行批量指纹验证任务
-func (w *Worker) executeFingerprintBatchValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
-	url, _ := taskConfig["url"].(string)
-	scope, _ := taskConfig["scope"].(string)
-
-	if url == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL不能为空"})
-		return
-	}
-
-	w.taskLog(task.TaskId, LevelInfo, "Batch fingerprint validate: target=%s, scope=%s", url, scope)
-
-	// 1. 获取目标数据（HTTP请求 + 指纹数据）
-	data, err := w.fetchFingerprintDataForValidate(url)
-	if err != nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "请求目标失败: " + err.Error()})
-		return
-	}
-
-	// 2. 从服务端获取启用的指纹列表
-	fpResp, err := w.loadFingerprints(ctx, true)
-	if err != nil || !fpResp.Success {
-		errMsg := "获取指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
-		return
-	}
-
-	// 3. 根据 scope 过滤指纹
-	var filteredFps []FingerprintDocument
-	for _, doc := range fpResp.Fingerprints {
-		switch scope {
-		case "builtin":
-			if doc.IsBuiltin {
-				filteredFps = append(filteredFps, doc)
-			}
-		case "custom":
-			if !doc.IsBuiltin {
-				filteredFps = append(filteredFps, doc)
-			}
-		default: // "all" 或空
-			filteredFps = append(filteredFps, doc)
-		}
-	}
-
-	// 4. 批量匹配
-	var matchedInfos []MatchedFpInfo
-	var fpsToEngine []*model.Fingerprint
-
-	for _, doc := range filteredFps {
-		fp := &model.Fingerprint{
-			Name:      doc.Name,
-			Rule:      doc.Rule,
-			Source:    doc.Source,
-			IsBuiltin: doc.IsBuiltin,
-			Enabled:   true,
-		}
-		fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
-		fpsToEngine = append(fpsToEngine, fp)
-	}
-
-	// 使用 wappalyzer 库检测（复用单例客户端）
-	wappalyzerApps := make(map[string]struct{})
-	if wappalyzerClient := w.getWappalyzerClient(); wappalyzerClient != nil {
-		apps := wappalyzerClient.Fingerprint(data.Headers, data.BodyBytes)
-		for app := range apps {
-			wappalyzerApps[strings.ToLower(app)] = struct{}{}
-		}
-	}
-
-	// 逐个匹配
-	for i, doc := range filteredFps {
-		matched := false
-		var matchedConditions []string
-
-		// wappalyzer 检测
-		if (doc.Source == "wappalyzer" || doc.IsBuiltin) && w.wappalyzerClient != nil {
-			if _, ok := wappalyzerApps[strings.ToLower(doc.Name)]; ok {
-				matched = true
-				matchedConditions = append(matchedConditions, fmt.Sprintf("wappalyzergo 库检测匹配: %s", doc.Name))
-			}
-		}
-
-		// 自定义引擎匹配
-		if !matched && fpsToEngine[i].Rule != "" {
-			engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fpsToEngine[i]})
-			matchedFps := engine.MatchWithId(data)
-			if len(matchedFps) > 0 {
-				matched = true
-				for _, m := range matchedFps {
-					matchedConditions = append(matchedConditions, fmt.Sprintf("自定义规则匹配: %s", m.Name))
-				}
-			}
-		}
-
-		if matched {
-			matchedInfos = append(matchedInfos, MatchedFpInfo{
-				Id:                doc.Id,
-				Name:              doc.Name,
-				IsBuiltin:         doc.IsBuiltin,
-				MatchedConditions: strings.Join(matchedConditions, "\n"),
-			})
-		}
-	}
-
-	duration := time.Since(startTime).Seconds()
-	result := FingerprintValidationResult{
-		Matched:      len(matchedInfos) > 0,
-		Details:      fmt.Sprintf("验证完成，共检测 %d 个指纹，匹配 %d 个", len(filteredFps), len(matchedInfos)),
-		MatchedInfos: matchedInfos,
-		TotalScanned: len(filteredFps),
-	}
-
-	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("批量验证完成, 耗时%.2fs, 匹配%d/%d", duration, len(matchedInfos), len(filteredFps)), result)
 }
 
 // executeActiveFingerprintValidateTask 执行主动指纹验证任务
@@ -273,52 +145,26 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 		return
 	}
 
-	// 1. 获取主动指纹配置
-	afpResp, err := w.loadActiveFingerprints(ctx, false)
-	if err != nil || !afpResp.Success {
-		errMsg := "获取主动指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+	// 1. 按ID直查主动指纹配置
+	if w.mongoDB == nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
 		return
 	}
-
-	var activeFp *ActiveFingerprintDocument
-	for _, doc := range afpResp.Fingerprints {
-		if doc.Id == activeFpId {
-			activeFp = &doc
-			break
-		}
+	activeFp, err := model.NewActiveFingerprintModel(w.mongoDB).FindById(ctx, activeFpId)
+	if err != nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "查询主动指纹失败: " + err.Error()})
+		return
 	}
 	if activeFp == nil {
 		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "主动指纹不存在"})
 		return
 	}
 
-	// 2. 获取同名被动指纹（用于匹配规则）
-	fpResp, err := w.loadFingerprints(ctx, false)
-	if err != nil || !fpResp.Success {
-		errMsg := "获取被动指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
+	// 2. 获取同名启用的被动指纹（用于匹配规则，与扫描时config_loader的关联语义一致）
+	passiveFps, err := model.NewFingerprintModel(w.mongoDB).FindByNames(ctx, []string{activeFp.Name})
+	if err != nil {
+		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "获取被动指纹列表失败: " + err.Error()})
 		return
-	}
-
-	var passiveFps []*model.Fingerprint
-	for _, doc := range fpResp.Fingerprints {
-		if doc.Name == activeFp.Name {
-			fp := &model.Fingerprint{
-				Name:    doc.Name,
-				Rule:    doc.Rule,
-				Source:  doc.Source,
-				Enabled: true,
-			}
-			fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
-			passiveFps = append(passiveFps, fp)
-		}
 	}
 	if len(passiveFps) == 0 {
 		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{
@@ -420,149 +266,6 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 	}
 
 	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("主动指纹验证完成, 耗时%.2fs", duration), result)
-}
-
-// executeActiveFingerprintBatchValidateTask 执行批量主动指纹验证任务
-func (w *Worker) executeActiveFingerprintBatchValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在批量验证主动指纹...")
-
-	url, _ := taskConfig["url"].(string)
-	if url == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL不能为空"})
-		return
-	}
-
-	// 1. 获取启用的主动指纹列表
-	afpResp, err := w.loadActiveFingerprints(ctx, true)
-	if err != nil || !afpResp.Success {
-		errMsg := "获取主动指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
-		return
-	}
-
-	if len(afpResp.Fingerprints) == 0 {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "没有启用的主动指纹"})
-		return
-	}
-
-	// 2. 获取被动指纹列表（用于匹配规则）
-	fpResp, err := w.loadFingerprints(ctx, false)
-	if err != nil || !fpResp.Success {
-		errMsg := "获取被动指纹列表失败"
-		if err != nil {
-			errMsg += ": " + err.Error()
-		}
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: errMsg})
-		return
-	}
-
-	// 3. 解析基础URL
-	baseUrl, scheme := extractBaseUrlWithSchemeForWorker(url)
-	if baseUrl == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "无效的URL格式"})
-		return
-	}
-
-	// 4. 构建被动指纹名称映射
-	passiveFpByName := make(map[string][]*model.Fingerprint)
-	for _, doc := range fpResp.Fingerprints {
-		fp := &model.Fingerprint{
-			Name:    doc.Name,
-			Rule:    doc.Rule,
-			Source:  doc.Source,
-			Enabled: true,
-		}
-		fp.Id, _ = primitive.ObjectIDFromHex(doc.Id)
-		passiveFpByName[doc.Name] = append(passiveFpByName[doc.Name], fp)
-	}
-
-	client := w.createValidateHttpClientForWorker()
-	var matchedInfos []MatchedFpInfo
-	totalScanned := 0
-
-	// 5. 遍历每个主动指纹
-	for _, afp := range afpResp.Fingerprints {
-		passiveFps, ok := passiveFpByName[afp.Name]
-		if !ok || len(passiveFps) == 0 {
-			continue
-		}
-		totalScanned++
-
-		// 遍历每个探测路径
-		fpMatched := false
-		var matchedConds []string
-		for _, path := range afp.Paths {
-			resp, body, finalUrl, err := w.smartHttpRequestForWorker(client, baseUrl, path, scheme)
-			if err != nil {
-				continue
-			}
-
-			// 提取标题
-			title := ""
-			titleRe := regexp.MustCompile(`(?i)<title[^>]*>([^<]*)</title>`)
-			if matches := titleRe.FindStringSubmatch(body); len(matches) > 1 {
-				title = strings.TrimSpace(matches[1])
-			}
-
-			// 构建header字符串
-			var headerStr strings.Builder
-			for key, values := range resp.Header {
-				for _, v := range values {
-					headerStr.WriteString(key)
-					headerStr.WriteString(": ")
-					headerStr.WriteString(v)
-					headerStr.WriteString("\n")
-				}
-			}
-
-			data := &scanner.FingerprintData{
-				Title:        title,
-				Body:         body,
-				BodyBytes:    []byte(body),
-				Headers:      resp.Header,
-				HeaderString: headerStr.String(),
-				Server:       resp.Header.Get("Server"),
-				URL:          finalUrl,
-				Cookies:      resp.Header.Get("Set-Cookie"),
-			}
-
-			// 匹配规则
-			for _, fp := range passiveFps {
-				engine := scanner.NewCustomFingerprintEngine([]*model.Fingerprint{fp})
-				matchedFps := engine.MatchWithId(data)
-				if len(matchedFps) > 0 {
-					fpMatched = true
-					matchedConds = append(matchedConds, fmt.Sprintf("路径 [%s] 匹配规则: %s", path, fp.Name))
-					break
-				}
-			}
-			if fpMatched {
-				break
-			}
-		}
-
-		if fpMatched {
-			matchedInfos = append(matchedInfos, MatchedFpInfo{
-				Id:                afp.Id,
-				Name:              afp.Name,
-				IsActive:          true,
-				MatchedConditions: strings.Join(matchedConds, "\n"),
-			})
-		}
-	}
-
-	duration := time.Since(startTime).Seconds()
-	result := FingerprintValidationResult{
-		Matched:      len(matchedInfos) > 0,
-		Details:      fmt.Sprintf("验证完成，共检测 %d 个主动指纹，匹配 %d 个", totalScanned, len(matchedInfos)),
-		MatchedInfos: matchedInfos,
-		TotalScanned: totalScanned,
-	}
-
-	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("主动指纹批量验证完成, 耗时%.2fs, 匹配%d/%d", duration, len(matchedInfos), totalScanned), result)
 }
 
 // saveFingerprintValidationResult 保存指纹验证结果（终态更新，包含worker字段，不应再调用updateTaskStatus覆盖）

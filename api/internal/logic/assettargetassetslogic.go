@@ -85,7 +85,8 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 			StatusCode: a.HttpStatus,
 			Title:      a.Title,
 			Screenshot: a.Screenshot,
-			Tech:       a.App,
+			// 同一技术的来源后缀变体（"Nginx[httpx]" vs "Nginx[custom(id)]"）折叠为一条展示
+			Tech:       model.MergeAppsDedup(nil, a.App),
 			Labels:     a.Labels,
 			IsHTTP:     a.IsHTTP,
 			Ips:        ipv4List(a),

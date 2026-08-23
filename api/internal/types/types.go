@@ -1942,12 +1942,9 @@ type FingerprintBatchValidateReq struct {
 
 // FingerprintBatchValidateResp 批量验证指纹响应（异步提交返回taskId）
 type FingerprintBatchValidateResp struct {
-	Code         int                      `json:"code"`
-	Msg          string                   `json:"msg"`
-	TaskId       string                   `json:"taskId"`       // 异步任务ID，用于轮询进度
-	MatchedCount int                      `json:"matchedCount"` // 匹配数量（同步模式）
-	Duration     string                   `json:"duration"`     // 耗时（同步模式）
-	Matched      []MatchedFingerprintInfo `json:"matched"`      // 匹配的指纹列表（同步模式）
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	TaskId string `json:"taskId"` // 异步任务ID，用于轮询进度
 }
 
 // MatchedFingerprintInfo 匹配的指纹信息

@@ -8,6 +8,7 @@ import (
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
+	"cscan/internal/model"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -61,6 +62,8 @@ func (l *AssetFilterOptionsLogic) loadFilterOptions(req *types.AssetFilterOption
 		filter["screenshot"] = bson.M{"$ne": ""}
 	}
 
+	// 技术选项按归一化键折叠（剥掉 [来源] 后缀与 :版本号），值取展示名；
+	// 展示名作为 regex 过滤条件可同时命中带后缀/版本的原始条目
 	techSet := make(map[string]struct{})
 	portSet := make(map[int]struct{})
 	statusSet := make(map[string]struct{})
@@ -69,10 +72,21 @@ func (l *AssetFilterOptionsLogic) loadFilterOptions(req *types.AssetFilterOption
 	assetModel := l.svcCtx.GetAssetModel()
 
 	if values, err := assetModel.Distinct(l.ctx, "app", filter); err == nil {
+		seenKeys := make(map[string]struct{})
 		for _, v := range values {
-			if s, ok := v.(string); ok && s != "" {
-				techSet[s] = struct{}{}
+			s, ok := v.(string)
+			if !ok || s == "" {
+				continue
 			}
+			key := model.NormalizeAppKey(s)
+			if key == "" {
+				continue
+			}
+			if _, dup := seenKeys[key]; dup {
+				continue
+			}
+			seenKeys[key] = struct{}{}
+			techSet[model.AppDisplayName(s)] = struct{}{}
 		}
 	}
 

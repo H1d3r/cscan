@@ -306,3 +306,144 @@ func updateChangesLookup(update bson.M) []FieldChange {
 	// this helper exists to keep tests future-proof if needed.
 	return nil
 }
+
+func TestNormalizeAppKey(t *testing.T) {
+	cases := map[string]string{
+		"Nginx":                                "nginx",
+		"Nginx[httpx]":                         "nginx",
+		"nginx [httpx+wappalyzer]":             "nginx",
+		"Nginx:1.18.0[httpx]":                  "nginx",
+		"Kibana[httpx+wappalyzer+custom(abc)]": "kibana",
+		"  Apache  ":                           "apache",
+		"":                                     "",
+		"[httpx]":                              "",
+	}
+	for in, want := range cases {
+		if got := NormalizeAppKey(in); got != want {
+			t.Errorf("NormalizeAppKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMergeAppsDedup(t *testing.T) {
+	// 变体收敛：同技术不同来源后缀只保留信息最全的一条
+	merged := MergeAppsDedup(
+		[]string{"Nginx[httpx]", "Apache[httpx]"},
+		[]string{"Nginx[httpx+wappalyzer+custom(64a1f2)]", "Redis"},
+	)
+	want := []string{"Nginx[httpx+wappalyzer+custom(64a1f2)]", "Apache[httpx]", "Redis"}
+	if sortedJoin(merged) != sortedJoin(want) {
+		t.Errorf("merged = %v, want %v", merged, want)
+	}
+
+	// 版本号与大小写变体折叠
+	merged = MergeAppsDedup([]string{"Nginx:1.18.0[httpx]"}, []string{"nginx"})
+	if len(merged) != 1 || merged[0] != "Nginx:1.18.0[httpx]" {
+		t.Errorf("version/case variants not collapsed: %v", merged)
+	}
+
+	// 完全相同的条目不产生新增
+	merged = MergeAppsDedup([]string{"Nginx[httpx]"}, []string{"Nginx[httpx]"})
+	if len(merged) != 1 {
+		t.Errorf("identical entries duplicated: %v", merged)
+	}
+
+	// 空输入
+	if got := MergeAppsDedup(nil, nil); got != nil {
+		t.Errorf("nil inputs should return nil, got %v", got)
+	}
+}
+
+func TestBuildAssetUpdateDoc_AppCollapsedNotAccumulated(t *testing.T) {
+	existing := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+		App:       []string{"Nginx[httpx]", "Apache[httpx]"},
+	}
+	// 下一轮流式写入只带来了更长后缀的同技术变体与一个新技术
+	incoming := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+		App:       []string{"Nginx[httpx+wappalyzer+custom(64a1f2)]", "Redis[httpx]"},
+	}
+	update, changes := BuildAssetUpdateDoc(incoming, existing, AssetWriteOptions{TaskId: "task-2"})
+
+	setFields := update["$set"].(bson.M)
+	apps, ok := setFields["app"]
+	if !ok {
+		t.Fatalf("app must be written via $set when merge result differs, set keys=%v", keysOf(setFields))
+	}
+	merged, ok := apps.([]string)
+	if !ok {
+		t.Fatalf("app in $set is not []string: %T", apps)
+	}
+	want := []string{"Nginx[httpx+wappalyzer+custom(64a1f2)]", "Apache[httpx]", "Redis[httpx]"}
+	if sortedJoin(merged) != sortedJoin(want) {
+		t.Errorf("app = %v, want %v", merged, want)
+	}
+	// app 不再走 $addToSet（旧变体必须被收敛而不是追加）
+	if addSet, ok := update["$addToSet"].(bson.M); ok {
+		if setHas(addSet, "app") {
+			t.Errorf("app must not use $addToSet anymore")
+		}
+	}
+	var hasAppChange bool
+	for _, c := range changes {
+		if c.Field == "app" {
+			hasAppChange = true
+		}
+	}
+	if !hasAppChange {
+		t.Errorf("app change must be reported when variants are collapsed")
+	}
+}
+
+func TestBuildAssetUpdateDoc_AppNoChangeWhenCollapsedEqualsExisting(t *testing.T) {
+	existing := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+		App:       []string{"Nginx[httpx+wappalyzer]", "Apache[httpx]"},
+	}
+	// 本轮检测结果的来源后缀信息少于库内已有条目：合并后与库内一致，不应写 app、不应报变更
+	incoming := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+		App:       []string{"Nginx[httpx]"},
+	}
+	update, changes := BuildAssetUpdateDoc(incoming, existing, AssetWriteOptions{})
+	setFields := update["$set"].(bson.M)
+	if setHas(setFields, "app") {
+		t.Errorf("app must not be written when merge result equals existing")
+	}
+	for _, c := range changes {
+		if c.Field == "app" {
+			t.Errorf("app change must not be reported when nothing actually changes")
+		}
+	}
+	if setHas(setFields, "update_time") {
+		t.Errorf("no-op write must not advance update_time; set keys=%v", keysOf(setFields))
+	}
+}
+
+func TestBuildAssetUpdateDoc_AppEmptyIncomingKeepsExisting(t *testing.T) {
+	existing := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+		App:       []string{"Nginx[httpx]"},
+	}
+	incoming := &Asset{
+		Authority: "example.com:80",
+		Host:      "example.com",
+		Port:      80,
+	}
+	update, _ := BuildAssetUpdateDoc(incoming, existing, AssetWriteOptions{})
+	setFields := update["$set"].(bson.M)
+	if setHas(setFields, "app") {
+		t.Errorf("empty App must be omitted (omit-if-empty preserves existing apps)")
+	}
+}

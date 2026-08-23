@@ -68,6 +68,10 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 		if key == "" || key == "<nil>" {
 			continue
 		}
+		// app 分组以归一化键为 _id，展示改用组内原始条目保留大小写
+		if strings.TrimSpace(req.GroupBy) == "app" && row.Name != "" {
+			key = row.Name
+		}
 		item := types.AssetTargetGroupItem{Key: key, Count: row.Count, Location: row.Location, Extras: row.Extras, Labels: row.Labels}
 		list = append(list, item)
 	}
@@ -126,10 +130,31 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 			},
 		}
 	case "app":
-		pipeline = append(pipeline, bson.M{"$unwind": "$app"})
+		// 归一化技术名分组：剥掉 [来源] 后缀与 :版本号、忽略大小写后再分组，
+		// 避免同一技术因来源后缀/版本不同（"Nginx[httpx]" vs "Nginx:1.18[custom(id)]"）拆成多组。
+		// 先按 (资产, 归一化键) 折叠变体，保证 count = 含该技术的资产数而非变体计数；
+		// 展示名取组内首个原始条目，前端 getTechName 会再做同样的归一化展示。
+		pipeline = append(pipeline,
+			bson.M{"$unwind": "$app"},
+			bson.M{"$addFields": bson.M{"appKey": bson.M{"$toLower": bson.M{"$trim": bson.M{"input": bson.M{
+				"$arrayElemAt": bson.A{
+					bson.M{"$split": bson.A{
+						bson.M{"$arrayElemAt": bson.A{bson.M{"$split": bson.A{"$app", "["}}, 0}},
+						":",
+					}},
+					0,
+				},
+			}}}}}},
+			bson.M{"$group": bson.M{
+				"_id":    bson.M{"asset": "$_id", "key": "$appKey"},
+				"app":    bson.M{"$first": "$app"},
+				"labels": bson.M{"$first": bson.M{"$ifNull": bson.A{"$labels", bson.A{}}}},
+			}},
+		)
 		group = bson.M{
-			"_id":   "$app",
+			"_id":   "$_id.key",
 			"count": bson.M{"$sum": 1},
+			"name":  bson.M{"$first": "$app"},
 		}
 	case "status":
 		// 过滤无效状态码（缺失 / 空 / "0"），只保留真实 HTTP 状态码分组

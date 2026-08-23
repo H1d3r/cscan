@@ -385,7 +385,7 @@ func GetTaskPriority(task *scheduler.TaskInfo) TaskPriority {
 	// 检查任务类型
 	taskType, _ := taskConfig["taskType"].(string)
 	switch taskType {
-	case "poc_validate", "poc_batch_validate", "fingerprint_validate", "fingerprint_batch_validate", "active_fingerprint_validate", "active_fingerprint_batch_validate":
+	case "poc_validate", "poc_batch_validate", "fingerprint_validate", "active_fingerprint_validate":
 		return PriorityHigh // POC验证、指纹验证任务优先级较高
 	}
 

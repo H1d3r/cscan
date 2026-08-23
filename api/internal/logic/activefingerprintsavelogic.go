@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
@@ -63,8 +64,15 @@ func (l *ActiveFingerprintSaveLogic) ActiveFingerprintSave(req *types.ActiveFing
 		}
 	}
 
+	msg := "保存成功"
+	// 主动指纹的验证与扫描匹配都依赖同名启用的被动指纹规则，
+	// 缺失时验证会直接报"未找到同名被动指纹"，这里提前给出警告
+	if related, err := l.svcCtx.FingerprintModel.FindByNames(l.ctx, []string{req.Name}); err == nil && len(related) == 0 {
+		msg = fmt.Sprintf("保存成功。警告：不存在名为「%s」的启用被动指纹，主动指纹验证与扫描匹配将无法命中，请先在被动指纹中创建同名规则", req.Name)
+	}
+
 	return &types.BaseResp{
 		Code: 0,
-		Msg:  "保存成功",
+		Msg:  msg,
 	}, nil
 }

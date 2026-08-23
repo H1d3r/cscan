@@ -440,6 +440,12 @@ func (e *CustomFingerprintEngine) matchSingleCondition(condition string, data *F
 		}
 	}
 
+	// 空值条件（如 body="" 或 body=）无意义，且 contains(x, "") 恒为 true，
+	// 会让规则无条件匹配任何响应（曾导致主动指纹对任意目标恒命中），直接判不匹配
+	if value == "" {
+		return false
+	}
+
 	var result bool
 	switch strings.ToLower(condType) {
 	case "body":
@@ -486,6 +492,10 @@ func (e *CustomFingerprintEngine) matchSingleCondition(condition string, data *F
 // matchBodyWithEncoding 同时支持UTF-8和GBK编码匹配
 // 参考ARL的fetch_fingerprint函数实现
 func (e *CustomFingerprintEngine) matchBodyWithEncoding(data *FingerprintData, keyword string) bool {
+	// 空关键字 contains 恒为 true，直接判不匹配（防止ARL html字段中的空串规则恒命中）
+	if keyword == "" {
+		return false
+	}
 	// 1. 先尝试UTF-8匹配
 	if containsIgnoreCase(data.Body, keyword) {
 		return true
@@ -597,7 +607,7 @@ func containsIgnoreCase(s, substr string) bool {
 
 // containsInHeaders 检查headers中是否包含指定值
 func containsInHeaders(headers http.Header, value string) bool {
-	if headers == nil {
+	if headers == nil || value == "" {
 		return false
 	}
 	valueLower := strings.ToLower(value)
@@ -800,8 +810,10 @@ func (e *CustomFingerprintEngine) matchWappalyzerRules(fp *model.Fingerprint, da
 
 // matchRegexOrContains 尝试正则匹配，如果正则无效则回退到字符串包含匹配
 func matchRegexOrContains(text, pattern string) bool {
+	// 空pattern恒匹配任何文本（Wappalyzer字段中的空串规则会恒命中），判不匹配；
+	// header/meta的"仅存在性检查"语义在调用方单独处理，不经过此处
 	if pattern == "" {
-		return true
+		return false
 	}
 	// 尝试编译为正则表达式
 	re, err := regexp.Compile("(?i)" + pattern)

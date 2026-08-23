@@ -32,7 +32,6 @@ type WorkerConfig struct {
 	ServerAddr  string `json:"serverAddr"` // API 服务地址 (e.g., http://server:8888)
 	InstallKey  string `json:"installKey"` // 安装密钥
 	Concurrency int    `json:"concurrency"`
-	Timeout     int    `json:"timeout"`
 
 	// Phase 2 客户端优先级队列管理器（默认关闭，保持向后兼容）
 	// 开启后 taskChan 退化为预留槽位计数器，任务实际进入 TaskQueueManager
@@ -133,25 +132,6 @@ func getMainTaskId(taskId string) string {
 		}
 	}
 	return taskId
-}
-
-// defaultTaskTimeoutSec 默认单个任务整体超时上限（秒）。
-// 为 baseCtx 提供兜底超时，防止任务无限期占用并发槽位；可经环境变量 CSCAN_TASK_TIMEOUT 覆盖。
-const defaultTaskTimeoutSec = 6 * 60 * 60 // 6 小时
-
-// resolveTaskOverallTimeout 推导单个任务的整体超时上限（秒）。
-// 优先级：环境变量 CSCAN_TASK_TIMEOUT > Worker 配置 Timeout > 默认值。
-func resolveTaskOverallTimeout(configTimeout int) time.Duration {
-	timeoutSec := defaultTaskTimeoutSec
-	if configTimeout > 0 {
-		timeoutSec = configTimeout
-	}
-	if env := os.Getenv("CSCAN_TASK_TIMEOUT"); env != "" {
-		if v, err := strconv.Atoi(env); err == nil && v > 0 {
-			timeoutSec = v
-		}
-	}
-	return time.Duration(timeoutSec) * time.Second
 }
 
 // taskLog 发布任务级别日志
@@ -1208,13 +1188,13 @@ func (w *Worker) SubmitTask(task *scheduler.TaskInfo) {
 
 // handleTaskControl 统一处理任务控制信号(STOP/PAUSE)
 // 返回 true 表示任务被中止或暂停，调用方应直接 return
-func (w *Worker) handleTaskControl(ctx context.Context, task *scheduler.TaskInfo, completedPhases map[string]bool, assets []*scanner.Asset, phaseName string) bool {
+func (w *Worker) handleTaskControl(ctx context.Context, task *scheduler.TaskInfo, config *scheduler.TaskConfig, completedPhases map[string]bool, assets []*scanner.Asset, phaseName string) bool {
 	if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
+		reason := "Task stopped by user"
 		if phaseName != "" {
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped during %s", phaseName)
-		} else {
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+			reason = fmt.Sprintf("Task stopped by user during %s", phaseName)
 		}
+		w.logTaskAbort(task, config, completedPhases, reason)
 		return true
 	} else if ctrl == "PAUSE" {
 		if phaseName != "" {
@@ -1226,6 +1206,45 @@ func (w *Worker) handleTaskControl(ctx context.Context, task *scheduler.TaskInfo
 		return true
 	}
 	return false
+}
+
+// skippedEnabledPhases 按扫描链顺序返回「已启用但尚未完成」的阶段中文名，
+// 供任务中途退出时明确提示哪些阶段被跳过。
+func skippedEnabledPhases(config *scheduler.TaskConfig, completedPhases map[string]bool) []string {
+	if config == nil {
+		return nil
+	}
+	checks := []struct {
+		key     string
+		name    string
+		enabled bool
+	}{
+		{"domainscan", "域名扫描", config.DomainScan != nil && config.DomainScan.Enable},
+		{"portscan", "端口扫描", config.PortScan != nil && config.PortScan.Enable},
+		{"portidentify", "端口识别", config.PortIdentify != nil && config.PortIdentify.Enable},
+		{"fingerprint", "指纹识别", config.Fingerprint != nil && config.Fingerprint.Enable},
+		{"brutescan", "弱口令扫描", config.BruteScan != nil && config.BruteScan.Enable},
+		{"dirscan", "目录扫描", config.DirScan != nil && config.DirScan.Enable},
+		{"jsfinder", "JS扫描", config.JSFinder != nil && config.JSFinder.Enable},
+		{"pocscan", "漏洞扫描", config.PocScan != nil && config.PocScan.Enable},
+	}
+	skipped := make([]string, 0, len(checks))
+	for _, c := range checks {
+		if c.enabled && !completedPhases[c.key] {
+			skipped = append(skipped, c.name)
+		}
+	}
+	return skipped
+}
+
+// logTaskAbort 以 WARN 级别记录任务中途退出，并列出已启用但未执行的阶段，
+// 避免剩余阶段被静默跳过而无任何可感知的日志。
+func (w *Worker) logTaskAbort(task *scheduler.TaskInfo, config *scheduler.TaskConfig, completedPhases map[string]bool, reason string) {
+	if skipped := skippedEnabledPhases(config, completedPhases); len(skipped) > 0 {
+		w.taskLog(task.TaskId, LevelWarn, "%s; 已启用但未执行的阶段: %s", reason, strings.Join(skipped, " → "))
+	} else {
+		w.taskLog(task.TaskId, LevelWarn, "%s", reason)
+	}
 }
 
 func (w *Worker) checkTaskControl(ctx context.Context, taskId string) string {
@@ -1320,13 +1339,12 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		}
 	}()
 
-	// baseCtx 注入整体超时上限：修复 H2，防止单个任务因 baseCtx 无超时而无限期占用并发槽位。
-	// 各子阶段仍可用自身更短的超时覆盖；此处仅为兜底，避免卡死。
-	overallTimeout := resolveTaskOverallTimeout(w.config.Timeout)
-	baseCtx, baseCancel := context.WithTimeout(context.Background(), overallTimeout)
-	defer baseCancel()
+	// baseCtx 不设整体超时：超时控制下放到各扫描阶段（端口扫描/端口识别/指纹/POC 等
+	// 均有阶段级或单目标级超时）。此前的整体超时会在长链路任务中途掐断剩余阶段，
+	// 且退出日志与用户手动停止无法区分，导致已启用阶段被静默跳过。
+	baseCtx := context.Background()
 	startTime := time.Now()
-	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s, overallTimeout=%s", task.TaskId, task.MainTaskId, overallTimeout)
+	w.taskLog(task.TaskId, LevelInfo, "=== executeTask START === TaskId: %s, MainTaskId: %s", task.TaskId, task.MainTaskId)
 
 	w.mu.Lock()
 	w.taskStarted++
@@ -1433,19 +1451,9 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		w.executeFingerprintValidateTask(ctx, task, taskConfig, startTime)
 		return
 	}
-	if taskType == "fingerprint_batch_validate" {
-		w.taskLog(task.TaskId, LevelInfo, "Step 7c2: Executing fingerprint batch validate task")
-		w.executeFingerprintBatchValidateTask(ctx, task, taskConfig, startTime)
-		return
-	}
 	if taskType == "active_fingerprint_validate" {
 		w.taskLog(task.TaskId, LevelInfo, "Step 7d: Executing active fingerprint validate task")
 		w.executeActiveFingerprintValidateTask(ctx, task, taskConfig, startTime)
-		return
-	}
-	if taskType == "active_fingerprint_batch_validate" {
-		w.taskLog(task.TaskId, LevelInfo, "Step 7d2: Executing active fingerprint batch validate task")
-		w.executeActiveFingerprintBatchValidateTask(ctx, task, taskConfig, startTime)
 		return
 	}
 	if taskType == "vuln_reverify" {
@@ -1668,7 +1676,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	if config.DomainScan != nil && config.DomainScan.Enable && !completedPhases["domainscan"] {
 		// 检查控制信号
 		if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+			w.logTaskAbort(task, config, completedPhases, "Task stopped by user before domain scan")
 			return
 		}
 
@@ -1931,7 +1939,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		if len(mergedAssets) > 0 {
 			allAssets = append(allAssets, mergedAssets...)
 		}
-		if w.handleTaskControl(ctx, task, completedPhases, allAssets, "domain scan") {
+		if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "domain scan") {
 			return
 		}
 
@@ -1974,7 +1982,7 @@ domainScanDone:
 	// 执行端口扫描（只有明确启用时才执行）
 	if config.PortScan != nil && config.PortScan.Enable && !completedPhases["portscan"] {
 		// 检查控制信号
-		if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+		if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 			return
 		}
 
@@ -2057,7 +2065,7 @@ domainScanDone:
 				w.taskLog(task.TaskId, LevelWarn, "Port scan timeout, continuing with partial results")
 			} else if ctx.Err() != nil {
 				portCancel()
-				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+				w.logTaskAbort(task, config, completedPhases, fmt.Sprintf("Port scan aborted, task canceled (context error: %v)", ctx.Err()))
 				return
 			}
 			if err != nil {
@@ -2104,7 +2112,11 @@ domainScanDone:
 				w.taskLog(task.TaskId, LevelWarn, "Port scan timeout, continuing with partial results")
 			} else if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
 				portCancel()
-				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+				reason := "Port scan aborted, task canceled or stopped"
+				if ctx.Err() != nil {
+					reason = fmt.Sprintf("%s (context error: %v)", reason, ctx.Err())
+				}
+				w.logTaskAbort(task, config, completedPhases, reason)
 				return
 			}
 			if err != nil && err != scanner.ErrPortThresholdExceeded {
@@ -2128,7 +2140,11 @@ domainScanDone:
 		// 检查是否被停止
 		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
 			portCancel()
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+			reason := "Port scan aborted, task canceled or stopped"
+			if ctx.Err() != nil {
+				reason = fmt.Sprintf("%s (context error: %v)", reason, ctx.Err())
+			}
+			w.logTaskAbort(task, config, completedPhases, reason)
 			return
 		}
 
@@ -2155,7 +2171,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2180,7 +2196,7 @@ domainScanDone:
 			incrSent++
 		} else {
 			// 检查控制信号
-			if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 				return
 			}
 
@@ -2211,7 +2227,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2237,7 +2253,7 @@ domainScanDone:
 		} else {
 			// 在指纹识别开始前检查停止信号
 			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
-				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+				w.logTaskAbort(task, config, completedPhases, "Task stopped by user before fingerprint")
 				return
 			} else if ctrl == "PAUSE" {
 				w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")
@@ -2306,8 +2322,8 @@ domainScanDone:
 				}
 				// 使用Worker并发数覆盖配置中的并发数
 				config.Fingerprint.Concurrency = w.config.Concurrency
-				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v, filterMode=%s",
-					len(assetsToScan), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan, filterMode)
+				w.taskLog(task.TaskId, LevelInfo, "Fingerprint: %d assets, timeout %ds/target, concurrency=%d, activeScan=%v, screenshot=%v, filterMode=%s",
+					len(assetsToScan), targetTimeout, w.config.Concurrency, config.Fingerprint.ActiveScan, config.Fingerprint.Screenshot, filterMode)
 
 				// 每次扫描前实时加载HTTP服务映射配置
 				w.loadHttpServiceMappings()
@@ -2380,7 +2396,11 @@ domainScanDone:
 				// 任务级取消/停止由下方 ctx.Err() 与 STOP 检查统一判定。
 				// 检查是否被取消
 				if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-					w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+					reason := "Task aborted after fingerprint, task canceled or stopped"
+					if ctx.Err() != nil {
+						reason = fmt.Sprintf("%s (context error: %v)", reason, ctx.Err())
+					}
+					w.logTaskAbort(task, config, completedPhases, reason)
 					return
 				}
 
@@ -2428,7 +2448,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2459,7 +2479,7 @@ domainScanDone:
 			incrSent++
 		} else {
 			// 检查控制信号
-			if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 				return
 			}
 
@@ -2478,7 +2498,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2502,7 +2522,7 @@ domainScanDone:
 			incrSent++
 		} else {
 			// 检查控制信号
-			if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 				return
 			}
 
@@ -2524,7 +2544,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2546,7 +2566,7 @@ domainScanDone:
 			w.incrSubTaskDone(ctx, task, "JS扫描", false, 1)
 			incrSent++
 		} else {
-			if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 				return
 			}
 
@@ -2565,7 +2585,7 @@ domainScanDone:
 	}
 
 	// 检查控制信号
-	if w.handleTaskControl(ctx, task, completedPhases, allAssets, "") {
+	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 		return
 	}
 
@@ -2590,7 +2610,7 @@ domainScanDone:
 		} else {
 			// 在POC扫描开始前检查停止信号
 			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
-				w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+				w.logTaskAbort(task, config, completedPhases, "Task stopped by user before POC scan")
 				return
 			} else if ctrl == "PAUSE" {
 				w.taskLog(task.TaskId, LevelInfo, "Task paused, saving progress...")

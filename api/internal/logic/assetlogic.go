@@ -400,7 +400,8 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq) (resp *types.AssetLi
 			Category:             a.Category,
 			Service:              a.Service,
 			Title:                a.Title,
-			App:                  a.App,
+			// 同一技术的来源后缀变体折叠为一条展示（前端 TechTag 再做归一化展示）
+			App:                  model.MergeAppsDedup(nil, a.App),
 			HttpStatus:           a.HttpStatus,
 			HttpHeader:           a.HttpHeader,
 			HttpBody:             a.HttpBody,

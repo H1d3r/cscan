@@ -255,7 +255,7 @@ func getDefaultTemplates() []model.ScanTemplate {
 		},
 		"fingerprint": map[string]interface{}{
 			"enable": true, "tool": "httpx", "iconHash": true, "customEngine": true,
-			"screenshot": false, "activeScan": false, "cert": true, "activeTimeout": 10,
+			"screenshot": true, "activeScan": false, "cert": true, "activeTimeout": 10,
 			"targetTimeout": 30, "filterMode": "http_mapping", "forceScan": false,
 		},
 		"brutescan": map[string]interface{}{

@@ -2554,7 +2554,7 @@ function startBatchPolling() {
           batchTaskStatus.value = 'failed'
           updatePersistentTask('failed')
           saveBatchTaskToStorage()
-          ElMessage.error('批量验证失败')
+          ElMessage.error(res.msg ? ('批量验证失败: ' + res.msg) : '批量验证失败')
         } else if (res.status === 'stopped') {
           clearInterval(batchPollTimer)
           batchPollTimer = null
@@ -3099,7 +3099,12 @@ async function handleSaveActiveFingerprint() {
   })
 
   if (res.code === 0) {
-    ElMessage.success(t('fingerprint.saveSuccess'))
+    // 服务端可能返回"缺少同名被动指纹"等警告信息，需要透出
+    if (res.msg && res.msg.indexOf('警告') !== -1) {
+      ElMessage({ type: 'warning', message: res.msg, duration: 8000, showClose: true })
+    } else {
+      ElMessage.success(t('fingerprint.saveSuccess'))
+    }
     activeFingerprintFormDialogVisible.value = false
     loadActiveFingerprints()
   } else {

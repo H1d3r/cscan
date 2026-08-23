@@ -391,6 +391,9 @@ type AssetTargetGroupResult struct {
 	Location string      `bson:"location"`
 	Extras   []string    `bson:"extras"`
 	Labels   []string    `bson:"labels"`
+	// Name 仅 app 分组使用：归一化键作为 _id 分组时的组内首个原始条目，
+	// 保留大小写/版本作为前端展示名（前端 getTechName 再做归一化展示）。
+	Name string `bson:"name"`
 }
 
 // AggregateTargetGroups 执行目标维度聚合 pipeline，返回 {key, count, location, extras} 行。
@@ -1086,11 +1089,41 @@ func (m *AssetModel) AggregateApp(ctx context.Context, limit int) ([]StatResult,
 		}}},
 		// 展开app数组
 		{{Key: "$unwind", Value: "$app"}},
-		// 按app分组统计
+		// 归一化技术键：剥掉 [来源] 后缀与 :版本号、忽略大小写，
+		// 同一技术的多变体（"Nginx[httpx]" vs "Nginx:1.18[custom(id)]"）折叠为一组
+		{{Key: "$addFields", Value: bson.D{{Key: "appKey", Value: bson.D{
+			{Key: "$toLower", Value: bson.D{
+				{Key: "$trim", Value: bson.D{
+					{Key: "input", Value: bson.D{
+						{Key: "$arrayElemAt", Value: bson.A{
+							bson.D{{Key: "$split", Value: bson.A{
+								bson.D{{Key: "$arrayElemAt", Value: bson.A{
+									bson.D{{Key: "$split", Value: bson.A{"$app", "["}}},
+									0,
+								}}},
+								":",
+							}}},
+							0,
+						}},
+					}},
+				}},
+			}},
+		}}}}},
+		// 同一资产内的变体先折叠成一条，保证 count = 含该技术的资产数而非变体计数
 		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$app"},
-			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "_id", Value: bson.D{
+				{Key: "asset", Value: "$_id"},
+				{Key: "key", Value: "$appKey"},
+			}},
+			{Key: "app", Value: bson.D{{Key: "$first", Value: "$app"}}},
 		}}},
+		// 按归一化键分组计数；_id 回写为组内首个原始条目（调用方按 app 原串做 $in 精确匹配）
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$_id.key"},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "app", Value: bson.D{{Key: "$first", Value: "$app"}}},
+		}}},
+		{{Key: "$set", Value: bson.D{{Key: "_id", Value: "$app"}}}},
 		{{Key: "$sort", Value: bson.D{{Key: "count", Value: -1}}}},
 		{{Key: "$limit", Value: limit}},
 	}
