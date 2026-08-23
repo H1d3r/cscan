@@ -99,11 +99,6 @@ Jenkins:
   - "/jenkins/login"
 Grafana_Labs-公司产品:
   - "/grafana/"
-KindEDITOR:
-  - "/kindeditor/asp.net/upload_json.ashx?dir=file"
-  - "/kindeditor/jsp/upload_json.jsp?dir=file"
-  - "/kindeditor/php/upload_json.php?dir=file"
-  - "/kindeditor/asp/upload_json.asp?dir=file"
 APACHE-Solr:
   - "/solr/"
   - "/solr/admin/cores"
@@ -162,10 +157,6 @@ Adminer:
   - "/admin/adminer.php"
   - "/adminer.php"
   - "/adminer/index.php"
-Adobe-Coldfusion:
-  - "/CFIDE/scripts/ajax/package/cfmenu.js"
-  - "/cf_scripts/scripts/ajax/package/cfmenu.js"
-  - "/CFIDE/administrator/index.cfm"
 Apache-Axis-Webservice:
   - "/services"
   - "/servlet/AxisaxiServlet"
@@ -181,9 +172,6 @@ Apache-Axis-Webservice:
   - "/axis/services/FreeMarkerService"
   - "/axis/services/AdminService"
   - "/admin/services"
-Apache-Druid:
-  - "/unified-console.html"
-  - "/druid/indexer/v1/tasks"
 Apache-Shiro:
   - "/"
   - "/api/login"
@@ -198,11 +186,6 @@ Apusic-Products:
   - "/apusic/login"
   - "/login"
   - "/apusic/admin/login"
-Arl:
-  - "/api/doc"
-Chanjet-Tplus:
-  - "/tplus/view/login.html"
-  - "/tplus/"
 ClickHouse:
   - "/ping"
 Clash-Restful-Api-Unauthorized-Access:
@@ -233,14 +216,8 @@ Graphql:
   - "/api/v1/graphql"
 H2-DB:
   - "/h2-console/"
-Hfish:
-  - "/web/login"
 honeypot:
   - "/x.js"
-Jeecms:
-  - "/cnf/r/cms/front.js"
-  - "/r/cms/front.js"
-  - "/cms/front.js"
 Jinher-OA:
   - "/jc6/platform/sys/login!intro.action"
   - "/platform/sys/login!intro.action"
@@ -281,13 +258,6 @@ PageAdmin:
   - "/"
 PbootCMS:
   - "/?search.html"
-Phpinfo:
-  - "/phpinfo.php"
-  - "/info.php"
-  - "/p.php"
-  - "/php.php"
-  - "/test.php"
-  - "/"
 Prometheus:
   - "/"
   - "/graph"
@@ -299,8 +269,6 @@ Ruoyi:
   - "/css/ry-ui.css"
 SANGFOR-SSL-VPN:
   - "/com/js/common.min.js"
-Springblade:
-  - "/api/blade-auth/oauth/captcha"
 Stable-Diffusion:
   - "/info"
 Tke-Installer-Api-Noauth:
@@ -315,12 +283,6 @@ Wanhu-Eoffice10-Oa:
 Wanhu OA:
   - "/defaultroot/login.jsp"
   - "/login.jsp"
-Weaver-Ecology-Identify-2:
-  - "/js/weaver_encrypt/weaver_encrypt.js"
-Weaver-Ecology-Identify-Js:
-  - "/js"
-Weaver-Emobile:
-  - "/error/styles/error.css"
 Wsdl-Api:
   - "/?wsdl"
   - "/api/?wsdl"

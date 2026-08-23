@@ -77835,10 +77835,6 @@
   rule: body="tkestack" || body="cluster" && body="Config" && body="etcd"
 - name: Wanhu-Eoffice10-Oa
   rule: 'body="/eoffice10/client" || body="eoffice_loading_tip" || body="eoffice_init" || header="general/login/index.php" || body="/general/login/view//images/updateLoad.gif" || body="szFeatures" && body="eoffice" || header="eOffice"'
-- name: Weaver-Ecology-Identify-2
-  rule: url="weaver_encrypt" || body="weaver_encrypt"
-- name: Weaver-Ecology-Identify-Js
-  rule: 'body="/js/ecology8/" || body="var faviconUrl=(window.ecologyContentPath" || header="ecology_JSessionId"'
 - name: Wsdl-Api
   rule: 'body="<wsdl:definitions" || body="<definitions"'
 - name: Yongyou-Nccloud
