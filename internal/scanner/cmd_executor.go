@@ -86,6 +86,11 @@ func (e *CmdExecutor) withPresetArgs(args []string) []string {
 	return merged
 }
 
+// CommandLine 返回实际执行的完整命令行（含自动注入的 preset 参数），用于日志排障
+func (e *CmdExecutor) CommandLine(args []string) string {
+	return e.binaryPath + " " + strings.Join(e.withPresetArgs(args), " ")
+}
+
 func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOpts) (*ExecuteResult, error) {
 	result := &ExecuteResult{LogFn: opts.LogFn}
 

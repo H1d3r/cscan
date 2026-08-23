@@ -514,7 +514,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 
 	taskLogger("INFO", "Nuclei CLI: scanning %s (templates=%d, concurrency=%d, rate=%d)",
 		target, len(templatePaths), opts.Concurrency, opts.RateLimit)
-	taskLogger("INFO", "Nuclei CLI: args=%s", strings.Join(args, " "))
+	taskLogger("INFO", "Nuclei CLI: command: %s", s.executor.CommandLine(args))
 
 	// 进程超时 = 目标超时 + 30s 缓冲
 	processTimeout := time.Duration(opts.TargetTimeout+30) * time.Second

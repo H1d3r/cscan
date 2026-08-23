@@ -2676,10 +2676,11 @@ domainScanDone:
 							targetTimeout = 600 // 默认600秒
 						}
 
-						// 超时直接使用单目标超时，由自适应调度器管理并发和速率
-						w.taskLog(task.TaskId, LevelInfo, "POC scan: target timeout=%ds, assets=%d, groups=%d (concurrency/rate managed by adaptive scheduler)",
+						// 无阶段总预算：单目标超时由每个 nuclei 进程的 ProcessTimeout(targetTimeout+30s) 保证，
+						// 阶段 context 仅作取消信号，避免多组串行扫描被整体 deadline 截断后剩余分组全部瞬间失败
+						w.taskLog(task.TaskId, LevelInfo, "POC scan: target timeout=%ds (per-target), assets=%d, groups=%d, no phase deadline",
 							targetTimeout, len(allAssets), len(groups))
-						pocCtx, pocCancel := context.WithTimeout(ctx, time.Duration(targetTimeout)*time.Second)
+						pocCtx, pocCancel := context.WithCancel(ctx)
 
 						// 启动后台刷新协程
 						flushDone := make(chan struct{})
@@ -2791,10 +2792,11 @@ domainScanDone:
 						pocTargetTimeout = 600
 					}
 
-					// 超时直接使用单目标超时，由自适应调度器管理并发和速率
-					w.taskLog(task.TaskId, LevelInfo, "POC scan: target timeout=%ds, assets=%d (concurrency/rate managed by adaptive scheduler)",
+					// 无阶段总预算：单目标超时由每个 nuclei 进程的 ProcessTimeout(pocTargetTimeout+30s) 保证，
+					// 阶段 context 仅作取消信号，避免批量目标被整体 deadline 截断后剩余目标全部瞬间失败
+					w.taskLog(task.TaskId, LevelInfo, "POC scan: target timeout=%ds (per-target), assets=%d, no phase deadline",
 						pocTargetTimeout, len(allAssets))
-					pocCtx, pocCancel := context.WithTimeout(ctx, time.Duration(pocTargetTimeout)*time.Second)
+					pocCtx, pocCancel := context.WithCancel(ctx)
 
 					// 启动后台刷新协程
 					flushDone := make(chan struct{})
