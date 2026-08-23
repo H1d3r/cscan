@@ -55,6 +55,8 @@ type SubdomainBruteforceOptions struct {
 	RecursiveDepth    int    `json:"recursiveDepth"`    // 递归深度，默认2
 	RecursiveWordlist string `json:"recursiveWordlist"` // 递归爆破字典内容
 	WildcardDetect    bool   `json:"wildcardDetect"`    // 泛解析检测并处理
+	// OnVulnerabilityFound 发现子域接管时的流式回调，用于即时入库
+	OnVulnerabilityFound func(vul *Vulnerability) `json:"-"`
 }
 
 // Validate 验证 SubdomainBruteforceOptions 配置是否有效
@@ -336,7 +338,6 @@ dispatch:
 		}
 
 		taskLog("INFO", "Bruteforce: total %d unique assets with IP information from ksubdomain", len(result.Assets))
-		return result, nil
 	}
 
 	// 处理 dnsx 的结果（需要 DNS 解析）
@@ -366,6 +367,9 @@ dispatch:
 			}
 		}
 	}
+
+	// 子域接管检测不在此处执行：由 Worker 在合并 subfinder + bruteforce 全部子域后
+	// 统一调用 CheckTakeover，避免仅覆盖爆破结果
 
 	return result, nil
 }
@@ -823,8 +827,9 @@ func (s *SubdomainBruteforceScanner) extractSubdomainsFromJS(ctx context.Context
 	return subdomains
 }
 
-// checkSubdomainTakeover 检查子域接管漏洞
-func (s *SubdomainBruteforceScanner) checkSubdomainTakeover(ctx context.Context, assets []*Asset, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) {
+// CheckTakeover 检查子域接管漏洞，对判定可接管的子域生成漏洞记录并通过回调流式上报。
+// 由 Worker 在合并 subfinder + bruteforce 全部子域后统一调用
+func (s *SubdomainBruteforceScanner) CheckTakeover(ctx context.Context, assets []*Asset, opts *SubdomainBruteforceOptions, taskLog func(level, format string, args ...interface{})) []*Vulnerability {
 	var wg sync.WaitGroup
 
 	concurrent := opts.Concurrent
@@ -834,12 +839,27 @@ func (s *SubdomainBruteforceScanner) checkSubdomainTakeover(ctx context.Context,
 
 	taskChan := make(chan *Asset, concurrent)
 
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 5
+	}
 	// HTTP客户端
 	client := &http.Client{
-		Timeout: time.Duration(opts.Timeout) * time.Second,
+		Timeout: time.Duration(timeout) * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
+	}
+
+	var vuls []*Vulnerability
+	var mu sync.Mutex
+	reportVul := func(vul *Vulnerability) {
+		mu.Lock()
+		vuls = append(vuls, vul)
+		mu.Unlock()
+		if opts != nil && opts.OnVulnerabilityFound != nil {
+			opts.OnVulnerabilityFound(vul)
+		}
 	}
 
 	// 启动工作协程
@@ -860,6 +880,7 @@ func (s *SubdomainBruteforceScanner) checkSubdomainTakeover(ctx context.Context,
 						asset.TakeoverRisk = true
 						asset.TakeoverService = result.Service
 						asset.TakeoverCName = result.CName
+						reportVul(buildTakeoverVulnerability(result))
 					}
 				}
 			}
@@ -872,13 +893,43 @@ func (s *SubdomainBruteforceScanner) checkSubdomainTakeover(ctx context.Context,
 		case <-ctx.Done():
 			close(taskChan)
 			wg.Wait()
-			return
+			return vuls
 		case taskChan <- asset:
 		}
 	}
 
 	close(taskChan)
 	wg.Wait()
+	return vuls
+}
+
+// buildTakeoverVulnerability 将接管检测结果转换为标准漏洞记录。
+// Url/Port 采用规范值（http + 80）保证重扫去重键（host+port+pocFile+url）稳定，
+// 实际命中的协议与指纹写入 Result/Extra
+func buildTakeoverVulnerability(result *TakeoverResult) *Vulnerability {
+	severity := "high"
+	vulName := "Subdomain Takeover"
+	resultText := fmt.Sprintf("Subdomain takeover risk: %s CNAME points to %s (%s), fingerprint: %s",
+		result.Subdomain, result.CName, result.Service, result.Fingerprint)
+	if result.Service == "unknown" {
+		// CNAME 悬挂（目标不可解析）判定强度弱于指纹命中
+		severity = "medium"
+		resultText = fmt.Sprintf("Dangling CNAME: %s points to %s which is unresolvable, potential takeover",
+			result.Subdomain, result.CName)
+	}
+	return &Vulnerability{
+		Authority: result.Subdomain,
+		Host:      result.Subdomain,
+		Port:      80,
+		Url:       "http://" + result.Subdomain,
+		PocFile:   "subdomain-takeover",
+		Source:    "subdomain_takeover",
+		Severity:  severity,
+		VulName:   vulName,
+		Result:    resultText,
+		Extra:     fmt.Sprintf("cname=%s, service=%s, fingerprint=%s", result.CName, result.Service, result.Fingerprint),
+		Tags:      []string{"subdomain-takeover", "takeover"},
+	}
 }
 
 // checkTakeover 检查单个子域名的接管风险
@@ -914,11 +965,9 @@ func (s *SubdomainBruteforceScanner) checkTakeover(ctx context.Context, client *
 
 				resp, err := client.Do(req)
 				if err != nil {
-					// 连接失败可能意味着可接管
-					result.Vulnerable = true
-					result.Service = service
-					result.Fingerprint = "Connection failed - potential takeover"
-					return result
+					// 连接失败只说明该协议不可达，继续尝试下一个协议；
+					// 不能作为接管判定依据，否则大量仅支持 http/https 之一的目标会被误报
+					continue
 				}
 				defer resp.Body.Close()
 

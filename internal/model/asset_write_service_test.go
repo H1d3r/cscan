@@ -84,6 +84,7 @@ func TestVulWriteService_DeriveRiskSource(t *testing.T) {
 	}{
 		{"brutescan", "brutescan", VulRiskSourceWeakPass},
 		{"certcheck", "certcheck", VulRiskSourceCertExpiry},
+		{"subdomain_takeover", "subdomain_takeover", VulRiskSourceTakeover},
 		{"other", "nuclei", ""},
 	}
 

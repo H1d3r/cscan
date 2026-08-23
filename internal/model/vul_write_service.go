@@ -323,6 +323,8 @@ func deriveRiskSource(pbVul *ScannerVulnerability) string {
 		return VulRiskSourceWeakPass
 	case "certcheck":
 		return VulRiskSourceCertExpiry
+	case "subdomain_takeover":
+		return VulRiskSourceTakeover
 	}
 	return ""
 }

@@ -29,10 +29,12 @@ const (
 //   - auto:weakpass   弱口令（brutescan 产出）
 //   - auto:cert-expiry 证书到期（certcheck 双路产出）
 //   - auto:info-leak   敏感信息泄露（jsfinder/dirscan 产出，T3.4 复验）
+//   - auto:takeover    子域接管（subdomain_bruteforce 产出）
 const (
 	VulRiskSourceWeakPass    = "auto:weakpass"
 	VulRiskSourceCertExpiry = "auto:cert-expiry"
 	VulRiskSourceInfoLeak    = "auto:info-leak"
+	VulRiskSourceTakeover    = "auto:takeover"
 )
 
 type Vul struct {

@@ -1936,6 +1936,25 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			}
 		}
 
+		// 子域接管检测：覆盖 subfinder + bruteforce 发现的全部子域，命中即写入漏洞
+		if len(mergedAssets) > 0 {
+			if ts, ok := w.scanners["subdomain_bruteforce"].(*scanner.SubdomainBruteforceScanner); ok {
+				w.taskLog(task.TaskId, LevelInfo, "Takeover check: checking %d subdomains for takeover risk", len(mergedAssets))
+				takeoverVuls := ts.CheckTakeover(ctx, mergedAssets, &scanner.SubdomainBruteforceOptions{
+					Timeout:    10,
+					Concurrent: 20,
+					OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
+						w.saveVulResultWithFallback(ctx, task.MainTaskId, []*scanner.Vulnerability{vul})
+					},
+				}, func(level, format string, args ...interface{}) {
+					w.taskLog(task.TaskId, level, format, args...)
+				})
+				if len(takeoverVuls) > 0 {
+					w.taskLog(task.TaskId, LevelWarn, "Takeover check: %d subdomains vulnerable to takeover", len(takeoverVuls))
+				}
+			}
+		}
+
 		if len(mergedAssets) > 0 {
 			allAssets = append(allAssets, mergedAssets...)
 		}
