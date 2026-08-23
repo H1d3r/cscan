@@ -272,6 +272,8 @@ const tableData = ref([])
 const selectedRows = ref([])
 const stats = ref({})
 const isInitialLoad = ref(true)
+// 请求序号：快速切换搜索/翻页时旧响应可能晚于新响应返回，丢弃过期响应避免覆盖新数据
+let loadDataSeq = 0
 const pagination = reactive({
   page: 1,
   pageSize: 10,
@@ -387,6 +389,7 @@ async function loadData() {
 
   if (!props.api) return
 
+  const seq = ++loadDataSeq
   loading.value = true
 
   // Skip URL sync on initial mount to avoid race condition with parent components
@@ -427,6 +430,7 @@ async function loadData() {
     const finalPayload = props.transformPayload ? props.transformPayload(payload) : payload
 
     const res = await request.post(props.api, finalPayload)
+    if (seq !== loadDataSeq) return // 已有更新的请求发出，丢弃本次过期响应
     if (res.code === 0) {
       tableData.value = res.list || []
       pagination.total = res.total || 0
@@ -434,7 +438,7 @@ async function loadData() {
   } catch (error) {
     console.error('Failed to load table data:', error)
   } finally {
-    loading.value = false
+    if (seq === loadDataSeq) loading.value = false
   }
 }
 
