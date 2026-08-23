@@ -21,6 +21,28 @@ var AssetListProjection = bson.M{
 	"banner":          0,
 }
 
+// AssetAggProjection 域名/IP 列表与统计聚合专用投影（FindAllForAgg 使用）：
+// 仅保留跨全量文档去重/聚合所需字段（域名/IP/端口/标签/来源/时间），
+// 排除 screenshot/body/header/cert/banner/icon_hash_bytes 等大字段。
+var AssetAggProjection = bson.M{
+	"_id":             1,
+	"host":            1,
+	"authority":       1,
+	"port":            1,
+	"category":        1,
+	"ip":              1,
+	"domain":          1,
+	"service":         1,
+	"cname":           1,
+	"labels":          1,
+	"org_id":          1,
+	"new":             1,
+	"source":          1,
+	"create_time":     1,
+	"update_time":     1,
+	"first_seen_time": 1,
+}
+
 // AssetScreenshotProjection 资产清单/截图清单专用投影，保留 screenshot、icon_hash_bytes、header、body
 //
 // 已弃用：清单分页改用 AssetInventoryProjection（见下），以排除 body/header/banner 等大字段。

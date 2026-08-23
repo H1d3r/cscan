@@ -2,7 +2,6 @@ package logic
 
 import (
 	"context"
-	"encoding/base64"
 	"strings"
 
 	"cscan/api/internal/svc"
@@ -84,7 +83,8 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 			Service:    a.Service,
 			StatusCode: a.HttpStatus,
 			Title:      a.Title,
-			Screenshot: a.Screenshot,
+			// Screenshot/IconBase64 不在列表响应中携带（单页 20 条可达数百 KB），
+			// 前端拿到列表后走 /asset/media 按 id 懒加载
 			// 同一技术的来源后缀变体（"Nginx[httpx]" vs "Nginx[custom(id)]"）折叠为一条展示
 			Tech:       model.MergeAppsDedup(nil, a.App),
 			Labels:     a.Labels,
@@ -96,9 +96,6 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 			IconHash:   a.IconHash,
 			CreateTime: a.CreateTime.UnixMilli(),
 			UpdateTime: a.UpdateTime.UnixMilli(),
-		}
-		if len(a.IconHashBytes) > 0 {
-			item.IconBase64 = base64.StdEncoding.EncodeToString(a.IconHashBytes)
 		}
 		items = append(items, item)
 	}

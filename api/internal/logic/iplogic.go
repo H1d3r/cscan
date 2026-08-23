@@ -94,9 +94,9 @@ func (l *IPLogic) IPList(req *types.IPListReq) (*types.IPListResp, error) {
 		filter["$and"] = conditions
 	}
 
-	// 查询所有匹配的资产（用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner/screenshot/icon_hash_bytes 等大字段）
-	// 不用 Find(0,0) 无 limit 全字段加载，避免 OOM 和网络打满
-	assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 50000, "update_time")
+	// 查询所有匹配的资产做内存去重聚合。走 FindAllForAgg 全量查询 + AssetAggProjection 瘦投影：
+	// FindWithSort 会被 NormalizePage 把 pageSize 钳到 100，只取最新 100 条资产聚合会漏 IP。
+	assets, err := assetModel.FindAllForAgg(l.ctx, filter)
 	if err != nil {
 		l.Logger.Errorf("IPList 查询资产失败: %v", err)
 		return resp, nil
@@ -294,8 +294,8 @@ func (l *IPLogic) IPStat() (*types.IPStatResp, error) {
 			}
 		}
 
-		// IP 需要聚合 ip.ipv4.ip + host(IP)，用 FindWithSort+Projection 限制字段
-		assets, err := assetModel.FindWithSort(l.ctx, bson.M{}, 1, 100000, "update_time")
+		// IP 需要聚合 ip.ipv4.ip + host(IP)，全量查询 + 瘦投影（FindWithSort 会被钳到 100 条漏统计）
+		assets, err := assetModel.FindAllForAgg(l.ctx, bson.M{})
 		if err != nil {
 			l.Logger.Errorf("IPStat 查询资产失败: %v", err)
 			return resp, nil

@@ -154,9 +154,10 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 		filter["org_id"] = req.OrgId
 	}
 
-	// 查询所有匹配的资产（用 FindWithSort 走 AssetListProjection，排除 body/header/cert/banner/screenshot/icon_hash_bytes 等大字段）
-	// 不用 Find(0,0) 无 limit 全字段加载，避免 OOM 和网络打满
-	assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 100000, "update_time")
+	// 查询所有匹配的资产做内存去重聚合。走 FindAllForAgg 全量查询 + AssetAggProjection 瘦投影：
+	// 不能用 FindWithSort 传大 pageSize 绕过——NormalizePage 会把 pageSize 钳到 100，
+	// 只取最新 100 条资产去重会把老资产里的子域漏掉（列表数与目标详情统计对不上）。
+	assets, err := assetModel.FindAllForAgg(l.ctx, filter)
 	if err != nil {
 		l.Logger.Errorf("DomainList 查询资产失败: %v", err)
 		return resp, nil
@@ -278,8 +279,8 @@ func (l *DomainLogic) DomainStat() (*types.DomainStatResp, error) {
 
 		assetModel := l.svcCtx.GetAssetModel()
 
-		// 用 FindWithSort 走 AssetListProjection，避免拉 body/header 等大字段
-		assets, err := assetModel.FindWithSort(l.ctx, filter, 1, 100000, "update_time")
+		// 全量查询 + AssetAggProjection 瘦投影（FindWithSort 会被 NormalizePage 钳到 100 条导致漏统计）
+		assets, err := assetModel.FindAllForAgg(l.ctx, filter)
 		if err != nil {
 			l.Logger.Errorf("DomainStat 查询资产失败: %v", err)
 			return resp, nil

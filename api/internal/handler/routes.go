@@ -219,6 +219,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/list", Handler: asset.AssetTargetListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/detail", Handler: asset.AssetTargetDetailHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/assets", Handler: asset.AssetTargetAssetsHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/asset/media", Handler: asset.AssetMediaHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/groups", Handler: asset.AssetTargetGroupsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/certs", Handler: asset.AssetTargetCertsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/target/update", Handler: asset.AssetTargetUpdateHandler(svcCtx)},

@@ -408,6 +408,24 @@ func AssetTargetAssetsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
+// AssetMediaHandler 按资产 ID 批量获取截图/favicon（列表懒加载）
+func AssetMediaHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetMediaReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
+		l := logic.NewAssetMediaLogic(r.Context(), svcCtx)
+		resp, err := l.AssetMedia(&req)
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}
+
 // AssetTargetUpdateHandler 更新顶层资产用户字段
 func AssetTargetUpdateHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

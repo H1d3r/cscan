@@ -196,6 +196,15 @@ export function getAssetTargetAssets(data) {
   })
 }
 
+// 按资产 ID 批量获取截图/favicon（列表懒加载，列表响应不再携带大字段）
+export function getAssetMedia(data) {
+  return request({
+    url: '/asset/media',
+    method: 'post',
+    data
+  })
+}
+
 // 目标资产按维度聚合（host/port/ip/app/status）
 export function getAssetTargetGroups(data) {
   return request({

@@ -449,7 +449,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Search, Picture, Connection, OfficeBuilding, Briefcase, Refresh, Loading } from '@element-plus/icons-vue'
-import { getAssetTargetAssets, getAssetTargetGroups, getAssetTargetCerts, getAssetFilterOptions, getDomainList } from '@/api/asset'
+import { getAssetTargetAssets, getAssetTargetGroups, getAssetTargetCerts, getAssetFilterOptions, getAssetMedia, getDomainList } from '@/api/asset'
 import { formatRelativeTime, getStatusCodeClass, getStatusCodeText } from './targetViewUtils'
 import { getScreenshotDataUrl } from '@/utils/screenshot'
 import TechTag from '@/components/common/TechTag.vue'
@@ -470,7 +470,8 @@ const services = ref([])
 const servicesLoading = ref(false)
 const servicesTotal = ref(0)
 const servicesPage = ref(1)
-const servicesPageSize = 20
+// 10 条/页：服务行内嵌截图缩略图，页数据量过大会拖慢弱网下的列表加载
+const servicesPageSize = 10
 
 const groups = ref([])
 const groupsLoading = ref(false)
@@ -485,7 +486,7 @@ const subdomains = ref([])
 const subdomainsLoading = ref(false)
 const subdomainsTotal = ref(0)
 const subdomainsPage = ref(1)
-const subdomainsPageSize = 20
+const subdomainsPageSize = 10
 
 const refreshing = ref(false)
 let filterDebounce = null
@@ -539,11 +540,39 @@ async function fetchServices() {
     if (res?.data) {
       services.value = res.data.list || []
       servicesTotal.value = res.data.total || 0
+      // 截图/favicon 不随列表下发（单页可达数百 KB），列表先渲染、媒体再懒加载填充
+      patchServicesMedia()
     }
   } catch (err) {
     console.error('[TargetInventory] fetchServices error:', err)
   } finally {
     servicesLoading.value = false
+  }
+}
+
+// assetId → {screenshot, iconBase64}；翻页往返不重复请求
+const servicesMediaCache = new Map()
+
+async function patchServicesMedia() {
+  const rows = services.value
+  const missing = rows.filter(r => r.id && !servicesMediaCache.has(r.id))
+  if (missing.length) {
+    try {
+      const res = await getAssetMedia({ ids: missing.map(r => r.id) })
+      for (const m of res?.data || []) servicesMediaCache.set(m.id, m)
+      // 请求成功但响应缺失的 id 说明该资产无媒体，写空对象防止翻页反复查询；
+      // 请求失败则不写缓存，下次进入该页时重试
+      for (const r of missing) if (!servicesMediaCache.has(r.id)) servicesMediaCache.set(r.id, {})
+    } catch (err) {
+      console.error('[TargetInventory] patchServicesMedia error:', err)
+    }
+  }
+  // 响应期间可能已切页，仅在当前页数据仍匹配时回填
+  if (services.value !== rows) return
+  for (const r of rows) {
+    const m = servicesMediaCache.get(r.id) || {}
+    r.screenshot = m.screenshot || ''
+    r.iconBase64 = m.iconBase64 || ''
   }
 }
 

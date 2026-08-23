@@ -411,10 +411,67 @@ func (m *AssetModel) AggregateTargetGroups(ctx context.Context, pipeline []bson.
 	return rows, nil
 }
 
-// FindForTargetInventory 目标资产列表查询：保留 screenshot，排除 body/header/banner/cert 大字段，update_time 降序。
+// FindForTargetInventory 目标资产列表查询：排除 body/header/banner/cert/screenshot/icon_hash_bytes 大字段，update_time 降序。
+// 截图与 favicon 由前端拿到列表后经 /asset/media 按 id 懒加载，避免列表页一次携带全量截图（单页可达数百 KB）。
 func (m *AssetModel) FindForTargetInventory(ctx context.Context, filter bson.M, page, pageSize int) ([]Asset, error) {
 	page, pageSize = NormalizePage(page, pageSize)
-	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetInventoryProjection)
+	return m.findPagedWithProjection(ctx, filter, page, pageSize, AssetListProjection)
+}
+
+// FindAllForAgg 按 filter 全量查询（仅投影 AssetAggProjection，update_time 降序），
+// 供 DomainList/IPList/DomainStat/IPStat 等"全量文档去重聚合后再内存分页"的接口使用。
+// 不能走 FindWithSort：NormalizePage 出于外部接口防滥用把 pageSize 钳到 100，
+// 会把去重数据源截断成最新 100 条资产，导致列表数量与统计口径不一致。
+func (m *AssetModel) FindAllForAgg(ctx context.Context, filter bson.M) ([]Asset, error) {
+	opts := options.Find().
+		SetProjection(AssetAggProjection).
+		SetSort(bson.D{{Key: "update_time", Value: -1}})
+
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []Asset
+	for cursor.Next(ctx) {
+		var doc Asset
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, cursor.Err()
+}
+
+// FindMediaByIds 按资产 ID 批量查询媒体大字段（screenshot + icon_hash_bytes），供列表懒加载接口使用。
+func (m *AssetModel) FindMediaByIds(ctx context.Context, ids []string) ([]Asset, error) {
+	oids := make([]primitive.ObjectID, 0, len(ids))
+	for _, id := range ids {
+		if oid, err := primitive.ObjectIDFromHex(id); err == nil {
+			oids = append(oids, oid)
+		}
+	}
+	if len(oids) == 0 {
+		return nil, nil
+	}
+
+	opts := options.Find().SetProjection(bson.M{"_id": 1, "screenshot": 1, "icon_hash_bytes": 1})
+	cursor, err := m.coll.Find(ctx, bson.M{"_id": bson.M{"$in": oids}}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []Asset
+	for cursor.Next(ctx) {
+		var doc Asset
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, cursor.Err()
 }
 
 // FindForFingerprint 按指纹匹配所需字段查询（排除 screenshot/cert/banner 三个二进制大字段）

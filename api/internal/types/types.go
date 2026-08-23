@@ -4134,6 +4134,25 @@ type AssetTargetAssetsResp struct {
 	Data AssetTargetAssetsData   `json:"data"`
 }
 
+// AssetMediaReq 按资产 ID 批量获取截图/favicon 媒体字段（列表页懒加载用）
+type AssetMediaReq struct {
+	Ids []string `json:"ids"`
+}
+
+// AssetMediaItem 单个资产的媒体字段（无内容的字段省略）
+type AssetMediaItem struct {
+	Id         string `json:"id"`
+	Screenshot string `json:"screenshot,omitempty"`
+	IconBase64 string `json:"iconBase64,omitempty"`
+}
+
+// AssetMediaResp 媒体字段批量响应
+type AssetMediaResp struct {
+	Code int              `json:"code"`
+	Msg  string           `json:"msg"`
+	Data []AssetMediaItem `json:"data"`
+}
+
 // AssetTargetGroupsReq 目标资产按维度聚合（Hosts/Ports/IP/Technologies/StatusCode 子 Tab）
 type AssetTargetGroupsReq struct {
 	TargetId     string   `json:"targetId"`
