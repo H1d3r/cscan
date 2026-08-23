@@ -155,9 +155,12 @@ func (m *TaskRecoveryManager) checkTask(taskId string) {
 		if infoErr == nil && taskInfo != nil {
 			// taskInfo 存在但 execution 缺失：补建 execution info 并触发恢复
 			m.logger.Infof("Task %s has taskInfo but no execution info, rebuilding execution info", taskId)
-			// taskInfo.CreateTime 是 RFC3339 字符串，解析为 time.Time
+			// taskInfo.CreateTime 由 scheduler 写入，格式为 "2006-01-02 15:04:05"（本地时间）。
+			// 此前按 RFC3339 解析恒失败，StartTime 永远落到 fallback，兼容两种格式
 			var createTime time.Time
-			if t, err := time.Parse(time.RFC3339, taskInfo.CreateTime); err == nil {
+			if t, err := time.ParseInLocation("2006-01-02 15:04:05", taskInfo.CreateTime, time.Local); err == nil {
+				createTime = t
+			} else if t, err := time.Parse(time.RFC3339, taskInfo.CreateTime); err == nil {
 				createTime = t
 			} else {
 				createTime = time.Now().Add(-m.taskTimeout) // 解析失败按已超时处理
@@ -187,7 +190,13 @@ func (m *TaskRecoveryManager) checkTask(taskId string) {
 	}
 
 	// 检查 Worker 是否在线
-	workerOnline := m.isWorkerOnline(execInfo.WorkerName)
+	// WorkerName 为空的 execInfo 来自补建路径（checkTask / UpdateTaskProgress），
+	// isWorkerOnline("") 恒为 false，若据此判定离线会对实际仍在运行的任务误触发恢复（双跑）。
+	// 未知 worker 时只能依赖 LastUpdate 超时判断存活
+	workerOnline := true
+	if execInfo.WorkerName != "" {
+		workerOnline = m.isWorkerOnline(execInfo.WorkerName)
+	}
 
 	// 检查任务是否超时
 	taskTimedOut := time.Since(execInfo.LastUpdate) > m.taskTimeout
