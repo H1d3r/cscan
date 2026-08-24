@@ -1305,7 +1305,9 @@ func (l *CustomPocScanAssetsLogic) CustomPocScanAssets(req *types.CustomPocScanA
 	}
 
 	assetModel := l.svcCtx.GetAssetModel()
-	assets, err := assetModel.Find(l.ctx, filter, 0, 0)
+	// 全量查询：Find(0,0) 会被 NormalizePage 钳成第 1 页 20 条，导致只扫到 20 个目标。
+	// 改用 FindAllForAgg（不分页 + AssetAggProjection 瘦投影，含 authority/service/port/host，够 buildAssetUrl 用）。
+	assets, err := assetModel.FindAllForAgg(l.ctx, filter)
 	if err != nil {
 		l.Logger.Errorf("查询资产失败: %v", err)
 	}

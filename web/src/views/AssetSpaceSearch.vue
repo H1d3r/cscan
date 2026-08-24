@@ -7,14 +7,22 @@
           <h1>{{ $t('navigation.assetSpaceSearch') }}</h1>
           <p class="description">{{ $t('asset.spaceSearchDescription') }}</p>
         </div>
+        <div class="header-actions">
+          <el-radio-group v-model="listMode" size="default">
+            <el-radio-button value="target">{{ $t('asset.globalView.tabTargetView') }}</el-radio-button>
+            <el-radio-button value="global">{{ $t('asset.globalView.tabGlobalView') }}</el-radio-button>
+          </el-radio-group>
+        </div>
       </div>
       <AssetInventoryCardView
+        v-if="listMode === 'target'"
         ref="cardViewRef"
         @create-target="openAddDialog"
         @start-scan="handleStartScan"
         @view-target="handleViewTarget"
         @edit-target="handleEditTarget"
       />
+      <GlobalAssetView v-else />
     </template>
 
     <!-- Detail View -->
@@ -73,6 +81,7 @@ import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import AssetInventoryCardView from '@/components/asset/AssetInventoryCardView.vue'
 import TargetDetailView from '@/components/asset/TargetDetailView.vue'
+import GlobalAssetView from '@/components/asset/GlobalAssetView.vue'
 import { importAssets } from '@/api/asset'
 import { validateTargets } from '@/utils/target'
 
@@ -82,6 +91,7 @@ const { t } = useI18n()
 const selectedTargetId = ref('')
 const detailAutoSettings = ref(false)
 const cardViewRef = ref(null)
+const listMode = ref('target')
 
 function handleViewTarget(targetId) {
   detailAutoSettings.value = false
@@ -169,6 +179,11 @@ async function handleAddSubmit() {
 
 .page-header {
   margin-bottom: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 
   .header-content {
     h1 {
@@ -183,6 +198,10 @@ async function handleAddSubmit() {
       font-size: 14px;
       margin: 0;
     }
+  }
+
+  .header-actions {
+    flex-shrink: 0;
   }
 }
 

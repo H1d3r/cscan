@@ -10,7 +10,7 @@
 <script setup>
 import { computed, markRaw } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Loading, CircleCheckFilled, CircleCloseFilled, RemoveFilled } from '@element-plus/icons-vue'
+import { Clock, Loading, CircleCheckFilled, CircleCloseFilled, RemoveFilled, Minus } from '@element-plus/icons-vue'
 
 const props = defineProps({
   status: { type: String, default: '' },
@@ -20,6 +20,7 @@ const { t } = useI18n()
 
 // 对齐 open-asm JobStatusBadge：outline 胶囊 + 图标，色板 yellow/purple/green/red/gray
 const statusConfigs = {
+  unscanned:  { icon: markRaw(Minus),             color: '#9ca3af', labelKey: 'asset.targetView.statusUnscanned' },
   pending:    { icon: markRaw(Clock),             color: '#eab308', labelKey: 'asset.targetView.statusPending' },
   in_progress:{ icon: markRaw(Loading),           color: '#a855f7', labelKey: 'asset.targetView.statusInProgress' },
   completed:  { icon: markRaw(CircleCheckFilled), color: '#22c55e', labelKey: 'asset.targetView.statusCompleted' },
@@ -28,8 +29,9 @@ const statusConfigs = {
   skipped:    { icon: markRaw(RemoveFilled),      color: '#9ca3af', labelKey: 'asset.targetView.statusCancelled' },
 }
 
-const config = computed(() => statusConfigs[props.status] || statusConfigs.pending)
-const statusClass = computed(() => `status-${props.status || 'pending'}`)
+// 空/未知状态归为「未扫描」（如空间引擎导入资产），不再兜底成「等待中」
+const config = computed(() => statusConfigs[props.status] || statusConfigs.unscanned)
+const statusClass = computed(() => `status-${props.status || 'unscanned'}`)
 const label = computed(() => t(config.value.labelKey))
 </script>
 
@@ -57,6 +59,7 @@ const label = computed(() => t(config.value.labelKey))
   }
 }
 
+.status-unscanned   { color: #9ca3af; border-color: rgba(156, 163, 175, 0.4); }
 .status-pending     { color: #eab308; border-color: rgba(234, 179, 8, 0.4); }
 .status-in_progress { color: #a855f7; border-color: rgba(168, 85, 247, 0.4); }
 .status-completed   { color: #22c55e; border-color: rgba(34, 197, 94, 0.4); }

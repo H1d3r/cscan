@@ -33,6 +33,7 @@ const { t } = useI18n()
 
 // 对齐 open-asm 色板：Pending 黄 / In Progress 紫 / Completed 绿 / Failed 红 / Cancelled 灰
 const options = computed(() => [
+  { value: 'unscanned', label: t('asset.targetView.statusUnscanned'), color: '#9ca3af' },
   { value: 'pending', label: t('asset.targetView.statusPending'), color: '#eab308' },
   { value: 'in_progress', label: t('asset.targetView.statusInProgress'), color: '#a855f7' },
   { value: 'completed', label: t('asset.targetView.statusCompleted'), color: '#22c55e' },

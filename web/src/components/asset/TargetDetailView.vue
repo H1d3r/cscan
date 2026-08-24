@@ -16,7 +16,7 @@
         <span v-if="meta?.internalNetworkId" class="internal-badge">
           {{ $t('asset.targetView.internalBadge') }}
         </span>
-        <TargetStatusBadge :status="meta?.scanStatus || 'pending'" />
+        <TargetStatusBadge :status="meta?.scanStatus || ''" />
         <div v-if="meta?.labels && meta.labels.length" class="header-labels">
           <el-tag v-for="label in meta.labels.slice(0, 5)" :key="label" size="small" class="header-label-tag">
             {{ label }}

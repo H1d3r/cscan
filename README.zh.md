@@ -11,14 +11,10 @@
 [![Fingerprints](https://img.shields.io/badge/%E6%8C%87%E7%BA%B9-38920%2B-orange)](#平台亮点)
 [![POCs](https://img.shields.io/badge/POC-9000%2B-red)](#平台亮点)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.5-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.6-green)](VERSION)
 
 </div>
 
-## 平台亮点
-
-- **内置 38920+ 条指纹规则**：被动指纹 38920 条（body/title/header/icon_hash 等语法，构建时内置开箱即用），另有 90 类产品主动指纹探测路径
-- **内置 9000+ 个 POC**：全量集成 Nuclei 官方 POC 模板库并支持在线更新，兼容自定义 POC 与高级 POC 扩展包（见下方下载入口）
 
 <table width="100%">
   <tr>

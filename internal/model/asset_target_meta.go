@@ -449,7 +449,10 @@ func (m *AssetTargetMetaModel) FindPage(ctx context.Context, targetType, query s
 	if targetType != "" {
 		filter["target_type"] = targetType
 	}
-	if scanStatus != "" {
+	if scanStatus == "unscanned" {
+		// 未扫描：空间引擎等导入资产 scan_status 为空/缺失，归为该类
+		filter["scan_status"] = bson.M{"$in": []interface{}{nil, ""}}
+	} else if scanStatus != "" {
 		filter["scan_status"] = scanStatus
 	}
 	if source != "" {

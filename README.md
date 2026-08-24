@@ -13,14 +13,10 @@
 [![Fingerprints](https://img.shields.io/badge/Fingerprints-38920%2B-orange)](#highlights)
 [![POCs](https://img.shields.io/badge/POCs-9000%2B-red)](#highlights)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.5-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.6-green)](VERSION)
 
 </div>
 
-## Highlights
-
-- **38,920+ built-in fingerprint rules** — 38,920 passive fingerprints (body/title/header/icon_hash syntax, bundled out of the box) plus active probing paths for 90 products
-- **9,000+ built-in POCs** — the full official Nuclei template library bundled with online updates, compatible with custom POCs and the advanced POC pack (see download link below)
 
 <table width="100%">
   <tr>
