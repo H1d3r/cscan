@@ -248,7 +248,16 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 	}
 
 	stdoutPipe.Close()
-	<-done
+	cmdErr := <-done
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read stdout: %w", err)
+	}
+	if cmdErr != nil {
+		if err := execCtx.Err(); err != nil {
+			return err
+		}
+		return cmdErr
+	}
 	return nil
 }
 

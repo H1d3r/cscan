@@ -336,9 +336,10 @@ dispatch:
 	return result, nil
 }
 
-// ScanBatch 对一批目标 URL 执行批量 POC 扫描（CLI 模式）
-// 兼容旧 SDK 时代的调用接口：注入自定义 POC 模板，逐目标运行 nuclei CLI，
-// 聚合漏洞并通过 OnVulnerabilityFound 回调实时上报
+// ScanBatch 对一批目标 URL 执行批量 POC 扫描（单进程 CLI 模式）
+// 注入自定义 POC 模板，将全部目标写入临时列表文件后启动【单个】nuclei 进程（-list）批量扫描，
+// 由 nuclei 进程内部按 -concurrency 并发消化目标；流式读取 -jsonl 输出，
+// 通过 OnVulnerabilityFound 回调实时上报并入库。
 func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *NucleiOptions, taskLogger func(level, format string, args ...interface{})) ([]*Vulnerability, error) {
 	taskLog := func(level, format string, args ...interface{}) {
 		if taskLogger != nil {
@@ -378,7 +379,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		opts.Concurrency = 50
 	}
 
-	taskLog("INFO", "Batch scan: %d targets (CLI mode)", len(targets))
+	taskLog("INFO", "Batch scan: %d targets (single-process CLI mode)", len(targets))
 
 	customTemplatePaths, err := s.prepareTemplates(opts, taskLog)
 	if err != nil {
@@ -389,82 +390,94 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		taskLog("ERROR", "No usable POC templates loaded")
 		return nil, fmt.Errorf("no usable POC templates")
 	}
+	templateDir := filepath.Dir(customTemplatePaths[0])
+
+	// 将全部目标写入临时列表文件，交给单个 nuclei 进程 -list 批量消化，
+	// 由 nuclei 进程内部按 -concurrency 并发，而非每目标一个进程。
+	targetFile, err := os.CreateTemp("", "nuclei-targets-*.txt")
+	if err != nil {
+		return nil, fmt.Errorf("create target list file: %w", err)
+	}
+	targetFilePath := targetFile.Name()
+	defer os.Remove(targetFilePath)
+	if _, err := targetFile.WriteString(strings.Join(targets, "\n") + "\n"); err != nil {
+		targetFile.Close()
+		return nil, fmt.Errorf("write target list file: %w", err)
+	}
+	targetFile.Close()
+
+	// 进程超时 = 目标数 × POC模板数 × 30s（每 POC×目标 30s 累加），下限 60s，上限 12h 封顶
+	const perUnitSeconds = 30
+	totalSeconds := len(targets) * len(customTemplatePaths) * perUnitSeconds
+	if totalSeconds < 60 {
+		totalSeconds = 60
+	}
+	if totalSeconds > 43200 { // 12h
+		totalSeconds = 43200
+	}
+	processTimeout := time.Duration(totalSeconds) * time.Second
+
+	args := []string{
+		"-list", targetFilePath,
+		"-jsonl",
+		"-silent",
+		"-timeout", fmt.Sprintf("%d", opts.TargetTimeout),
+		"-retries", fmt.Sprintf("%d", opts.Retries),
+		"-rate-limit", fmt.Sprintf("%d", opts.RateLimit),
+		"-concurrency", fmt.Sprintf("%d", opts.Concurrency),
+		"-bulk-size", "25",
+		"-disable-update-check",
+		"-t", templateDir,
+	}
+	for _, header := range opts.CustomHeaders {
+		args = append(args, "-header", header)
+	}
+
+	taskLog("INFO", "Nuclei: scanning %d targets in single process (templates=%d, concurrency=%d, rate=%d, timeout=%v)",
+		len(targets), len(customTemplatePaths), opts.Concurrency, opts.RateLimit, processTimeout)
+	taskLog("INFO", "Nuclei CLI: command: %s", s.executor.CommandLine(args))
 
 	var allVuls []*Vulnerability
 	seen := make(map[string]bool)
 
-	// 并发 Worker Pool：每个目标一个 nuclei 进程，完成一个补一个
-	concurrency := opts.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	if concurrency > 5 {
-		concurrency = 5
-	}
-	if concurrency > len(targets) {
-		concurrency = len(targets)
-	}
-	taskLog("INFO", "Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
-
-	type targetResult struct {
-		vuls []*Vulnerability
-		err  error
-	}
-	targetChan := make(chan string, len(targets))
-	resultChan := make(chan targetResult, len(targets))
-	var scanWg sync.WaitGroup
-
-	for i := 0; i < concurrency; i++ {
-		scanWg.Add(1)
-		go func() {
-			defer scanWg.Done()
-			for target := range targetChan {
-				select {
-				case <-ctx.Done():
-					resultChan <- targetResult{err: ctx.Err()}
-					return
-				default:
-				}
-				vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, taskLogger)
-				resultChan <- targetResult{vuls: vuls, err: err}
-			}
-		}()
-	}
-
-dispatch:
-	for _, target := range targets {
-		select {
-		case <-ctx.Done():
-			break dispatch
-		case targetChan <- target:
+	// 流式读取 nuclei -jsonl 输出，边扫边通过 OnVulnerabilityFound 实时入库
+	streamErr := s.executor.StreamLines(ctx, args, func(line string) (bool, error) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return true, nil
 		}
-	}
-	close(targetChan)
-
-	go func() {
-		scanWg.Wait()
-		close(resultChan)
-	}()
-
-	for res := range resultChan {
-		if res.err != nil {
-			taskLog("WARN", "Nuclei scan error: %v", res.err)
-			continue
+		var event NucleiResultEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			taskLog("WARN", "Nuclei CLI: json unmarshal skipped: %v | line=%s", err, line)
+			return true, nil
 		}
-		for _, vul := range res.vuls {
-			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
-			if !seen[vulKey] {
-				seen[vulKey] = true
-				allVuls = append(allVuls, vul)
-				if opts.OnVulnerabilityFound != nil {
-					opts.OnVulnerabilityFound(vul)
-				}
-			}
+		if !event.MatcherStatus {
+			return true, nil
 		}
+		vul := s.convertCLIResult(&event, event.URL)
+		if vul == nil {
+			return true, nil
+		}
+		vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
+		if seen[vulKey] {
+			return true, nil
+		}
+		seen[vulKey] = true
+		allVuls = append(allVuls, vul)
+		taskLog("INFO", "  Found: %s - %s [%s] -> %s",
+			event.TemplateID, event.Info.Name, event.Info.Severity, vul.Url)
+		if opts.OnVulnerabilityFound != nil {
+			opts.OnVulnerabilityFound(vul)
+		}
+		return true, nil
+	}, ExecuteOpts{Timeout: processTimeout, LogFn: taskLog})
+
+	if streamErr != nil {
+		taskLog("WARN", "Nuclei batch scan stream error: %v", streamErr)
 	}
 
 	taskLog("INFO", "Batch scan completed, %d targets, %d vuls", len(targets), len(allVuls))
-	return allVuls, nil
+	return allVuls, streamErr
 }
 
 func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, opts *NucleiOptions, templatePaths []string, taskLogger func(level, format string, args ...interface{})) ([]*Vulnerability, error) {
