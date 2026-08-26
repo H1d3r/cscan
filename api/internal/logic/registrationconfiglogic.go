@@ -15,6 +15,18 @@ import (
 
 const registrationConfigKey = "registration_config"
 
+// loadRegistrationConfig 读取注册配置；未配置或读取失败时返回默认值（关闭注册 + 需审核）
+func loadRegistrationConfig(ctx context.Context, svcCtx *svc.ServiceContext) types.RegistrationConfig {
+	collection := svcCtx.MongoClient.Database(svcCtx.Config.Mongo.DbName).Collection("system_config")
+	var result struct {
+		Config types.RegistrationConfig `bson:"config"`
+	}
+	if err := collection.FindOne(ctx, bson.M{"key": registrationConfigKey}).Decode(&result); err != nil {
+		return types.RegistrationConfig{Enabled: false, RequireApproval: true}
+	}
+	return result.Config
+}
+
 // RegistrationConfigGetLogic 获取注册配置
 type RegistrationConfigGetLogic struct {
 	logx.Logger
@@ -31,31 +43,15 @@ func NewRegistrationConfigGetLogic(ctx context.Context, svcCtx *svc.ServiceConte
 }
 
 func (l *RegistrationConfigGetLogic) Get() (*types.RegistrationConfigResp, error) {
-	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("system_config")
-
-	var result struct {
-		Key    string                   `bson:"key"`
-		Config types.RegistrationConfig `bson:"config"`
-	}
-
-	err := collection.FindOne(l.ctx, bson.M{"key": registrationConfigKey}).Decode(&result)
-	if err != nil {
-		// 未配置时返回默认值：关闭注册 + 需要审核
-		return &types.RegistrationConfigResp{
-			Code: 0,
-			Msg:  "success",
-			Config: &types.RegistrationConfig{
-				Enabled:         false,
-				RequireApproval: true,
-				UpdateTime:      time.Now().Format("2006-01-02 15:04:05"),
-			},
-		}, nil
+	config := loadRegistrationConfig(l.ctx, l.svcCtx)
+	if config.UpdateTime == "" {
+		config.UpdateTime = time.Now().Format("2006-01-02 15:04:05")
 	}
 
 	return &types.RegistrationConfigResp{
 		Code:   0,
 		Msg:    "success",
-		Config: &result.Config,
+		Config: &config,
 	}, nil
 }
 

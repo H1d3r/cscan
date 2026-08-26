@@ -62,7 +62,7 @@
             {{ $t('auth.login') }}
           </el-button>
         </el-form-item>
-        <div class="form-footer">
+        <div v-if="registerEnabled" class="form-footer">
           <span class="toggle-text" @click="toggleMode">
             {{ $t('auth.noAccount') }} <span class="toggle-link">{{ $t('auth.register') }}</span>
           </span>
@@ -149,6 +149,7 @@ const loginLoading = ref(false)
 const registerLoading = ref(false)
 const systemHasUsers = ref(null) // null=未检测, false=无用户(首次部署), true=已有用户
 const systemChecking = ref(true) // 系统状态检测中，避免登录表单先闪现
+const registerEnabled = ref(false) // 注册开关（后端 /system/status 返回，默认关闭）
 
 const showSetupWizard = computed(() => systemHasUsers.value === false)
 
@@ -174,6 +175,7 @@ async function checkSystemStatus() {
     const data = await res.json()
     if (data.code === 0) {
       systemHasUsers.value = data.hasUsers
+      registerEnabled.value = data.registerEnabled === true
     }
   } catch (e) {
     // 检测失败不影响正常登录流程
@@ -191,6 +193,8 @@ onMounted(() => {
 // 向导完成后刷新系统状态，切回登录界面
 function onWizardCompleted() {
   systemHasUsers.value = true
+  // 首装完成后注册默认关闭，需管理员显式开启
+  registerEnabled.value = false
 }
 
 const validateConfirmPassword = (rule, value, callback) => {
@@ -221,6 +225,8 @@ const registerRules = computed(() => ({
 }))
 
 function toggleMode() {
+  // 注册关闭时禁止切入注册模式（入口已隐藏，此处兜底）
+  if (!isRegisterMode.value && !registerEnabled.value) return
   isRegisterMode.value = !isRegisterMode.value
 }
 

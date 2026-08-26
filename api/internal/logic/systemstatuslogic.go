@@ -14,10 +14,11 @@ const firstDeployCompletedKey = "first_deploy_completed"
 
 // SystemStatusResp 系统状态响应
 type SystemStatusResp struct {
-	Code          int    `json:"code"`
-	Msg           string `json:"msg"`
-	HasUsers      bool   `json:"hasUsers"`      // 是否已有用户（false=首次部署）
-	IsFirstDeploy bool   `json:"isFirstDeploy"` // 是否为首次部署
+	Code            int    `json:"code"`
+	Msg             string `json:"msg"`
+	HasUsers        bool   `json:"hasUsers"`        // 是否已有用户（false=首次部署）
+	IsFirstDeploy   bool   `json:"isFirstDeploy"`   // 是否为首次部署
+	RegisterEnabled bool   `json:"registerEnabled"` // 注册功能是否开放
 }
 
 // SystemStatusLogic 系统状态检测逻辑
@@ -37,6 +38,9 @@ func NewSystemStatusLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Syst
 
 // Check 检查系统是否已有用户（公开接口，无需认证）
 func (l *SystemStatusLogic) Check() (*SystemStatusResp, error) {
+	// 注册开关：登录页据此决定是否展示注册入口
+	registerEnabled := loadRegistrationConfig(l.ctx, l.svcCtx).Enabled
+
 	// 先检查是否有首装完成标记
 	collection := l.svcCtx.MongoClient.Database(l.svcCtx.Config.Mongo.DbName).Collection("system_config")
 	var flagDoc struct {
@@ -46,10 +50,11 @@ func (l *SystemStatusLogic) Check() (*SystemStatusResp, error) {
 	if err == nil && flagDoc.Value {
 		// 已完成首装，恒返回 hasUsers=true
 		return &SystemStatusResp{
-			Code:          0,
-			Msg:           "success",
-			HasUsers:      true,
-			IsFirstDeploy: false,
+			Code:            0,
+			Msg:             "success",
+			HasUsers:        true,
+			IsFirstDeploy:   false,
+			RegisterEnabled: registerEnabled,
 		}, nil
 	}
 
@@ -78,5 +83,7 @@ func (l *SystemStatusLogic) Check() (*SystemStatusResp, error) {
 		Msg:           "success",
 		HasUsers:      hasUsers,
 		IsFirstDeploy: !hasUsers,
+		// 首装无用户时注册必然可用（首位 superadmin 创建不受开关限制）
+		RegisterEnabled: hasUsers == false || registerEnabled,
 	}, nil
 }
