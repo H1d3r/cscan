@@ -15,7 +15,7 @@
         </div>
         <el-menu ref="menuRef" :default-active="$route.path" :default-openeds="defaultOpeneds" :collapse="isCollapse"
           router :unique-opened="false">
-          <template v-for="(group, gi) in menuData" :key="group.index || `g-${gi}`">
+          <template v-for="(group, gi) in filteredMenuData" :key="group.index || `g-${gi}`">
             <div v-if="group.type === 'divider'" v-show="!searchKeyword" class="menu-divider"></div>
             <el-menu-item v-else-if="group.type === 'item' && (!group.adminOnly || isAdmin)"
               v-show="!searchKeyword || matchLabel(group.label)" :index="group.index">
@@ -148,8 +148,24 @@ const searchKeyword = ref('')
 const menuRef = ref()
 const isAdmin = computed(() => userStore.role === 'admin' || userStore.role === 'superadmin')
 
+// 根据用户角色的 menuPaths 过滤菜单（menuPaths 为空表示不受限）
+const filteredMenuData = computed(() => {
+  const permitted = userStore.menuPaths
+  if (!permitted || permitted.length === 0) return menu
+
+  return menu
+    .map(group => group.type === 'submenu'
+      ? { ...group, items: group.items.filter(item => permitted.includes(item.index)) }
+      : group)
+    .filter(group => {
+      if (group.type === 'divider') return true
+      if (group.type === 'item') return permitted.includes(group.index)
+      return group.items.length > 0
+    })
+})
+
 // 菜单数据结构（数据驱动渲染 + 搜索过滤）
-const menuData = computed(() => [
+const menu = [
   { type: 'item', index: '/dashboard', icon: Odometer, label: t('navigation.dashboard') },
   { type: 'submenu', index: 'asset-menu', icon: Monitor, label: t('navigation.assetManagement'), items: [
     { index: '/asset-management/space-search', icon: Search, label: t('navigation.assetSpaceSearch') },
@@ -187,8 +203,9 @@ const menuData = computed(() => [
     { index: '/registration-config', icon: UserFilled, label: t('settings.registration.title'), adminOnly: true },
     { index: '/organization', icon: OfficeBuilding, label: t('navigation.organizationManagement'), adminOnly: true },
     { index: '/settings-branding', icon: Picture, label: t('navigation.brandingConfig'), adminOnly: true },
+    { index: '/settings-role', icon: User, label: t('navigation.roleManagement'), adminOnly: true },
   ]},
-])
+]
 
 function matchLabel(label) {
   if (!searchKeyword.value) return true
@@ -200,7 +217,7 @@ function subMenuHasMatch(group) {
   return group.items.some(item => (!item.adminOnly || isAdmin.value) && matchLabel(item.label))
 }
 
-const hasAnyResult = computed(() => menuData.value.some(group => {
+const hasAnyResult = computed(() => filteredMenuData.value.some(group => {
   if (group.type === 'divider') return false
   if (group.adminOnly && !isAdmin.value) return false
   if (group.type === 'item') return matchLabel(group.label)
@@ -212,7 +229,7 @@ const hasAnyResult = computed(() => menuData.value.some(group => {
 watch(searchKeyword, (val) => {
   if (!menuRef.value) return
   nextTick(() => {
-    menuData.value.forEach(group => {
+    menu.forEach(group => {
       if (group.type !== 'submenu') return
       if (val && subMenuHasMatch(group)) {
         menuRef.value.open(group.index)

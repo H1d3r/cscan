@@ -20,6 +20,7 @@ import (
 	"cscan/api/internal/handler/organization"
 	"cscan/api/internal/handler/poc"
 	"cscan/api/internal/handler/report"
+	"cscan/api/internal/handler/role"
 	"cscan/api/internal/handler/subdomain"
 	"cscan/api/internal/handler/subfinder"
 	"cscan/api/internal/handler/task"
@@ -470,6 +471,14 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/batch-analyze", Handler: dirscan.DirScanAIBatchAnalyzeHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/batch-progress", Handler: dirscan.DirScanAIBatchProgressHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/stop-batch", Handler: dirscan.DirScanAIStopBatchHandler(svcCtx)},
+
+		// 角色管理
+		{Method: http.MethodPost, Path: "/api/v1/role/list", Handler: role.RoleListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/detail", Handler: role.RoleDetailHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/create", Handler: role.RoleCreateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/update", Handler: role.RoleUpdateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/delete", Handler: role.RoleDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/menus/sync", Handler: role.RoleSyncMenusHandler(svcCtx)},
 
 		// 通知配置（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/notify/config/list", Handler: notify.NotifyConfigListHandler(svcCtx)},

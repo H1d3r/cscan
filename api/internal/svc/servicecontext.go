@@ -47,6 +47,7 @@ type ServiceContext struct {
 	WeakpassDictModel       *model.WeakpassDictModel
 	SubfinderProviderModel  *model.SubfinderProviderModel
 	TechIconModel           *model.TechIconModel
+	RoleModel               *model.RoleModel
 
 	// 技术栈图标元数据（wappalyzergo 内嵌指纹解析出的 名称→图标文件名 映射）
 	TechIconMeta *TechIconMeta
@@ -164,6 +165,7 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		WeakpassDictModel:       model.NewWeakpassDictModel(mongoDB),
 		SubfinderProviderModel:  model.NewSubfinderProviderModel(mongoDB),
 		TechIconModel:           model.NewTechIconModel(mongoDB),
+		RoleModel:               model.NewRoleModel(mongoDB),
 		TechIconMeta:            NewTechIconMeta(),
 		Scheduler:               scheduler.NewScheduler(rdb),
 		ScanResultService:       NewScanResultService(mongoDB),

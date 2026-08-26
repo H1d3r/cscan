@@ -89,3 +89,28 @@ export function getOnboardingStatus() {
 export function completeOnboarding() {
   return request.post('/user/onboarding/complete')
 }
+
+// ==================== 角色管理 ====================
+export function getRoleList(data) {
+  return request.post('/role/list', data)
+}
+
+export function getRoleDetail(data) {
+  return request.post('/role/detail', data)
+}
+
+export function createRole(data) {
+  return request.post('/role/create', data)
+}
+
+export function updateRole(data) {
+  return request.post('/role/update', data)
+}
+
+export function deleteRole(data) {
+  return request.post('/role/delete', data)
+}
+
+export function syncRoleMenus() {
+  return request.post('/role/menus/sync')
+}

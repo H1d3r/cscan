@@ -28,12 +28,13 @@ type LoginReq struct {
 }
 
 type LoginResp struct {
-	Code     int    `json:"code"`
-	Msg      string `json:"msg"`
-	Token    string `json:"token"`
-	UserId   string `json:"userId"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	Code      int      `json:"code"`
+	Msg       string   `json:"msg"`
+	Token     string   `json:"token"`
+	UserId    string   `json:"userId"`
+	Username  string   `json:"username"`
+	Role      string   `json:"role"`
+	MenuPaths []string `json:"menuPaths,omitempty"`
 }
 
 type UserInfo struct {
@@ -3237,6 +3238,57 @@ type CompareVersionsResp struct {
 	VulnsAdded       int64             `json:"vulnsAdded"`
 	VulnsRemoved     int64             `json:"vulnsRemoved"`
 	ComparisonDetail string            `json:"comparisonDetail"`
+}
+
+// ==================== 角色管理 ====================
+
+// RoleInfo 角色信息
+type RoleInfo struct {
+	Id            interface{} `json:"id"`
+	Name          string      `json:"name"`
+	DisplayName   string      `json:"displayName"`
+	Description   string      `json:"description,omitempty"`
+	MenuPaths     []string    `json:"menuPaths"`
+	IsBuiltIn     bool        `json:"isBuiltIn"`
+	IsSuperadmin  bool        `json:"isSuperadmin"`
+	CreateTime    string      `json:"createTime"`
+	UpdateTime    string      `json:"updateTime"`
+}
+
+// RoleListResp 角色列表响应
+type RoleListResp struct {
+	Code int        `json:"code"`
+	Msg  string     `json:"msg"`
+	List []RoleInfo `json:"list"`
+}
+
+// RoleReq 角色查询请求（按 name）
+type RoleReq struct {
+	Name string `json:"name"`
+}
+
+// RoleCreateReq 创建角色请求
+type RoleCreateReq struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName"`
+	Description string   `json:"description,optional"`
+	MenuPaths   []string `json:"menuPaths"`
+}
+
+// RoleUpdateReq 更新角色请求
+type RoleUpdateReq struct {
+	Name         string   `json:"name"`
+	DisplayName  string   `json:"displayName,optional"`
+	Description  string   `json:"description,optional"`
+	MenuPaths    []string `json:"menuPaths,optional"`
+	IsSuperadmin *bool    `json:"isSuperadmin,optional"`
+}
+
+// RoleMenusResp 角色菜单权限响应
+type RoleMenusResp struct {
+	Code      int      `json:"code"`
+	Msg       string   `json:"msg"`
+	MenuPaths []string `json:"menuPaths"`
 }
 
 // ==================== 任务分片管理 ====================

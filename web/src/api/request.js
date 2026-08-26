@@ -18,7 +18,8 @@ request.interceptors.request.use(
     const userStore = useUserStore()
 
     // 未登录时，除登录/健康检查等公开接口外，拒绝所有需要认证的请求
-    const publicEndpoints = ['/login', '/register', '/health', '/system/status']
+    // branding/theme 配置后端为公开只读（登录页也需展示），此处放行
+    const publicEndpoints = ['/login', '/register', '/health', '/system/status', '/branding/config/get', '/theme/config/get']
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint))
 
     if (!userStore.token && !isPublicEndpoint) {

@@ -95,13 +95,23 @@ func (l *LoginLogic) Login(req *types.LoginReq) (resp *types.LoginResp, err erro
 		return nil, err
 	}
 
+	// 获取角色菜单权限
+	menuPaths := []string{}
+	if roleMenu, err := l.svcCtx.RoleModel.FindByName(l.ctx, role); err == nil && roleMenu != nil {
+		menuPaths = roleMenu.MenuPaths
+	}
+	if len(menuPaths) == 0 {
+		menuPaths = model.MenuPathList()
+	}
+
 	return &types.LoginResp{
-		Code:     0,
-		Msg:      "登录成功",
-		Token:    token,
-		UserId:   user.Id.Hex(),
-		Username: user.Username,
-		Role:     role,
+		Code:      0,
+		Msg:       "登录成功",
+		Token:     token,
+		UserId:    user.Id.Hex(),
+		Username:  user.Username,
+		Role:      role,
+		MenuPaths: menuPaths,
 	}, nil
 }
 

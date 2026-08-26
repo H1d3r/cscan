@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as loginApi, getUserList, getUserProfile } from '@/api/auth'
+import { login as loginApi, getUserList, getUserProfile, syncRoleMenus } from '@/api/auth'
 
 // 默认头像路径
 export const DEFAULT_AVATAR = '/default-avatar.jpg'
@@ -11,6 +11,7 @@ export const useUserStore = defineStore('user', () => {
   const username = ref(localStorage.getItem('username') || '')
   const role = ref(localStorage.getItem('role') || '')
   const avatar = ref(localStorage.getItem('avatar') || '')
+  const menuPaths = ref(JSON.parse(localStorage.getItem('menuPaths') || '[]'))
   const profile = ref({
     email: '',
     phone: '',
@@ -43,6 +44,10 @@ export const useUserStore = defineStore('user', () => {
       localStorage.setItem('userId', res.userId)
       localStorage.setItem('username', res.username)
       localStorage.setItem('role', res.role)
+      if (res.menuPaths && Array.isArray(res.menuPaths)) {
+        menuPaths.value = res.menuPaths
+        localStorage.setItem('menuPaths', JSON.stringify(res.menuPaths))
+      }
 
       await refreshProfile()
     }
@@ -108,6 +113,7 @@ export const useUserStore = defineStore('user', () => {
     username.value = ''
     role.value = ''
     avatar.value = ''
+    menuPaths.value = []
     profile.value = { email: '', phone: '', status: '', lastLoginTime: 0, createTime: 0 }
 
     localStorage.removeItem('token')
@@ -115,6 +121,12 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('username')
     localStorage.removeItem('role')
     localStorage.removeItem('avatar')
+    localStorage.removeItem('menuPaths')
+  }
+
+  function setMenuPaths(paths) {
+    menuPaths.value = paths || []
+    localStorage.setItem('menuPaths', JSON.stringify(menuPaths.value))
   }
 
   return {
@@ -123,6 +135,7 @@ export const useUserStore = defineStore('user', () => {
     username,
     role,
     avatar,
+    menuPaths,
     avatarSrc,
     profile,
     isLoggedIn,
@@ -132,6 +145,7 @@ export const useUserStore = defineStore('user', () => {
     setAvatar,
     setUsername,
     setProfile,
+    setMenuPaths,
     refreshProfile,
     refreshAvatar
   }

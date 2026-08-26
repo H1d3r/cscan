@@ -131,6 +131,7 @@
     "none": "无",
     "operation": "操作",
     "status": "状态",
+    "custom": "自定义",
     "createTime": "创建时间",
     "updateTime": "更新时间",
     "description": "描述",
@@ -263,6 +264,7 @@
     "riskSensitiveDir": "敏感目录/文件",
     "riskVuln": "漏洞管理",
     "brandingConfig": "外观配置",
+    "roleManagement": "角色管理",
     "aiConfig": "AI配置",
     "certAsset": "证书",
     "scanConfig": "扫描配置"
@@ -3331,7 +3333,8 @@
     "subdomainConfig": "子域名扫描配置",
     "notifyConfig": "通知设置",
     "reverifyConfig": "持续复验配置",
-    "brandingConfig": "外观配置"
+    "brandingConfig": "外观配置",
+    "RoleManagement": "角色管理"
   },
   "userManagement": {
     "status": {
@@ -3341,6 +3344,25 @@
       "approve": "审核通过"
     },
     "confirmApprove": "确定通过审核？通过后用户可正常登录。"
+  },
+  "roleManagement": {
+    "title": "角色管理",
+    "newRole": "新建角色",
+    "editRole": "编辑角色",
+    "roleName": "角色名称",
+    "displayName": "显示名称",
+    "menuPermissions": "菜单权限",
+    "noPermissions": "无权限",
+    "availableMenus": "可选菜单",
+    "selectedMenus": "已选菜单",
+    "builtIn": "内置",
+    "superadmin": "超级管理员",
+    "superadminTip": "设置为超级管理员角色，拥有全部权限",
+    "pleaseEnterRoleName": "请输入角色名称",
+    "pleaseEnterDisplayName": "请输入显示名称",
+    "pleaseEnterDescription": "请输入描述",
+    "confirmDelete": "确定删除该角色吗？删除后不可恢复。",
+    "searchPlaceholder": "搜索角色名称"
   },
   "login": {
     "pendingApproval": "账号待管理员审核，请联系管理员",

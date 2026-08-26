@@ -255,6 +255,12 @@ const routes = [
         component: lazyLoad(() => import('@/views/settings/BrandingConfig.vue')),
         meta: { title: 'menu.brandingConfig', icon: 'Picture', roles: ['admin', 'superadmin'] }
       },
+      {
+        path: 'settings-role',
+        name: 'RoleManagement',
+        component: lazyLoad(() => import('@/views/settings/RoleManagement.vue')),
+        meta: { title: 'menu.RoleManagement', icon: 'User', roles: ['admin', 'superadmin'] }
+      },
 
       // ===== 非菜单页 =====
       // report：由 Task.vue / TaskDetail.vue 的「查看报告」跳转
