@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2011,6 +2012,31 @@ domainScanDone:
 		// 更新当前阶段
 		w.updateTaskProgressWithPhase(ctx, task.TaskId, 20, "端口扫描中", "端口扫描")
 
+		// DNS 预解析过滤：仅将可解析的目标投入端口扫描，不可解析的直接跳过。
+		// 大量无法解析的 dev/test 子域名会让 naabu 对每个目标空跑满超时，
+		// 显著拖慢整体链路（总超时 = 单目标超时 × 目标数）。此处提前剔除。
+		// resolvedIPs 缓存预解析结果，端口扫描后回填 asset，避免下游重复 DNS。
+		var resolvedIPs map[string][]net.IP
+		{
+			resolvable, unresolvable, resolved := w.filterResolvableTargets(ctx, targets)
+			resolvedIPs = resolved
+			if len(unresolvable) > 0 {
+				w.taskLog(task.TaskId, LevelInfo, "Port scan: DNS pre-filter skipped %d/%d unresolvable targets", len(unresolvable), len(targets))
+				for _, t := range unresolvable {
+					w.taskLog(task.TaskId, LevelDebug, "Port scan: skip unresolvable target: %s", t)
+				}
+			}
+			if len(resolvable) == 0 {
+				w.taskLog(task.TaskId, LevelWarn, "Port scan: no resolvable targets, skipping port scan phase")
+				completedPhases["portscan"] = true
+				w.incrSubTaskDone(ctx, task, "端口扫描", false, 1)
+				incrSent++
+				goto portScanDone
+			}
+			targets = resolvable
+			target = strings.Join(resolvable, "\n")
+		}
+
 		// Naabu 内部 worker pool 用于并行启动多个 naabu 进程（每目标一个进程）。
 		// 此值不应等于 Worker 子任务并发数，否则 N 个子任务各开 N 个进程 = N² 进程爆炸。
 		// 全局信号量（naabuSem）已兜底限制总进程数 ≤ 5，此处仅控制单子任务内的并行度。
@@ -2119,6 +2145,8 @@ domainScanDone:
 					if len(assets) == 0 {
 						return
 					}
+					// 回填预解析 IP，避免下游重复 DNS
+					backfillAssetIPs(assets, resolvedIPs)
 					for _, asset := range assets {
 						asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
 					}
@@ -2172,6 +2200,8 @@ domainScanDone:
 
 		// 端口发现完成，将结果添加到 allAssets
 		if len(openPorts) > 0 {
+			// 回填预解析 IP：naabu 仅对开放端口目标输出 IP，用缓存补齐缺失项，避免下游重复 DNS
+			backfillAssetIPs(openPorts, resolvedIPs)
 			for _, asset := range openPorts {
 				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
 			}
@@ -2191,6 +2221,8 @@ domainScanDone:
 		w.incrSubTaskDone(ctx, task, "端口扫描", false, 1)
 		incrSent++
 	}
+
+portScanDone:
 
 	// 检查控制信号
 	if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
@@ -2735,28 +2767,28 @@ domainScanDone:
 							severities = strings.Split(config.PocScan.Severity, ",")
 						}
 
-					for _, group := range groups {
-						groupContents, groupRefs := w.resolveTemplatesByTags(ctx, group.Tags, severities)
-						if len(groupContents) == 0 && len(groupRefs) == 0 {
-							w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v): no templates loaded, skipping", group.Tags)
-							continue
-						}
-						w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v, assets=%d): loaded %d templates (%d from local store)", group.Tags, len(group.Assets), len(groupContents)+len(groupRefs), len(groupRefs))
+						for _, group := range groups {
+							groupContents, groupRefs := w.resolveTemplatesByTags(ctx, group.Tags, severities)
+							if len(groupContents) == 0 && len(groupRefs) == 0 {
+								w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v): no templates loaded, skipping", group.Tags)
+								continue
+							}
+							w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v, assets=%d): loaded %d templates (%d from local store)", group.Tags, len(group.Assets), len(groupContents)+len(groupRefs), len(groupRefs))
 
-						// 构建该分组的扫描选项（并发和速率由自适应调度器决定）
-						groupOpts := &scanner.NucleiOptions{
-							Severity:        config.PocScan.Severity,
-							Tags:            group.Tags,
-							ExcludeTags:     config.PocScan.ExcludeTags,
-							TargetTimeout:   targetTimeout,
-							AutoScan:        false,
-							AutomaticScan:   false,
-							CustomPocOnly:   false,
-							CustomTemplates: groupContents,
-							TemplateFileRefs: groupRefs,
-							TagMappings:     nil,
-								CustomHeaders:   config.PocScan.CustomHeaders,
-								ForceScan:       config.PocScan.ForceScan,
+							// 构建该分组的扫描选项（并发和速率由自适应调度器决定）
+							groupOpts := &scanner.NucleiOptions{
+								Severity:         config.PocScan.Severity,
+								Tags:             group.Tags,
+								ExcludeTags:      config.PocScan.ExcludeTags,
+								TargetTimeout:    targetTimeout,
+								AutoScan:         false,
+								AutomaticScan:    false,
+								CustomPocOnly:    false,
+								CustomTemplates:  groupContents,
+								TemplateFileRefs: groupRefs,
+								TagMappings:      nil,
+								CustomHeaders:    config.PocScan.CustomHeaders,
+								ForceScan:        config.PocScan.ForceScan,
 								OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 									vulCount++
 									w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
@@ -2847,17 +2879,17 @@ domainScanDone:
 					taskIdForCallback := task.TaskId
 					// 并发和速率由自适应调度器决定
 					nucleiOpts := &scanner.NucleiOptions{
-						Severity:        config.PocScan.Severity,
-						ExcludeTags:     config.PocScan.ExcludeTags,
-						TargetTimeout:   pocTargetTimeout,
-						AutoScan:        false,
-						AutomaticScan:   false,
-						CustomPocOnly:   config.PocScan.CustomPocOnly,
-						CustomTemplates: templates,
+						Severity:         config.PocScan.Severity,
+						ExcludeTags:      config.PocScan.ExcludeTags,
+						TargetTimeout:    pocTargetTimeout,
+						AutoScan:         false,
+						AutomaticScan:    false,
+						CustomPocOnly:    config.PocScan.CustomPocOnly,
+						CustomTemplates:  templates,
 						TemplateFileRefs: templateRefs,
-						TagMappings:     config.PocScan.TagMappings,
-						CustomHeaders:   config.PocScan.CustomHeaders,
-						ForceScan:       config.PocScan.ForceScan,
+						TagMappings:      config.PocScan.TagMappings,
+						CustomHeaders:    config.PocScan.CustomHeaders,
+						ForceScan:        config.PocScan.ForceScan,
 						OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
 							vulCount++
 							w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)

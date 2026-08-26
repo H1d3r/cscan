@@ -31,10 +31,9 @@ var ipLocator = geolocation.NewIPLocator()
 // NaabuScanner Naabu端口扫描器 (CLI 模式)
 type NaabuScanner struct {
 	BaseScanner
-	skippedHosts   []string
-	dnsFailedHosts []string
-	mu             sync.Mutex
-	executor       *CmdExecutor
+	skippedHosts []string
+	mu           sync.Mutex
+	executor     *CmdExecutor
 }
 
 // NewNaabuScanner 创建Naabu扫描器
@@ -92,7 +91,6 @@ type NaabuHostResult struct {
 func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error) {
 	s.mu.Lock()
 	s.skippedHosts = s.skippedHosts[:0]
-	s.dnsFailedHosts = s.dnsFailedHosts[:0]
 	s.mu.Unlock()
 
 	logFn := func(level, format string, args ...interface{}) {
@@ -278,12 +276,12 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	if thresholdExceeded {
 		return &ScanResult{
 			MainTaskId: config.MainTaskId,
-			Assets:     assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
+			Assets:     assets, SkippedHosts: s.collectSkippedHosts(),
 		}, ErrPortThresholdExceeded
 	}
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets:     assets, SkippedHosts: s.collectSkippedHosts(), DNSFailedHosts: s.collectDNSFailedHosts(),
+		Assets:     assets, SkippedHosts: s.collectSkippedHosts(),
 	}, nil
 }
 
@@ -591,14 +589,6 @@ func (s *NaabuScanner) collectSkippedHosts() []string {
 	defer s.mu.Unlock()
 	result := make([]string, len(s.skippedHosts))
 	copy(result, s.skippedHosts)
-	return result
-}
-
-func (s *NaabuScanner) collectDNSFailedHosts() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]string, len(s.dnsFailedHosts))
-	copy(result, s.dnsFailedHosts)
 	return result
 }
 

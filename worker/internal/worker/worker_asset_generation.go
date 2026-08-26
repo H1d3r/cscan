@@ -1,10 +1,13 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"cscan/internal/scanner"
 	"cscan/internal/scheduler"
@@ -137,7 +140,160 @@ func (w *Worker) isDomainResolvable(host string) bool {
 	return false
 }
 
-// parseURLToAsset 解析URL为资产
+// extractHostForResolve 从单条目标中提取用于 DNS 解析的主机部分。
+// 支持: 域名 / IP / IP:Port / http(s)://host[:port][/path] / CIDR / IP 范围。
+// 返回 host 与 needResolve：needResolve=false 表示无需 DNS 解析即可直接放行
+// （IP、CIDR、IP 范围等），只有裸域名才需要解析。
+func extractHostForResolve(target string) (host string, needResolve bool) {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return "", false
+	}
+
+	// CIDR 直接放行
+	if strings.Contains(t, "/") && !strings.HasPrefix(t, "http://") && !strings.HasPrefix(t, "https://") {
+		if _, _, err := net.ParseCIDR(t); err == nil {
+			return t, false
+		}
+	}
+
+	// IP 范围 (a.b.c.d-e.f.g.h 或 a.b.c.d-e) 直接放行
+	if strings.Contains(t, "-") {
+		left := strings.SplitN(t, "-", 2)[0]
+		if net.ParseIP(strings.TrimSpace(left)) != nil {
+			return t, false
+		}
+	}
+
+	// URL：剥离 scheme 与 path
+	if strings.HasPrefix(t, "http://") || strings.HasPrefix(t, "https://") {
+		t = strings.SplitN(t, "://", 2)[1]
+		if i := strings.IndexAny(t, "/?#"); i >= 0 {
+			t = t[:i]
+		}
+	}
+
+	// 剥离端口（区分 IPv6 字面量 [::1]:80）
+	if strings.HasPrefix(t, "[") {
+		if i := strings.Index(t, "]"); i >= 0 {
+			t = t[1:i]
+		}
+	} else if h, _, err := net.SplitHostPort(t); err == nil {
+		t = h
+	}
+	t = strings.TrimSpace(t)
+
+	// IP 无需解析
+	if net.ParseIP(t) != nil {
+		return t, false
+	}
+	// 裸域名：需要解析
+	return t, true
+}
+
+// filterResolvableTargets 并发对目标做 DNS 预解析，仅保留可解析的目标；
+// IP/CIDR/IP 范围等无需解析的目标直接保留。返回 (保留目标, 被跳过的目标, host→已解析IP 缓存)。
+// resolved 缓存供后续阶段回填 asset 的 IP，避免下游重复 DNS 查询。
+// 每个域名解析带独立超时，整体带并发上限，避免大批目标顺序解析拖慢链路。
+func (w *Worker) filterResolvableTargets(ctx context.Context, targets []string) (kept []string, skipped []string, resolved map[string][]net.IP) {
+	if len(targets) == 0 {
+		return nil, nil, nil
+	}
+
+	const (
+		maxConcurrency = 50
+		perHostTimeout = 5 * time.Second
+	)
+
+	type result struct {
+		idx      int
+		ok       bool
+		original string
+		host     string
+		ips      []net.IP
+	}
+
+	sem := make(chan struct{}, maxConcurrency)
+	results := make([]result, len(targets))
+	var wg sync.WaitGroup
+
+	for i, tgt := range targets {
+		host, needResolve := extractHostForResolve(tgt)
+		if !needResolve {
+			// IP/CIDR/范围/无法解析出主机的原样保留
+			results[i] = result{idx: i, ok: true, original: tgt}
+			continue
+		}
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, original, h string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			rctx, cancel := context.WithTimeout(ctx, perHostTimeout)
+			defer cancel()
+
+			var r net.Resolver
+			ipAddrs, err := r.LookupIPAddr(rctx, h)
+			ok := false
+			var ips []net.IP
+			if err == nil {
+				for _, ip := range ipAddrs {
+					if !ip.IP.IsLoopback() {
+						ok = true
+						ips = append(ips, ip.IP)
+					}
+				}
+			}
+			results[idx] = result{idx: idx, ok: ok, original: original, host: h, ips: ips}
+		}(i, tgt, host)
+	}
+
+	wg.Wait()
+
+	resolved = make(map[string][]net.IP)
+	for _, r := range results {
+		if r.ok {
+			kept = append(kept, r.original)
+			if r.host != "" && len(r.ips) > 0 {
+				resolved[r.host] = r.ips
+			}
+		} else {
+			skipped = append(skipped, r.original)
+		}
+	}
+	return kept, skipped, resolved
+}
+
+// backfillAssetIPs 用预解析得到的 IP 缓存回填 asset 中缺失的 IPV4/IPV6，
+// 避免下游阶段对同一域名重复做 DNS 查询。naabu 仅对发现开放端口的目标输出 IP，
+// 此处按 asset.Host 命中缓存补齐（已存在 IP 的 asset 保持不变）。
+func backfillAssetIPs(assets []*scanner.Asset, resolved map[string][]net.IP) {
+	if len(assets) == 0 || len(resolved) == 0 {
+		return
+	}
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+		if len(asset.IPV4) > 0 || len(asset.IPV6) > 0 {
+			continue
+		}
+		ips, ok := resolved[asset.Host]
+		if !ok || len(ips) == 0 {
+			continue
+		}
+		for _, ip := range ips {
+			if ip4 := ip.To4(); ip4 != nil {
+				asset.IPV4 = append(asset.IPV4, scanner.IPInfo{IP: ip4.String()})
+			} else {
+				asset.IPV6 = append(asset.IPV6, scanner.IPInfo{IP: ip.String()})
+			}
+		}
+	}
+}
+
 func (w *Worker) parseURLToAsset(urlStr string) *scanner.Asset {
 	// 简单解析URL
 	scheme := "http"
