@@ -24,6 +24,7 @@
 
     <div :class="['login-box', `style-${themeStore.themeStyle}`]">
       <div class="login-header">
+        <img class="login-logo" :src="brandingStore.logoSrc" alt="logo" />
         <h1>{{ brandingStore.displayTitle }}</h1>
         <p v-if="isRegisterMode">{{ $t('auth.register') }}</p>
         <p v-else>{{ $t('auth.loginTitle') }}</p>
@@ -182,6 +183,8 @@ async function checkSystemStatus() {
 }
 
 onMounted(() => {
+  // 未登录时 main.js 不会预加载品牌配置，登录页自行拉取公开的 /branding/config/get
+  brandingStore.load()
   checkSystemStatus()
 })
 
@@ -352,6 +355,14 @@ async function handleRegister() {
 .login-header {
   text-align: center;
   margin-bottom: 30px;
+
+  .login-logo {
+    width: 64px;
+    height: 64px;
+    object-fit: contain;
+    margin-bottom: 12px;
+    border-radius: 8px;
+  }
 
   h1 {
     font-size: 32px;

@@ -48,19 +48,13 @@ themeStore.initTheme()
 themeStore.watchSystemTheme()
 
 // 初始化品牌配置（Logo / 标题）
-// BUG-001 修复：仅在已登录状态下才加载品牌配置，避免未登录时发送 API 请求
+// /branding/config/get 是公开接口（routes.go 中无需认证），登录页与已登录页都需同步品牌；
+// 未登录时 request 拦截器需放行该接口（见 request.js publicEndpoints）
 import { useBrandingStore } from './stores/branding'
-import { useUserStore } from './stores/user'
 const brandingStore = useBrandingStore()
-const userStore = useUserStore()
-if (userStore.token) {
-  brandingStore.load().then(() => {
-    if (brandingStore.displayTitle) document.title = brandingStore.displayTitle
-  })
-} else {
-  // 未登录时使用默认标题
-  document.title = 'CSCAN'
-}
+brandingStore.load().then(() => {
+  if (brandingStore.displayTitle) document.title = brandingStore.displayTitle
+})
 
 // 启用性能监控（仅开发环境）
 if (import.meta.env.DEV) {
