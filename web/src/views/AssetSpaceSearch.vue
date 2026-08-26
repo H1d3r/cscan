@@ -8,6 +8,7 @@
           <p class="description">{{ $t('asset.spaceSearchDescription') }}</p>
         </div>
         <div class="header-actions">
+          <div class="header-search" />
           <el-radio-group v-model="listMode" size="default">
             <el-radio-button value="target">{{ $t('asset.globalView.tabTargetView') }}</el-radio-button>
             <el-radio-button value="global">{{ $t('asset.globalView.tabGlobalView') }}</el-radio-button>
@@ -119,8 +120,12 @@ function handleViewAsset(asset) {
   console.log('View asset:', asset)
 }
 
-function handleStartScan() {
-  router.push('/task/create')
+function handleStartScan(targetIds) {
+  if (targetIds && targetIds.length > 0) {
+    router.push({ path: '/task/create', query: { targetId: targetIds.join(',') } })
+  } else {
+    router.push('/task/create')
+  }
 }
 
 // 手动添加资产（批量粘贴，自旧资产概览页迁入）
@@ -201,7 +206,14 @@ async function handleAddSubmit() {
   }
 
   .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     flex-shrink: 0;
+
+    .header-search {
+      width: 260px;
+    }
   }
 }
 

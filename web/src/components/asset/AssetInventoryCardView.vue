@@ -1,22 +1,23 @@
 <template>
   <div class="targets-view">
-    <!-- Toolbar：搜索靠左，过滤器 + 按钮靠右（对齐 open-asm DataTable md:flex-row-reverse） -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <el-input
-          v-model="searchQuery"
-          :placeholder="$t('asset.targetView.searchPlaceholder')"
-          clearable
-          class="search-input"
-          @clear="handleSearch"
-          @keyup.enter="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-      </div>
+    <!-- defer：目标 .header-search 由同一页面树渲染，需等整树挂载后再解析，否则目标为 null 会中断挂载 -->
+    <Teleport defer to=".asset-space-search .header-search">
+      <el-input
+        v-model="searchQuery"
+        :placeholder="$t('asset.targetView.searchPlaceholder')"
+        clearable
+        class="search-input"
+        @clear="handleSearch"
+        @keyup.enter="handleSearch"
+      >
+        <template #prefix>
+          <el-icon><Search /></el-icon>
+        </template>
+      </el-input>
+    </Teleport>
 
+    <!-- Toolbar：过滤器 + 按钮靠右（搜索框位于页面头部） -->
+    <div class="toolbar">
       <div class="toolbar-right">
         <TargetTypeFilter v-model="typeFilter" />
 
@@ -29,7 +30,7 @@
           {{ $t('asset.manualAddAsset') }}
         </el-button>
 
-        <el-button type="primary" @click="$emit('start-scan')">
+        <el-button type="primary" @click="handleStartScan">
           <el-icon><Search /></el-icon>
           {{ $t('asset.startScan') }}
         </el-button>
@@ -269,6 +270,11 @@ function handleSelectionChange(rows) {
 }
 
 // 批量删除目标（自旧资产概览页迁入：级联删除底层资产）
+async function handleStartScan() {
+  const targetIds = selectedRows.value.map(row => row.id)
+  emit('start-scan', targetIds)
+}
+
 async function handleBatchDelete() {
   if (selectedRows.value.length === 0) return
   try {

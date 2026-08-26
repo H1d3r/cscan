@@ -1031,6 +1031,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Close, Search, InfoFilled } from '@element-plus/icons-vue'
 import { createTask, updateTask, getTaskDetail, startTask, getWorkerList, getScanConfig, saveScanConfig } from '@/api/task'
+import { getAssetTargetDetail } from '@/api/asset'
 import { getNucleiTemplateList, getCustomPocList, getNucleiTemplateDetail, getNucleiTemplateCategories, getCustomPocCategories } from '@/api/poc'
 import { getDirScanDictEnabledList } from '@/api/dirscan'
 import { getSubdomainDictEnabledList } from '@/api/subdomain'
@@ -1377,12 +1378,116 @@ onMounted(async () => {
     isEdit.value = true
     await loadTaskDetail(route.query.id)
   } else {
-    // 加载用户上次保存的扫描配置
+    // 如果传入了 targetId，先加载目标信息
+    if (route.query.targetId) {
+      const targetIds = route.query.targetId.split(',').filter(Boolean)
+      if (targetIds.length > 0) {
+        try {
+          const targets = []
+          for (const tid of targetIds) {
+            const res = await getAssetTargetDetail({ targetId: tid })
+            if (res.code === 0 && res.data && res.data.meta) {
+              targets.push(res.data.meta.targetValue)
+            }
+          }
+          if (targets.length > 0) {
+            form.target = targets.join('\n')
+          }
+        } catch (e) { console.error('Load target detail failed:', e) }
+      }
+    }
+    // 加载用户上次保存的扫描配置（仅在未指定 targetId 时恢复 target 字段）
     try {
       const res = await getScanConfig()
       if (res.code === 0 && res.config) {
         const config = JSON.parse(res.config)
-        applyConfig(config)
+        // 未传入 targetId 时才恢复上次目标
+        if (!route.query.targetId) {
+          form.target = config.target || ''
+        }
+        if (config.name) form.name = config.name
+        // 其余配置正常加载
+        const isManualMode = !!(config.pocscan?.nucleiSelectAll || config.pocscan?.customPocSelectAll ||
+          (config.pocscan?.nucleiTemplateIds?.length > 0) || (config.pocscan?.customPocIds?.length > 0))
+        const hasBruteforce = config.domainscan?.subdomainDictIds?.length > 0
+        Object.assign(form, {
+          domainscanEnable: config.domainscan?.enable ?? false,
+          domainscanSubfinder: config.domainscan?.subfinder ?? true,
+          domainscanBruteforce: hasBruteforce,
+          domainscanBruteforceTimeout: config.domainscan?.bruteforceTimeout || 30,
+          domainscanTimeout: config.domainscan?.timeout || 300,
+          domainscanMaxEnumTime: config.domainscan?.maxEnumerationTime || 10,
+          domainscanThreads: config.domainscan?.threads || 10,
+          domainscanRateLimit: config.domainscan?.rateLimit || 0,
+          domainscanRemoveWildcard: config.domainscan?.removeWildcard ?? true,
+          domainscanResolveDNS: config.domainscan?.resolveDNS ?? true,
+          domainscanConcurrent: config.domainscan?.concurrent || 50,
+          subdomainDictIds: config.domainscan?.subdomainDictIds || [],
+          domainscanRecursiveBrute: config.domainscan?.recursiveBrute ?? false,
+          recursiveDictIds: config.domainscan?.recursiveDictIds || [],
+          domainscanWildcardDetect: config.domainscan?.wildcardDetect ?? true,
+          portscanEnable: config.portscan?.enable ?? true,
+          portscanTool: config.portscan?.tool || 'naabu',
+          portscanRate: config.portscan?.rate || 1000,
+          ports: config.portscan?.ports || 'top100',
+          portThreshold: config.portscan?.portThreshold || 100,
+          scanType: config.portscan?.scanType || 'c',
+          portscanTimeout: config.portscan?.timeout || 60,
+          skipHostDiscovery: config.portscan?.skipHostDiscovery ?? false,
+          excludeCDN: config.portscan?.excludeCDN ?? false,
+          excludeHosts: config.portscan?.excludeHosts || '',
+          portidentifyEnable: config.portidentify?.enable ?? false,
+          portidentifyTool: config.portidentify?.tool || 'nmap',
+          portidentifyTimeout: config.portidentify?.timeout || 30,
+          portidentifyConcurrency: config.portidentify?.concurrency || 10,
+          portidentifyArgs: config.portidentify?.args || '',
+          portidentifyUDP: config.portidentify?.udp ?? false,
+          portidentifyFastMode: config.portidentify?.fastMode ?? false,
+          fingerprintEnable: config.fingerprint?.enable ?? true,
+          fingerprintTool: config.fingerprint?.tool || (config.fingerprint?.httpx ? 'httpx' : 'builtin'),
+          fingerprintIconHash: config.fingerprint?.iconHash ?? true,
+          fingerprintCustomEngine: config.fingerprint?.customEngine ?? false,
+          fingerprintScreenshot: config.fingerprint?.screenshot ?? true,
+          fingerprintCert: config.fingerprint?.cert ?? true,
+          fingerprintActiveScan: config.fingerprint?.activeScan ?? false,
+          fingerprintActiveTimeout: config.fingerprint?.activeTimeout || 10,
+          fingerprintTimeout: config.fingerprint?.targetTimeout || 30,
+          fingerprintFilterMode: config.fingerprint?.filterMode || 'http_mapping',
+          brutescanEnable: config.brutescan?.enable ?? false,
+          brutescanServices: config.brutescan?.services || [],
+          brutescanThreads: config.brutescan?.threads || 20,
+          brutescanTimeout: config.brutescan?.timeout || 5,
+          brutescanDelayMs: config.brutescan?.delayMs || 100,
+          brutescanStopOnFirst: config.brutescan?.stopOnFirst ?? false,
+          brutescanForceScan: config.brutescan?.forceScan ?? false,
+          pocscanEnable: config.pocscan?.enable ?? false,
+          pocscanMode: isManualMode ? 'manual' : 'auto',
+          pocscanAutoScan: config.pocscan?.autoScan ?? true,
+          pocscanAutomaticScan: config.pocscan?.automaticScan ?? true,
+          pocscanCustomOnly: config.pocscan?.customPocOnly ?? false,
+          pocscanSeverity: config.pocscan?.severity ? config.pocscan.severity.split(',') : ['critical', 'high', 'medium'],
+          pocscanTargetTimeout: config.pocscan?.targetTimeout || 600,
+          pocscanNucleiTemplateIds: config.pocscan?.nucleiTemplateIds || [],
+          pocscanCustomPocIds: config.pocscan?.customPocIds || [],
+          dirscanEnable: config.dirscan?.enable ?? false,
+          dirscanTool: config.dirscan?.tool || 'ffuf',
+          dirscanDictIds: config.dirscan?.dictIds || [],
+          dirscanFollowRedirect: config.dirscan?.followRedirect ?? false,
+          dirscanForceScan: config.dirscan?.forceScan ?? false,
+          dirscanStatusCodes: config.dirscan?.statusCodes || [],
+          dirscanAutoCalibration: config.dirscan?.autoCalibration ?? true,
+          dirscanRecursion: config.dirscan?.recursion ?? false,
+          dirscanRecursionDepth: config.dirscan?.recursionDepth || 2,
+          jsfinderEnable: config.jsfinder?.enable ?? false,
+          jsfinderThreads: config.jsfinder?.threads || 10,
+          jsfinderTimeout: config.jsfinder?.timeout || 10,
+          jsfinderEnableSourcemap: config.jsfinder?.enableSourcemap ?? true,
+          jsfinderEnableUnauthCheck: config.jsfinder?.enableUnauthCheck ?? true,
+          jsfinderForceScan: config.jsfinder?.forceScan ?? false
+        })
+        nucleiSelectAll.value = !!config.pocscan?.nucleiSelectAll
+        nucleiSelectAllCount.value = nucleiSelectAll.value ? (config.pocscan?.nucleiTemplateIds?.length || 0) : 0
+        Object.assign(nucleiSelectAllFilter, config.pocscan?.nucleiSelectAllFilter || {})
       }
     } catch (e) { console.error('Load scan config failed:', e) }
   }
