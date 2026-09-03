@@ -62,7 +62,7 @@ func (l *AssetExposuresLogic) AssetExposures(req *types.AssetExposuresReq) (resp
 		"port": asset.Port,
 	}
 
-	vuls, err := vulModel.Find(l.ctx, vulFilter, 0, 100) // 最多返回100条
+	vuls, err := vulModel.Find(l.ctx, vulFilter, 1, 100) // 最多返回100条
 	if err != nil {
 		l.Logger.Errorf("查询漏洞扫描结果失败: %v", err)
 		vuls = []model.Vul{}

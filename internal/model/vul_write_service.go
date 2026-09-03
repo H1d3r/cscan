@@ -87,6 +87,7 @@ func (c *AssetCache) getOrCreate(ctx context.Context, assetModel *AssetModel, hi
 			Service:    "http",
 			IsHTTP:     true,
 			Source:     "poc_scan",
+			TaskId:     mainTaskID,
 			CreateTime: time.Now(),
 			UpdateTime: time.Now(),
 		}

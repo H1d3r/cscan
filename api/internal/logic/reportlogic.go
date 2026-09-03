@@ -108,7 +108,7 @@ func (l *ReportDetailLogic) ReportDetail(req *types.ReportDetailReq) (*types.Rep
 		},
 	}
 	l.Logger.Infof("DirScan query filter: %+v", dirScanFilter)
-	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 1000)
+	dirScans, err := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 0, 0)
 	if err != nil {
 		l.Logger.Errorf("查询目录扫描结果失败: %v", err)
 	}
@@ -290,7 +290,7 @@ func (l *ReportExportLogic) ReportExport(req *types.ReportExportReq) ([]byte, st
 			{"main_task_id": bson.M{"$regex": "^" + task.TaskId + "-\\d+$"}},
 		},
 	}
-	dirScans, _ := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 1, 10000)
+	dirScans, _ := dirScanModel.FindByFilter(l.ctx, dirScanFilter, 0, 0)
 
 	// 创建Excel文件
 	f := excelize.NewFile()
