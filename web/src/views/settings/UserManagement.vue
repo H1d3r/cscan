@@ -19,9 +19,13 @@
         >
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="filterRole" :placeholder="$t('user.role')" clearable size="small" style="width: 120px">
-          <el-option label="Admin" value="admin" />
-          <el-option label="User" value="user" />
+        <el-select v-model="filterRole" :placeholder="$t('user.role')" clearable size="small" style="width: 140px">
+          <el-option
+            v-for="r in roleOptions"
+            :key="r.name"
+            :label="r.displayName || r.name"
+            :value="r.name"
+          />
         </el-select>
       </div>
       <el-table :data="pagedUserList" v-loading="userLoading" stripe max-height="500">
@@ -31,10 +35,10 @@
           </template>
         </el-table-column>
         <el-table-column prop="username" :label="$t('user.userName')" min-width="150" />
-        <el-table-column prop="role" :label="$t('user.role')" width="100">
+        <el-table-column prop="role" :label="$t('user.role')" min-width="120">
           <template #default="{ row }">
-            <el-tag :type="row.role === 'admin' || row.role === 'superadmin' ? 'danger' : 'info'">
-              {{ row.role === 'admin' || row.role === 'superadmin' ? $t('user.admin') : $t('user.user') }}
+            <el-tag :type="isAdminRole(row.role) ? 'danger' : 'info'">
+              {{ roleLabel(row.role) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -65,6 +69,7 @@
               @click="handleApproveUser(row)"
             >{{ $t('userManagement.actions.approve') }}</el-button>
             <el-button
+              v-if="row.id !== userStore.userId"
               type="danger"
               link
               size="small"
@@ -120,8 +125,15 @@
         </el-form-item>
         <el-form-item :label="$t('user.role')" prop="role">
           <el-select v-model="userForm.role" :placeholder="$t('user.pleaseSelectRole')" :disabled="isSuperadminRow">
-            <el-option :label="$t('user.admin')" value="admin" />
-            <el-option :label="$t('user.user')" value="user" />
+            <el-option
+              v-for="r in assignableRoles"
+              :key="r.name"
+              :label="r.displayName || r.name"
+              :value="r.name"
+            >
+              <span>{{ r.displayName || r.name }}</span>
+              <span class="role-option-name">{{ r.name }}</span>
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('common.status')" prop="status">
@@ -192,7 +204,7 @@ import { Plus, Search } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import {
   getUserList, createUser, updateUser, deleteUser,
-  resetUserPassword, uploadUserAvatar, approveUser
+  resetUserPassword, uploadUserAvatar, approveUser, getRoleList
 } from '@/api/auth'
 import { useUserStore, DEFAULT_AVATAR } from '@/stores/user'
 import { validatePasswordStrength as checkPasswordStrength } from '@/utils/validators'
@@ -203,6 +215,22 @@ const userStore = useUserStore()
 
 const userLoading = ref(false)
 const userList = ref([])
+// 角色选项来自角色管理，自定义角色创建后立即可分配
+const roleOptions = ref([])
+
+// superadmin 为系统兜底角色，不在新建/编辑时开放选择
+const assignableRoles = computed(() => roleOptions.value.filter(r => r.name !== 'superadmin'))
+
+function roleLabel(roleName) {
+  const hit = roleOptions.value.find(r => r.name === roleName)
+  return hit ? (hit.displayName || hit.name) : (roleName || '-')
+}
+
+function isAdminRole(roleName) {
+  if (roleName === 'admin' || roleName === 'superadmin') return true
+  const hit = roleOptions.value.find(r => r.name === roleName)
+  return !!hit?.isSuperadmin
+}
 
 // 搜索与分页
 const searchKeyword = ref('')
@@ -217,11 +245,7 @@ const filteredUserList = computed(() => {
     list = list.filter(u => u.username?.toLowerCase().includes(kw))
   }
   if (filterRole.value) {
-    if (filterRole.value === 'admin') {
-      list = list.filter(u => u.role === 'admin' || u.role === 'superadmin')
-    } else {
-      list = list.filter(u => u.role !== 'admin' && u.role !== 'superadmin')
-    }
+    list = list.filter(u => u.role === filterRole.value)
   }
   return list
 })
@@ -285,7 +309,19 @@ const resetRules = computed(() => ({
   ]
 }))
 
-onMounted(() => loadUserList())
+onMounted(() => {
+  loadUserList()
+  loadRoleOptions()
+})
+
+async function loadRoleOptions() {
+  try {
+    const res = await getRoleList({})
+    if (res.code === 0) roleOptions.value = res.list || []
+  } catch (err) {
+    console.error('load role options failed:', err)
+  }
+}
 
 async function loadUserList() {
   userLoading.value = true
@@ -351,7 +387,7 @@ async function handleUserSubmit() {
       userDialogVisible.value = false
       loadUserList()
       // 若修改的是当前登录用户,实时同步头像到顶栏 store
-      if (userForm.value.username === userStore.username) {
+      if (userForm.value.id === userStore.userId) {
         userStore.setAvatar(userForm.value.avatar || '')
       }
     } else {
@@ -452,6 +488,13 @@ async function handleResetPassword() {
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.role-option-name {
+  float: right;
+  margin-left: 16px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .user-pagination {

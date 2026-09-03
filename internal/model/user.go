@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	UserCollection = "user"
+
 	StatusEnable  = "enable"
 	StatusDisable = "disable"
 )
@@ -44,7 +46,7 @@ type UserModel struct {
 
 func NewUserModel(db *mongo.Database) *UserModel {
 	return &UserModel{
-		coll: db.Collection("user"),
+		coll: db.Collection(UserCollection),
 	}
 }
 

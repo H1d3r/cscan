@@ -39,10 +39,10 @@ func LoginHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	}
 }
 
-// UserListHandler 用户列表
+// UserListHandler 用户列表（管理员权限）
 func UserListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req types.PageReq
+		var req types.UserListReq
 		if err := httpx.Parse(r, &req); err != nil {
 			response.ParamError(w, err.Error())
 			return

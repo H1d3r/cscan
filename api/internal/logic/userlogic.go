@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"cscan/api/internal/middleware"
@@ -14,6 +15,21 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
+
+// roleAssignable 校验角色是否可分配给用户。
+// 内置 superadmin/admin/user 恒可用；其余角色必须已在 role 集合中定义。
+func roleAssignable(ctx context.Context, svcCtx *svc.ServiceContext, roleName string) (bool, error) {
+	switch roleName {
+	case model.RoleSuperadmin, model.RoleAdmin, model.RoleUser:
+		return true, nil
+	}
+	role, err := svcCtx.RoleModel.FindByName(ctx, roleName)
+	if err != nil {
+		logx.Errorf("查询角色失败: role=%s err=%v", roleName, err)
+		return false, err
+	}
+	return role != nil, nil
+}
 
 type UserListLogic struct {
 	logx.Logger
@@ -29,8 +45,21 @@ func NewUserListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *UserList
 	}
 }
 
-func (l *UserListLogic) UserList(req *types.PageReq) (resp *types.UserListResp, err error) {
+func (l *UserListLogic) UserList(req *types.UserListReq) (resp *types.UserListResp, err error) {
+	// Admin protection: 仅管理员可访问用户列表
+	currentRole := middleware.GetRole(l.ctx)
+	if !l.svcCtx.IsAdminRole(l.ctx, currentRole) {
+		return &types.UserListResp{Code: 403, Msg: "无权限访问"}, nil
+	}
+
 	filter := bson.M{}
+	if req.Search != "" {
+		search := bson.M{"$regex": regexp.QuoteMeta(req.Search), "$options": "i"}
+		filter["$or"] = []bson.M{
+			{"username": search},
+			{"role": search},
+		}
+	}
 
 	total, err := l.svcCtx.UserModel.Count(l.ctx, filter)
 	if err != nil {
@@ -108,10 +137,17 @@ func (l *UserCreateLogic) UserCreate(req *types.UserCreateReq) (resp *types.Base
 
 	role := req.Role
 	if total == 0 {
-		role = "superadmin"
+		role = model.RoleSuperadmin
 		logx.Infof("[SECURITY] First user auto-promoted to superadmin: username=%s", req.Username)
 	} else if role == "" {
-		role = "user"
+		role = model.RoleUser
+	}
+	if total > 0 {
+		if ok, err := roleAssignable(l.ctx, l.svcCtx, role); err != nil {
+			return &types.BaseResp{Code: 500, Msg: "系统错误"}, nil
+		} else if !ok {
+			return &types.BaseResp{Code: 400, Msg: "角色不存在"}, nil
+		}
 	}
 	user := &model.User{
 		Username: req.Username,
@@ -178,16 +214,19 @@ func (l *UserUpdateLogic) UserUpdate(req *types.UserUpdateReq) (resp *types.Base
 	}
 
 	// 更新用户信息
-	role := req.Role
-	if role == "" {
-		role = "user"
-	}
 	updateData := bson.M{
 		"username":    req.Username,
-		"role":        role,
 		"status":      req.Status,
 		"avatar":      req.Avatar,
 		"update_time": time.Now(),
+	}
+	if req.Role != "" {
+		if ok, err := roleAssignable(l.ctx, l.svcCtx, req.Role); err != nil {
+			return &types.BaseResp{Code: 500, Msg: "系统错误"}, nil
+		} else if !ok {
+			return &types.BaseResp{Code: 400, Msg: "角色不存在"}, nil
+		}
+		updateData["role"] = req.Role
 	}
 
 	err = l.svcCtx.UserModel.Update(l.ctx, req.Id, updateData)
@@ -261,7 +300,7 @@ func (l *UserResetPasswordLogic) UserResetPassword(req *types.UserResetPasswordR
 		return &types.BaseResp{Code: 401, Msg: "未认证"}, nil
 	}
 	currentRole := middleware.GetRole(l.ctx)
-	isAdmin := currentRole == "admin" || currentRole == "superadmin"
+	isAdmin := l.svcCtx.IsAdminRole(l.ctx, currentRole)
 
 	// 非管理员只能修改自己的密码
 	if !isAdmin {
