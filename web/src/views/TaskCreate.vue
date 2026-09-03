@@ -440,7 +440,7 @@
               <el-form-item :label="$t('task.followRedirect')">
                 <el-switch v-model="form.dirscanFollowRedirect" />
               </el-form-item>
-              <el-form-item :label="$t('task.statusCodes')">
+              <el-form-item prop="dirscanStatusCodes" :label="$t('task.statusCodes')">
                 <el-select v-model="form.dirscanStatusCodes" multiple filterable allow-create default-first-option
                   style="width:100%" :placeholder="$t('task.statusCodesPlaceholder')">
                   <el-option v-for="code in commonStatusCodes" :key="code" :label="String(code)" :value="code" />
@@ -1038,6 +1038,7 @@ import { getSubdomainDictEnabledList } from '@/api/subdomain'
 import ScanTemplateSelect from '@/components/ScanTemplateSelect.vue'
 import request from '@/api/request'
 import { validateTargets, formatValidationErrors, validateSingleTarget } from '@/utils/target'
+import { isValidDirScanStatusCode, normalizeDirScanStatusCodes } from '@/utils/dirscan'
 
 const router = useRouter()
 const route = useRoute()
@@ -1363,9 +1364,18 @@ const targetValidator = (rule, value, callback) => {
   errors.length > 0 ? callback(new Error(formatValidationErrors(errors))) : callback()
 }
 
+const dirscanStatusCodesValidator = (_rule, value, callback) => {
+  if (!form.dirscanEnable || (value || []).every(isValidDirScanStatusCode)) {
+    callback()
+    return
+  }
+  callback(new Error(t('task.invalidStatusCode')))
+}
+
 const rules = {
   name: [{ required: true, message: () => t('task.pleaseEnterTaskName'), trigger: 'blur' }],
-  target: [{ required: true, message: () => t('task.pleaseEnterTarget'), trigger: 'blur' }, { validator: targetValidator, trigger: 'blur' }]
+  target: [{ required: true, message: () => t('task.pleaseEnterTarget'), trigger: 'blur' }, { validator: targetValidator, trigger: 'blur' }],
+  dirscanStatusCodes: [{ validator: dirscanStatusCodesValidator, trigger: 'change' }]
 }
 
 onMounted(async () => {
@@ -1934,7 +1944,7 @@ function buildConfig() {
       dictIds: form.dirscanDictIds,
       followRedirect: form.dirscanFollowRedirect,
       forceScan: form.dirscanForceScan && !hasPrePhaseEnabled.value,
-      statusCodes: form.dirscanStatusCodes || [],
+      statusCodes: normalizeDirScanStatusCodes(form.dirscanStatusCodes),
       autoCalibration: form.dirscanAutoCalibration,
       recursion: form.dirscanRecursion,
       recursionDepth: form.dirscanRecursionDepth

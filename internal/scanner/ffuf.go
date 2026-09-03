@@ -59,6 +59,11 @@ func (o *FFufOptions) Validate() error {
 	if o.Timeout < 0 {
 		return fmt.Errorf("timeout must be non-negative, got %d", o.Timeout)
 	}
+	for _, statusCode := range o.StatusCodes {
+		if statusCode < 100 || statusCode > 599 {
+			return fmt.Errorf("status code must be between 100 and 599, got %d", statusCode)
+		}
+	}
 	return nil
 }
 
@@ -110,6 +115,11 @@ func (s *FFufScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		default:
 			logx.Infof(format, args...)
 		}
+	}
+
+	if err := opts.Validate(); err != nil {
+		logFn("ERROR", "[FFuf] 配置无效: %v", err)
+		return nil, fmt.Errorf("invalid ffuf options: %w", err)
 	}
 
 	if len(opts.Paths) == 0 {
@@ -215,11 +225,17 @@ dispatch:
 	return result, nil
 }
 
-func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, error) {
-	scanCtx, scanCancel := context.WithCancel(ctx)
-	defer scanCancel()
+const defaultFFufMatchCodes = "200,204,301,302,307,401,403,405,500"
 
-	baseURL := strings.TrimSuffix(target, "/") + "/FUZZ"
+func buildFFufArgs(baseURL, wordlistFile, outputPath string, opts *FFufOptions) []string {
+	matchCodes := defaultFFufMatchCodes
+	if len(opts.StatusCodes) > 0 {
+		statusCodes := make([]string, len(opts.StatusCodes))
+		for i, statusCode := range opts.StatusCodes {
+			statusCodes[i] = fmt.Sprintf("%d", statusCode)
+		}
+		matchCodes = strings.Join(statusCodes, ",")
+	}
 
 	args := []string{
 		"-u", baseURL,
@@ -227,9 +243,12 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 		"-of", "json",
 		"-t", fmt.Sprintf("%d", opts.Threads),
 		"-timeout", fmt.Sprintf("%d", opts.Timeout),
-		"-mc", "200,204,301,302,307,401,403,405,500",
+		"-mc", matchCodes,
 	}
 
+	if opts.AutoCalibration {
+		args = append(args, "-ac")
+	}
 	if opts.FollowRedirect {
 		args = append(args, "-r")
 	}
@@ -243,6 +262,15 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 		args = append(args, "-e", strings.TrimPrefix(ext, "."))
 	}
 
+	return append(args, "-o", outputPath)
+}
+
+func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile string, opts *FFufOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, error) {
+	scanCtx, scanCancel := context.WithCancel(ctx)
+	defer scanCancel()
+
+	baseURL := strings.TrimSuffix(target, "/") + "/FUZZ"
+
 	// 输出到临时文件
 	tmpFile, err := os.CreateTemp("", "ffuf-*.json")
 	if err != nil {
@@ -252,15 +280,15 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	args = append(args, "-o", tmpPath)
+	args := buildFFufArgs(baseURL, wordlistFile, tmpPath, opts)
 
 	logFn("INFO", "[FFuf] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
 
 	logFn("INFO", "[FFuf] executing ffuf for %s", target)
 
+	// opts.Timeout 是单请求时限；进程总时限由父级阶段 context 和工具默认值共同约束。
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.Timeout*2) * time.Second,
-		LogFn:   logFn,
+		LogFn: logFn,
 	})
 	if err != nil {
 		logFn("DEBUG", "[FFuf] execution error target=%s err=%v", target, err)

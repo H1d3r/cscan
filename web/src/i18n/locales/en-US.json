@@ -1296,6 +1296,7 @@
     "statusCodes": "Valid Status Codes",
     "statusCodesPlaceholder": "Select or type status codes",
     "statusCodesHint": "Only responses matching these codes are kept. Leave empty for defaults",
+    "invalidStatusCode": "Status codes must be integers between 100 and 599",
     "ffufAdvanced": "Advanced Filter Settings",
     "autoCalibration": "Auto Calibration",
     "autoCalibrationHint": "Automatically detect and filter soft-404 pages to reduce false positives",

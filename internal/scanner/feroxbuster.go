@@ -30,20 +30,20 @@ func NewFeroxbusterScanner() *FeroxbusterScanner {
 
 // FeroxbusterResult feroxbuster NDJSON 输出中的 response 记录
 type FeroxbusterResult struct {
-	Type           string            `json:"type"`
-	Url            string            `json:"url"`
-	OriginalUrl    string            `json:"original_url"`
-	Path           string            `json:"path"`
-	Wildcard       bool              `json:"wildcard"`
-	Status         int               `json:"status"`
-	Method         string            `json:"method"`
-	ContentLength  int64             `json:"content_length"`
-	LineCount      int64             `json:"line_count"`
-	WordCount      int64             `json:"word_count"`
-	Headers        map[string]string `json:"headers"`
-	Extension      string            `json:"extension"`
-	Truncated      bool              `json:"truncated"`
-	Timestamp      float64           `json:"timestamp"`
+	Type          string            `json:"type"`
+	Url           string            `json:"url"`
+	OriginalUrl   string            `json:"original_url"`
+	Path          string            `json:"path"`
+	Wildcard      bool              `json:"wildcard"`
+	Status        int               `json:"status"`
+	Method        string            `json:"method"`
+	ContentLength int64             `json:"content_length"`
+	LineCount     int64             `json:"line_count"`
+	WordCount     int64             `json:"word_count"`
+	Headers       map[string]string `json:"headers"`
+	Extension     string            `json:"extension"`
+	Truncated     bool              `json:"truncated"`
+	Timestamp     float64           `json:"timestamp"`
 }
 
 // Scan 执行目录扫描
@@ -77,6 +77,11 @@ func (s *FeroxbusterScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		default:
 			logx.Infof(format, args...)
 		}
+	}
+
+	if err := opts.Validate(); err != nil {
+		logFn("ERROR", "[Feroxbuster] 配置无效: %v", err)
+		return nil, fmt.Errorf("invalid feroxbuster options: %w", err)
 	}
 
 	if len(opts.Paths) == 0 {
@@ -256,9 +261,9 @@ func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFil
 
 	logFn("INFO", "[Feroxbuster] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
 
+	// opts.Timeout 是单请求时限；进程总时限由父级阶段 context 和工具默认值共同约束。
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{
-		Timeout: time.Duration(opts.Timeout*2) * time.Second,
-		LogFn:   logFn,
+		LogFn: logFn,
 	})
 	if err != nil {
 		logFn("DEBUG", "[Feroxbuster] execution error target=%s err=%v", target, err)

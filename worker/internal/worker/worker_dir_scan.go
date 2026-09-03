@@ -10,6 +10,27 @@ import (
 	"cscan/internal/scheduler"
 )
 
+func buildDirScanOptions(paths []string, threads, timeout, rate int, config *scheduler.DirScanConfig) *scanner.FFufOptions {
+	return &scanner.FFufOptions{
+		Paths:           paths,
+		Threads:         threads,
+		Timeout:         timeout,
+		Extensions:      config.Extensions,
+		StatusCodes:     config.StatusCodes,
+		FollowRedirect:  config.FollowRedirect,
+		AutoCalibration: config.AutoCalibration,
+		FilterSize:      config.FilterSize,
+		FilterWords:     config.FilterWords,
+		FilterLines:     config.FilterLines,
+		FilterRegex:     config.FilterRegex,
+		MatcherMode:     config.MatcherMode,
+		FilterMode:      config.FilterMode,
+		Rate:            rate,
+		Recursion:       config.Recursion,
+		RecursionDepth:  config.RecursionDepth,
+	}
+}
+
 func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.DirScanConfig, orgId string) []*scanner.Asset {
 	// 添加 panic 恢复机制
 	defer func() {
@@ -109,24 +130,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 	rate := config.Rate
 	// rate=0 表示不限制速率，由ffuf内部按threads全速跑
 
-	opts := &scanner.FFufOptions{
-		Paths:           allPaths,
-		Threads:         threads,
-		Timeout:         timeout,
-		Extensions:      config.Extensions,
-		StatusCodes:     config.StatusCodes,
-		FollowRedirect:  config.FollowRedirect,
-		AutoCalibration: config.AutoCalibration,
-		FilterSize:      config.FilterSize,
-		FilterWords:     config.FilterWords,
-		FilterLines:     config.FilterLines,
-		FilterRegex:     config.FilterRegex,
-		MatcherMode:     config.MatcherMode,
-		FilterMode:      config.FilterMode,
-		Rate:            rate,
-		Recursion:       config.Recursion,
-		RecursionDepth:  config.RecursionDepth,
-	}
+	opts := buildDirScanOptions(allPaths, threads, timeout, rate, config)
 
 	// 按单目标超时计算总超时：单目标超时 × 资产数 × 路径数 / 线程数
 	totalTimeout := timeout * len(httpAssets) * len(allPaths) / threads

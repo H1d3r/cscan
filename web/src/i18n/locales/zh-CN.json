@@ -1295,6 +1295,7 @@
     "statusCodes": "有效状态码",
     "statusCodesPlaceholder": "选择或输入状态码",
     "statusCodesHint": "匹配这些状态码的响应才会被记录，留空使用默认",
+    "invalidStatusCode": "状态码必须是 100 到 599 之间的整数",
     "ffufAdvanced": "高级过滤配置",
     "autoCalibration": "自动校准",
     "autoCalibrationHint": "发随机请求测出假404并过滤",
