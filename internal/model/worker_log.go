@@ -135,6 +135,38 @@ func (m *WorkerLogModel) ReadByTaskIdAll(ctx context.Context, taskId string, lin
 	return result, nil
 }
 
+// ReadByTaskIdAfter 增量读取：返回 seq > afterSeq 且 createTime > afterTime 的新日志
+func (m *WorkerLogModel) ReadByTaskIdAfter(ctx context.Context, taskId string, afterSeq int64, afterTime string, limit int) ([]WorkerLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	filter := bson.M{
+		"task_id": bson.M{"$regex": "^" + regexp.QuoteMeta(taskId)},
+		"$or": []bson.M{
+			{"seq": bson.M{"$gt": afterSeq}},
+		},
+	}
+	// 解析 afterTime 为 time.Time 以匹配 MongoDB 中的 BSON Date 类型
+	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05.000-07:00", afterTime, time.Local); err == nil {
+		filter["$or"] = append(filter["$or"].([]bson.M), bson.M{"seq": afterSeq, "create_time": bson.M{"$gt": parsed}})
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "create_time", Value: 1}, {Key: "seq", Value: 1}}).SetLimit(int64(limit))
+	cursor, err := m.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var result []WorkerLog
+	if err := cursor.All(ctx, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // ListDates 返回有日志的日期列表（降序）
 func (m *WorkerLogModel) ListDates(ctx context.Context) ([]string, error) {
 	pipeline := []bson.M{

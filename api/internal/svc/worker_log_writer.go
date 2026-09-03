@@ -15,6 +15,7 @@ type WorkerLogEntry struct {
 	Worker string `json:"worker"`
 	TaskId string `json:"taskId,omitempty"`
 	Msg    string `json:"msg"`
+	Seq    int64  `json:"-"` // 用于 cursor 游标，不返回前端
 }
 
 // WorkerLogReader Worker 日志读取器（从 MongoDB 读取）
@@ -35,6 +36,7 @@ func toEntry(log model.WorkerLog) WorkerLogEntry {
 		Worker: log.Worker,
 		TaskId: log.TaskId,
 		Msg:    log.Msg,
+		Seq:    log.Seq,
 	}
 }
 
@@ -81,6 +83,24 @@ func (r *WorkerLogReader) ReadByTaskIdAll(taskId string, lines int) ([]WorkerLog
 		entries[i] = toEntry(log)
 	}
 	return entries, nil
+}
+
+// ReadByTaskIdAfter 增量读取：返回 seq > afterSeq 且 createTime > afterTime 的新日志
+func (r *WorkerLogReader) ReadByTaskIdAfter(taskId string, afterSeq int64, afterTime string, lines int) ([]WorkerLogEntry, int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	logs, err := r.model.ReadByTaskIdAfter(ctx, taskId, afterSeq, afterTime, lines)
+	if err != nil {
+		return []WorkerLogEntry{}, 0, err
+	}
+	entries := make([]WorkerLogEntry, 0, len(logs))
+	var nextCursor int64
+	for _, log := range logs {
+		entry := toEntry(log)
+		nextCursor = log.Seq
+		entries = append(entries, entry)
+	}
+	return entries, nextCursor, nil
 }
 
 // ListDates 返回有日志的日期列表（降序）
