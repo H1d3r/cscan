@@ -42,6 +42,7 @@ type PortScanOptions struct {
 	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)
 	Workers           int    `json:"workers"`           // Naabu 内部工作线程
 	Verify            bool   `json:"verify"`            // TCP 验证
+	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），当>0时按目标数分摊为单目标超时
 }
 
 // Validate 验证 PortScanOptions 配置是否有效

@@ -157,6 +157,9 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 				opts.Workers = v.Workers
 			}
 			opts.Verify = v.Verify
+			if v.AggregatedTimeout > 0 {
+				opts.AggregatedTimeout = v.AggregatedTimeout
+			}
 		default:
 			if data, err := json.Marshal(config.Options); err == nil {
 				var portConfig struct {
@@ -172,6 +175,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					WarmUpTime        int    `json:"warmUpTime"`
 					Workers           int    `json:"workers"`
 					Verify            bool   `json:"verify"`
+					AggregatedTimeout int    `json:"aggregatedTimeout"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
 					if portConfig.Ports != "" {
@@ -202,6 +206,9 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 					opts.ExcludeCDN = portConfig.ExcludeCDN
 					opts.ExcludeHosts = portConfig.ExcludeHosts
 					opts.Verify = portConfig.Verify
+					if portConfig.AggregatedTimeout > 0 {
+						opts.AggregatedTimeout = portConfig.AggregatedTimeout
+					}
 				}
 			}
 		}

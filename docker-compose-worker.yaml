@@ -17,6 +17,8 @@ services:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest
     container_name: cscan_worker_probe
     logging: *default-logging
+    cap_add:
+      - NET_RAW
     environment:
       - TZ=Asia/Shanghai
       # 中心 API 地址（必填）：来自 Web 控制台「Worker 安装命令」

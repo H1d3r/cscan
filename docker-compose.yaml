@@ -108,6 +108,8 @@ services:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/cscan-worker:latest
     container_name: cscan_worker
     logging: *default-logging
+    cap_add:
+      - NET_RAW
     environment:
       - TZ=Asia/Shanghai
       - CSCAN_SERVER=http://cscan-api:8888

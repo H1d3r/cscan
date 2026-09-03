@@ -1134,6 +1134,7 @@ type PortScanConfig struct {
 	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)，默认1，建议0-1
 	Workers           int    `json:"workers"`           // Naabu内部工作线程，默认50，建议50-100
 	Verify            bool   `json:"verify"`            // TCP验证，默认false（禁用以提速）
+	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），Worker自动设置，前端无需填写
 }
 
 // PortIdentifyConfig 端口识别配置（Nmap/Fingerprintx 服务识别）

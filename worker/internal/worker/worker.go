@@ -2081,6 +2081,9 @@ domainScanDone:
 			portScanTimeout, singleTimeout, portTargetCount, portCount, rate, estimatedPerTarget)
 		portCtx, portCancel := context.WithTimeout(ctx, time.Duration(portScanTimeout)*time.Second)
 
+		// 将聚合超时透传至 naabu scanner，使其按目标数均摊单目标超时
+		config.PortScan.AggregatedTimeout = portScanTimeout
+
 		// 根据配置选择端口发现工具（默认使用Naabu)
 		portDiscoveryTool := "naabu"
 		if config.PortScan != nil && config.PortScan.Tool != "" {
