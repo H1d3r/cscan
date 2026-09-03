@@ -85,6 +85,10 @@ type MainTaskModel struct {
 	coll *mongo.Collection
 }
 
+func (m *MainTaskModel) Collection() *mongo.Collection {
+	return m.coll
+}
+
 func NewMainTaskModel(db *mongo.Database) *MainTaskModel {
 	coll := db.Collection("maintask")
 
@@ -534,6 +538,15 @@ func (m *ExecutorTaskModel) FindByMainTaskId(ctx context.Context, mainTaskId str
 		return nil, err
 	}
 	return docs, nil
+}
+
+// DeleteByMainTaskId deletes all executor tasks for a given main task
+func (m *ExecutorTaskModel) DeleteByMainTaskId(ctx context.Context, mainTaskId string) (int64, error) {
+	result, err := m.coll.DeleteMany(ctx, bson.M{"main_task_id": mainTaskId})
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedCount, nil
 }
 
 // TaskProfileModel

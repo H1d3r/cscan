@@ -829,6 +829,16 @@ func (m *AssetModel) DeleteByFilter(ctx context.Context, filter bson.M) (int64, 
 	return result.DeletedCount, nil
 }
 
+// DeleteByTaskId 按 taskId 删除资产及其子任务资产
+func (m *AssetModel) DeleteByTaskId(ctx context.Context, taskId string) (int64, error) {
+	filter := bson.M{"taskId": taskId}
+	result, err := m.coll.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return result.DeletedCount, nil
+}
+
 // Clear 清空所有资产
 func (m *AssetModel) Clear(ctx context.Context) (int64, error) {
 	result, err := m.coll.DeleteMany(ctx, bson.M{})

@@ -597,11 +597,52 @@ func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq) (resp
 		l.svcCtx.RedisClient.Del(l.ctx, taskInfoKey)
 	}
 
+	// 先删除父文档，成功后再级联删除子数据（避免父删除失败时子数据已丢失）
 	err = taskModel.Delete(l.ctx, req.Id)
 	if err != nil {
 		return &types.BaseResp{Code: 500, Msg: "删除失败"}, nil
 	}
+
+	if task != nil {
+		l.cascadeDeleteTaskData(task.TaskId)
+	}
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
+}
+
+// cascadeDeleteTaskData 级联删除任务相关数据（资产、漏洞、扫描结果、目录扫描、JSFinder、执行任务）
+func (l *MainTaskDeleteLogic) cascadeDeleteTaskData(taskId string) {
+	assetModel := l.svcCtx.GetAssetModel()
+	vulModel := l.svcCtx.GetVulModel()
+	scanResultModel := model.NewScanResultModel(l.svcCtx.MongoDB)
+	dirscanModel := l.svcCtx.GetDirScanResultModel()
+	jsfinderModel := l.svcCtx.GetJSFinderResultModel()
+
+	// 按 taskId 删除资产
+	if _, err := assetModel.DeleteByTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete asset failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 taskId 删除漏洞
+	if err := vulModel.DeleteByTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete vul failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 jobID 删除扫描结果
+	if _, err := scanResultModel.DeleteByJobID(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete scanresult failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 task_id 删除目录扫描结果
+	if _, err := dirscanModel.DeleteByFilter(l.ctx, bson.M{"task_id": taskId}); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete dirscan failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 task_id 删除 JSFinder 结果
+	if _, err := jsfinderModel.DeleteMany(l.ctx, bson.M{"task_id": taskId}); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete jsfinder failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 main_task_id 删除执行任务
+	executorModel := l.svcCtx.GetExecutorTaskModel()
+	if _, err := executorModel.DeleteByMainTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, taskId=%s, error=%v", taskId, err)
+	}
+	l.Logger.Infof("cascadeDeleteTaskData: all related data deleted for taskId=%s", taskId)
 }
 
 // MainTaskBatchDeleteLogic 批量删除
@@ -619,6 +660,32 @@ func NewMainTaskBatchDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext
 	}
 }
 
+// cascadeDeleteTaskData 级联删除任务相关数据（资产、漏洞、扫描结果、执行任务）
+func (l *MainTaskBatchDeleteLogic) cascadeDeleteTaskData(taskId string) {
+	assetModel := l.svcCtx.GetAssetModel()
+	vulModel := l.svcCtx.GetVulModel()
+	scanResultModel := model.NewScanResultModel(l.svcCtx.MongoDB)
+
+	// 按 taskId 删除资产
+	if _, err := assetModel.DeleteByTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete assets failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 taskId 删除漏洞
+	if err := vulModel.DeleteByTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete vuls failed, taskId=%s, error=%v", taskId, err)
+	}
+	// 按 jobID 删除扫描结果
+	if _, err := scanResultModel.DeleteByJobID(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete scan results failed, taskId=%s, error=%v", taskId, err)
+	}
+
+	executorModel := l.svcCtx.GetExecutorTaskModel()
+	if _, err := executorModel.DeleteByMainTaskId(l.ctx, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, taskId=%s, error=%v", taskId, err)
+	}
+	l.Logger.Infof("cascadeDeleteTaskData: all related data deleted for taskId=%s", taskId)
+}
+
 func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchDeleteReq) (resp *types.BaseResp, err error) {
 	if len(req.Ids) == 0 {
 		return &types.BaseResp{Code: 400, Msg: "请选择要删除的任务"}, nil
@@ -626,7 +693,7 @@ func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchD
 
 	taskModel := l.svcCtx.GetMainTaskModel()
 
-	// 先获取所有任务信息，发送停止信号
+	// 先获取所有任务信息，发送停止信号并级联删除相关数据
 	for _, id := range req.Ids {
 		task, err := taskModel.FindById(l.ctx, id)
 		if err == nil && task != nil {
@@ -639,6 +706,9 @@ func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchD
 			// 清理任务相关的Redis数据
 			taskInfoKey := "cscan:task:info:" + task.TaskId
 			l.svcCtx.RedisClient.Del(l.ctx, taskInfoKey)
+
+			// 级联删除任务相关数据
+			l.cascadeDeleteTaskData(task.TaskId)
 		}
 	}
 
@@ -1110,63 +1180,116 @@ func NewTaskStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *TaskStat
 }
 
 func (l *TaskStatLogic) TaskStat() (resp *types.TaskStatResp, err error) {
-	var total, completed, running, failed, pending int64
+	now := time.Now()
 	trendDays := make([]string, 7)
 	trendCompleted := make([]int, 7)
 	trendFailed := make([]int, 7)
 
-	now := time.Now()
-	// 初始化日期数组
 	for i := 6; i >= 0; i-- {
 		day := now.AddDate(0, 0, -i)
 		trendDays[6-i] = day.Format("01-02")
 	}
 
 	taskModel := l.svcCtx.GetMainTaskModel()
+	coll := taskModel.Collection()
 
-	// 统计总数
-	total, _ = taskModel.Count(l.ctx, bson.M{})
+	var totalCount int64
 
-	// 按状态统计
-	completed, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusSuccess})
-	running, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusStarted})
-	failed, _ = taskModel.Count(l.ctx, bson.M{"status": model.TaskStatusFailure})
-	pending, _ = taskModel.Count(l.ctx, bson.M{"status": bson.M{"$in": []string{model.TaskStatusPending, model.TaskStatusCreated}}})
+	// 单次聚合：统计各状态总数 + 近7天每日完成/失败数
+	pipeline := []bson.M{
+		{
+			"$match": bson.M{
+				"status": bson.M{"$in": []string{
+					model.TaskStatusSuccess,
+					model.TaskStatusStarted,
+					model.TaskStatusFailure,
+					model.TaskStatusPending,
+					model.TaskStatusCreated,
+				}},
+			},
+		},
+		{
+			"$group": bson.M{
+				"_id":    "$status",
+				"count":  bson.M{"$sum": 1},
+				"latest": bson.M{"$max": "$update_time"},
+			},
+		},
+	}
 
-	// 近7天每日趋势统计
+	resultCursor, err := coll.Aggregate(l.ctx, pipeline)
+	if err == nil {
+		defer resultCursor.Close(l.ctx)
+		for resultCursor.Next(l.ctx) {
+			var r struct {
+				ID     string `bson:"_id"`
+				Count  int64  `bson:"count"`
+				Latest time.Time `bson:"latest"`
+			}
+			if err := resultCursor.Decode(&r); err != nil {
+				continue
+			}
+			totalCount += r.Count
+			switch r.ID {
+			case model.TaskStatusSuccess:
+				resp.Completed = int(r.Count)
+			case model.TaskStatusStarted:
+				resp.Running = int(r.Count)
+			case model.TaskStatusFailure:
+				resp.Failed = int(r.Count)
+			case model.TaskStatusPending, model.TaskStatusCreated:
+				resp.Pending += int(r.Count)
+			}
+		}
+	}
+
+	// 近7天趋势：单次聚合按日期+状态分组
 	for i := 6; i >= 0; i-- {
 		day := now.AddDate(0, 0, -i)
 		dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
 		dayEnd := dayStart.AddDate(0, 0, 1)
 		idx := 6 - i
+		trendDays[idx] = day.Format("01-02")
 
-		// 统计当天完成的任务
-		c, _ := taskModel.Count(l.ctx, bson.M{
-			"status":      model.TaskStatusSuccess,
-			"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
-		})
-		trendCompleted[idx] = int(c)
-
-		// 统计当天失败的任务
-		c, _ = taskModel.Count(l.ctx, bson.M{
-			"status":      model.TaskStatusFailure,
-			"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
-		})
-		trendFailed[idx] = int(c)
+		dayPipeline := []bson.M{
+			{"$match": bson.M{
+				"status":      bson.M{"$in": []string{model.TaskStatusSuccess, model.TaskStatusFailure}},
+				"update_time": bson.M{"$gte": dayStart, "$lt": dayEnd},
+			}},
+			{"$group": bson.M{
+				"_id":   "$status",
+				"count": bson.M{"$sum": 1},
+			}},
+		}
+		dayCursor, err := coll.Aggregate(l.ctx, dayPipeline)
+		if err == nil {
+			for dayCursor.Next(l.ctx) {
+				var dr struct {
+					ID    string `bson:"_id"`
+					Count int64  `bson:"count"`
+				}
+				if err := dayCursor.Decode(&dr); err != nil {
+					continue
+				}
+				if dr.ID == model.TaskStatusSuccess {
+					trendCompleted[idx] = int(dr.Count)
+				} else if dr.ID == model.TaskStatusFailure {
+					trendFailed[idx] = int(dr.Count)
+				}
+			}
+			dayCursor.Close(l.ctx)
+		}
 	}
 
-	return &types.TaskStatResp{
+	resp = &types.TaskStatResp{
 		Code:           0,
 		Msg:            "success",
-		Total:          int(total),
-		Completed:      int(completed),
-		Running:        int(running),
-		Failed:         int(failed),
-		Pending:        int(pending),
+		Total:          int(totalCount),
 		TrendDays:      trendDays,
 		TrendCompleted: trendCompleted,
 		TrendFailed:    trendFailed,
-	}, nil
+	}
+	return resp, nil
 }
 
 // MainTaskUpdateLogic 更新任务逻辑
@@ -1343,7 +1466,7 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 	// 旧数据无 created_by 字段，允许访问以保持兼容
 	currentUserId := middleware.GetUserId(l.ctx)
 	currentRole := middleware.GetRole(l.ctx)
-	if currentRole != "admin" && currentRole != "superadmin" && task.CreatedBy != "" && task.CreatedBy != currentUserId {
+	if !l.svcCtx.IsAdminRole(l.ctx, currentRole) && task.CreatedBy != "" && task.CreatedBy != currentUserId {
 		return &types.GetTaskLogsResp{Code: 403, Msg: "无权访问该任务日志", List: []types.TaskLogEntry{}}, nil
 	}
 
@@ -1359,8 +1482,16 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		return &types.GetTaskLogsResp{Code: 0, Msg: "日志读取器未初始化", List: []types.TaskLogEntry{}}, nil
 	}
 
-	// 跨所有日期和 Worker 按 taskId 查询日志
-	entries, readErr := l.svcCtx.WorkerLogReader.ReadByTaskIdAll(req.TaskId, limit)
+	var entries []svc.WorkerLogEntry
+	var nextCursor int64
+	var readErr error
+
+	// 有 cursor 时使用增量读取，否则全量读取
+	if req.Cursor > 0 || req.AfterTime != "" {
+		entries, nextCursor, readErr = l.svcCtx.WorkerLogReader.ReadByTaskIdAfter(req.TaskId, req.Cursor, req.AfterTime, limit)
+	} else {
+		entries, readErr = l.svcCtx.WorkerLogReader.ReadByTaskIdAll(req.TaskId, limit)
+	}
 	if readErr != nil {
 		l.Logger.Errorf("GetTaskLogs: read logs failed, taskId=%s, error=%v", req.TaskId, readErr)
 		return &types.GetTaskLogsResp{Code: 500, Msg: "读取日志失败", List: []types.TaskLogEntry{}}, nil
@@ -1394,8 +1525,8 @@ func (l *GetTaskLogsLogic) GetTaskLogs(req *types.GetTaskLogsReq) (resp *types.G
 		}
 	}
 
-	l.Logger.Infof("GetTaskLogs: returned %d logs for taskId=%s", len(result), req.TaskId)
-	return &types.GetTaskLogsResp{Code: 0, Msg: "success", List: result}, nil
+	l.Logger.Infof("GetTaskLogs: returned %d logs for taskId=%s, nextCursor=%d", len(result), req.TaskId, nextCursor)
+	return &types.GetTaskLogsResp{Code: 0, Msg: "success", List: result, NextCursor: nextCursor}, nil
 }
 
 // getMainTaskIdFromLog 从日志中的taskId提取主任务ID
