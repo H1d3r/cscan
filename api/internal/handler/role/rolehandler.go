@@ -112,3 +112,16 @@ func RoleSyncMenusHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		httpx.OkJson(w, resp)
 	}
 }
+
+// RoleMenuOptionsHandler 返回系统全部可配置菜单路径
+func RoleMenuOptionsHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l := logic.NewRoleMenuOptionsLogic(r.Context(), svcCtx)
+		resp, err := l.Options()
+		if err != nil {
+			response.Error(w, err)
+			return
+		}
+		httpx.OkJson(w, resp)
+	}
+}

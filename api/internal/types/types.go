@@ -21,6 +21,12 @@ type PageReq struct {
 	PageSize int `json:"pageSize,default=20"`
 }
 
+type UserListReq struct {
+	Page     int    `json:"page,default=1"`
+	PageSize int    `json:"pageSize,default=20"`
+	Search   string `json:"search,optional"`
+}
+
 // ==================== 用户认证 ====================
 type LoginReq struct {
 	Username string `json:"username"`
@@ -35,6 +41,8 @@ type LoginResp struct {
 	Username  string   `json:"username"`
 	Role      string   `json:"role"`
 	MenuPaths []string `json:"menuPaths,omitempty"`
+	IsAdmin   bool     `json:"isAdmin"`
+	AllPaths  []string `json:"allPaths,omitempty"`
 }
 
 type UserInfo struct {
@@ -932,6 +940,8 @@ type GetTaskLogsReq struct {
 	Limit        int    `json:"limit,default=100"`     // 返回条数限制
 	Search       string `json:"search,optional"`       // 模糊搜索关键词
 	IncludeDebug bool   `json:"includeDebug,optional"` // 是否包含 DEBUG 级别日志（默认不含，用于与容器日志对齐排查）
+	Cursor       int64  `json:"cursor,optional"`       // 增量游标：从该 seq 之后读取（0 表示全量）
+	AfterTime    string `json:"afterTime,optional"`    // 增量游标：从该时间之后读取
 }
 
 // TaskLogEntry 任务日志条目
@@ -945,9 +955,10 @@ type TaskLogEntry struct {
 
 // GetTaskLogsResp 获取任务日志响应
 type GetTaskLogsResp struct {
-	Code int            `json:"code"`
-	Msg  string         `json:"msg"`
-	List []TaskLogEntry `json:"list"`
+	Code       int            `json:"code"`
+	Msg        string         `json:"msg"`
+	List       []TaskLogEntry `json:"list"`
+	NextCursor int64          `json:"nextCursor,optional"` // 下一页游标（最后一条的 seq）
 }
 
 // ==================== 漏洞管理 ====================
@@ -1169,6 +1180,56 @@ type TaskStatResp struct {
 	TrendDays      []string `json:"trendDays"`      // 日期标签
 	TrendCompleted []int    `json:"trendCompleted"` // 每日完成数
 	TrendFailed    []int    `json:"trendFailed"`    // 每日失败数
+}
+
+// DashboardSummaryResp Dashboard 统一汇总响应
+type DashboardSummaryResp struct {
+	Code int `json:"code"`
+	Msg  string `json:"msg"`
+
+	// 资产概览
+	AssetTotal    int `json:"assetTotal"`
+	AssetNew      int `json:"assetNew"`
+	PortCount     int `json:"portCount"`
+	IPCount       int `json:"ipCount"`
+	DomainCount   int `json:"domainCount"`
+	SiteCount     int `json:"siteCount"`
+	DirScans      int `json:"dirScans"`
+	Groups        int `json:"groups"`
+	VulnTotal     int `json:"vulnTotal"`
+	VulnOpen      int `json:"vulnOpen"`
+	VulnFixed     int `json:"vulnFixed"`
+	VulnIgnored   int `json:"vulnIgnored"`
+
+	// 漏洞分级
+	VulnOpenCritical int `json:"vulnOpenCritical"`
+	VulnOpenHigh     int `json:"vulnOpenHigh"`
+	VulnOpenMedium   int `json:"vulnOpenMedium"`
+	VulnOpenLow      int `json:"vulnOpenLow"`
+	VulnOpenInfo     int `json:"vulnOpenInfo"`
+
+	// 任务统计
+	TaskTotal          int      `json:"taskTotal"`
+	TaskCompleted      int      `json:"taskCompleted"`
+	TaskRunning        int      `json:"taskRunning"`
+	TaskFailed         int      `json:"taskFailed"`
+	TaskPending        int      `json:"taskPending"`
+	TaskTrendDays      []string `json:"trendDays"`
+	TaskTrendCompleted []int    `json:"trendCompleted"`
+	TaskTrendFailed    []int    `json:"trendFailed"`
+
+	// Worker 统计
+	WorkerOnline  int `json:"workerOnline"`
+	WorkerOffline int `json:"workerOffline"`
+
+	// Top 数据
+	TopPorts   []StatItem `json:"topPorts"`
+	TopService []StatItem `json:"topService"`
+	TopApp     []StatItem `json:"topApp"`
+
+	// 工作台变化
+	AssetChanges *AssetChanges `json:"asset,omitempty"`
+	RiskChanges  *RiskChanges  `json:"risk,omitempty"`
 }
 
 // ==================== Worker管理 ====================
@@ -3244,15 +3305,15 @@ type CompareVersionsResp struct {
 
 // RoleInfo 角色信息
 type RoleInfo struct {
-	Id            interface{} `json:"id"`
-	Name          string      `json:"name"`
-	DisplayName   string      `json:"displayName"`
-	Description   string      `json:"description,omitempty"`
-	MenuPaths     []string    `json:"menuPaths"`
-	IsBuiltIn     bool        `json:"isBuiltIn"`
-	IsSuperadmin  bool        `json:"isSuperadmin"`
-	CreateTime    string      `json:"createTime"`
-	UpdateTime    string      `json:"updateTime"`
+	Id           interface{} `json:"id"`
+	Name         string      `json:"name"`
+	DisplayName  string      `json:"displayName"`
+	Description  string      `json:"description,omitempty"`
+	MenuPaths    []string    `json:"menuPaths"`
+	IsBuiltIn    bool        `json:"isBuiltIn"`
+	IsSuperadmin bool        `json:"isSuperadmin"`
+	CreateTime   string      `json:"createTime"`
+	UpdateTime   string      `json:"updateTime"`
 }
 
 // RoleListResp 角色列表响应
@@ -3269,10 +3330,11 @@ type RoleReq struct {
 
 // RoleCreateReq 创建角色请求
 type RoleCreateReq struct {
-	Name        string   `json:"name"`
-	DisplayName string   `json:"displayName"`
-	Description string   `json:"description,optional"`
-	MenuPaths   []string `json:"menuPaths"`
+	Name         string   `json:"name"`
+	DisplayName  string   `json:"displayName"`
+	Description  string   `json:"description,optional"`
+	MenuPaths    []string `json:"menuPaths"`
+	IsSuperadmin bool     `json:"isSuperadmin,optional"`
 }
 
 // RoleUpdateReq 更新角色请求
@@ -3289,6 +3351,9 @@ type RoleMenusResp struct {
 	Code      int      `json:"code"`
 	Msg       string   `json:"msg"`
 	MenuPaths []string `json:"menuPaths"`
+	IsAdmin   bool     `json:"isAdmin"`
+	// AllPaths 系统全部受权限管控的路径，供前端路由守卫区分「未授权」与「不纳管」
+	AllPaths []string `json:"allPaths,omitempty"`
 }
 
 // ==================== 任务分片管理 ====================

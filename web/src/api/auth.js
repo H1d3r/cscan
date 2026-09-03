@@ -114,3 +114,8 @@ export function deleteRole(data) {
 export function syncRoleMenus() {
   return request.post('/role/menus/sync')
 }
+
+// 系统全部可配置菜单路径（管理员权限）
+export function getRoleMenuOptions() {
+  return request.post('/role/menus/options')
+}

@@ -32,12 +32,17 @@ type PATLookup func(ctx context.Context, token string) (userId primitive.ObjectI
 // PATUsageRecorder 异步记录 PAT 使用信息的回调（可不提供）
 type PATUsageRecorder func(ctx context.Context, tokenId primitive.ObjectID, ip string)
 
+// RoleAdminLookup 由调用方注入的管理员角色判定回调。
+// 入参为角色名，返回该角色是否具备管理员接口权限。
+type RoleAdminLookup func(ctx context.Context, role string) bool
+
 type AuthMiddleware struct {
 	AccessSecret string
 	UserModel    *model.UserModel
 	PATLookup    PATLookup
 	PATRecorder  PATUsageRecorder
 	RateLimiter  *TokenRateLimiter // PAT 认证限流器（可选）
+	RoleAdmin    RoleAdminLookup   // 管理员角色判定（可选，未注入时仅认内置 admin/superadmin）
 }
 
 func NewAuthMiddleware(accessSecret string) *AuthMiddleware {
@@ -57,6 +62,12 @@ func (m *AuthMiddleware) WithPAT(lookup PATLookup, recorder PATUsageRecorder, us
 // WithRateLimiter 注入限流器，为 PAT 认证路径提供暴力破解防护
 func (m *AuthMiddleware) WithRateLimiter(limiter *TokenRateLimiter) *AuthMiddleware {
 	m.RateLimiter = limiter
+	return m
+}
+
+// WithRoleAdmin 注入管理员角色判定回调，使自定义角色也能被授予管理员权限
+func (m *AuthMiddleware) WithRoleAdmin(lookup RoleAdminLookup) *AuthMiddleware {
+	m.RoleAdmin = lookup
 	return m
 }
 
@@ -260,19 +271,26 @@ func GetTokenId(ctx context.Context) string {
 	return ""
 }
 
-// RequireAdmin 管理员权限中间件，需要先经过认证中间件
-func RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
+// RequireAdmin 管理员权限中间件，需要先经过认证中间件。
+// 内置 admin/superadmin 直接放行；自定义角色由注入的 RoleAdmin 回调按角色标志判定。
+func (m *AuthMiddleware) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		role := GetRole(r.Context())
-		if role != "admin" && role != "superadmin" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"code": 403,
-				"msg":  "需要管理员权限",
-			})
+		if !m.IsAdmin(r.Context()) {
+			forbidden(w, "需要管理员权限")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// IsAdmin 判定当前请求上下文的角色是否具备管理员权限
+func (m *AuthMiddleware) IsAdmin(ctx context.Context) bool {
+	role := GetRole(ctx)
+	if role == model.RoleAdmin || role == model.RoleSuperadmin {
+		return true
+	}
+	if m.RoleAdmin == nil {
+		return false
+	}
+	return m.RoleAdmin(ctx, role)
 }

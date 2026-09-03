@@ -12,8 +12,8 @@ import (
 	"cscan/api/internal/config"
 	svcsync "cscan/api/internal/svc/sync"
 	"cscan/internal/model"
-	"cscan/pkg/cache"
 	"cscan/internal/scheduler"
+	"cscan/pkg/cache"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -22,13 +22,13 @@ import (
 )
 
 type ServiceContext struct {
-	Config                  config.Config
-	MongoClient             *mongo.Client
-	MongoDB                 *mongo.Database
-	RedisClient             *redis.Client
+	Config      config.Config
+	MongoClient *mongo.Client
+	MongoDB     *mongo.Database
+	RedisClient *redis.Client
 	// WorkerDefaultKey 默认 Worker 认证密钥（来自环境变量 CSCAN_WORKER_KEY）。
 	// 与 Redis install_key 独立，互不影响。为空时仅校验 Redis install_key。
-	WorkerDefaultKey string
+	WorkerDefaultKey        string
 	UserModel               *model.UserModel
 	UserTokenModel          *model.UserTokenModel
 	OrganizationModel       *model.OrganizationModel
@@ -225,7 +225,80 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 	// 为已存在的内置模板补全 jsfinder 字段（标准扫描默认开启）
 	svcsync.MigrateBuiltinTemplatesAddJSFinder(svcCtx.ScanTemplateModel)
 
+	// 初始化内置角色（superadmin / admin / user），失败仅告警不阻塞启动
+	if err := svcCtx.RoleModel.EnsureIndexes(); err != nil {
+		logx.Errorf("[Role] ensure indexes failed: %v", err)
+	}
+	roleCtx, roleCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := svcCtx.RoleModel.EnsureBuiltInRoles(roleCtx); err != nil {
+		logx.Errorf("[Role] init built-in roles failed: %v", err)
+	}
+	roleCancel()
+
 	return svcCtx, nil
+}
+
+// roleAdminCacheTTL 角色管理员标志的本地缓存时长。
+// 角色权限调整后最迟 30s 生效，换取管理员路由无需每请求查一次 MongoDB。
+const roleAdminCacheTTL = 30 * time.Second
+
+// IsAdminRole 判定角色是否具备管理员接口权限。
+// 内置 superadmin/admin 直接放行（角色集合不可用时仍能登录后台）；
+// 其余角色查 role.is_superadmin 标志，结果本地缓存。
+func (s *ServiceContext) IsAdminRole(ctx context.Context, roleName string) bool {
+	if roleName == "" {
+		return false
+	}
+	if roleName == model.RoleSuperadmin || roleName == model.RoleAdmin {
+		return true
+	}
+	if s.RoleModel == nil {
+		return false
+	}
+
+	resolve := func() (interface{}, error) {
+		queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		role, err := s.RoleModel.FindByName(queryCtx, roleName)
+		if err != nil {
+			return nil, err
+		}
+		return role != nil && role.IsSuperadmin, nil
+	}
+
+	var v interface{}
+	var err error
+	if s.QueryCache != nil {
+		v, err = s.QueryCache.GetOrSetWithTTL("role:admin:"+roleName, roleAdminCacheTTL, resolve)
+	} else {
+		v, err = resolve()
+	}
+	if err != nil {
+		logx.Errorf("[Role] resolve admin flag failed: role=%s err=%v", roleName, err)
+		return false
+	}
+	isAdmin, _ := v.(bool)
+	return isAdmin
+}
+
+// MenuPathsForRole 返回角色可访问的菜单路径。
+// 角色未落库（历史数据 / 集合异常）时回退全量菜单，保证升级过程中不锁死已有账号。
+func (s *ServiceContext) MenuPathsForRole(ctx context.Context, roleName string) []string {
+	if s.RoleModel == nil {
+		return model.MenuPathList()
+	}
+	role, err := s.RoleModel.FindByName(ctx, roleName)
+	if err != nil {
+		logx.Errorf("[Role] query menu paths failed: role=%s err=%v", roleName, err)
+		return model.MenuPathList()
+	}
+	if role == nil {
+		return model.MenuPathList()
+	}
+	if role.MenuPaths == nil {
+		return []string{}
+	}
+	return role.MenuPaths
 }
 
 // ValidateWorkerKey 校验 Worker 密钥（双密钥接受）。
@@ -344,6 +417,10 @@ func (s *ServiceContext) GetCertModel() *model.CertModel {
 }
 
 // GetReverifyConfigModel 返回复验配置模型（T3.3/T3.4，单集合）
+func (s *ServiceContext) GetExecutorTaskModel() *model.ExecutorTaskModel {
+	return model.NewExecutorTaskModel(s.MongoDB)
+}
+
 func (s *ServiceContext) GetReverifyConfigModel() *model.ReverifyConfigModel {
 	return model.NewReverifyConfigModel(s.MongoDB)
 }

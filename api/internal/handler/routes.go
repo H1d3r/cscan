@@ -15,8 +15,8 @@ import (
 	"cscan/api/internal/handler/fingerprint"
 	"cscan/api/internal/handler/jsfinder"
 	"cscan/api/internal/handler/notify"
-	"cscan/api/internal/handler/openapi"
 	"cscan/api/internal/handler/onlineapi"
+	"cscan/api/internal/handler/openapi"
 	"cscan/api/internal/handler/organization"
 	"cscan/api/internal/handler/poc"
 	"cscan/api/internal/handler/report"
@@ -179,6 +179,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		},
 		svcCtx.UserModel,
 	)
+	authMiddleware = authMiddleware.WithRoleAdmin(svcCtx.IsAdminRole)
 	authRoutes := []rest.Route{
 		// 用户管理（查看权限）
 		{Method: http.MethodPost, Path: "/api/v1/user/list", Handler: user.UserListHandler(svcCtx)},
@@ -210,6 +211,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/asset/port/list", Handler: asset.PortListHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/stat", Handler: asset.AssetStatHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/dashboard/changes", Handler: dashboard.DashboardChangesHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/dashboard/summary", Handler: dashboard.DashboardSummaryHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/groups", Handler: asset.AssetGroupsHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/groups/delete", Handler: asset.DeleteAssetGroupHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/asset/inventory", Handler: asset.AssetInventoryHandler(svcCtx)},
@@ -472,12 +474,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/batch-progress", Handler: dirscan.DirScanAIBatchProgressHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/dirscan/ai/stop-batch", Handler: dirscan.DirScanAIStopBatchHandler(svcCtx)},
 
-		// 角色管理
-		{Method: http.MethodPost, Path: "/api/v1/role/list", Handler: role.RoleListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/role/detail", Handler: role.RoleDetailHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/role/create", Handler: role.RoleCreateHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/role/update", Handler: role.RoleUpdateHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/role/delete", Handler: role.RoleDeleteHandler(svcCtx)},
+		// 角色菜单同步（任意登录用户拉取自己角色的菜单权限）
 		{Method: http.MethodPost, Path: "/api/v1/role/menus/sync", Handler: role.RoleSyncMenusHandler(svcCtx)},
 
 		// 通知配置（查看权限）
@@ -528,6 +525,14 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 
 	// 需要管理员权限的路由（敏感操作）
 	adminRoutes := []rest.Route{
+		// 角色管理（可授予菜单与管理员权限，必须限管理员）
+		{Method: http.MethodPost, Path: "/api/v1/role/list", Handler: role.RoleListHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/detail", Handler: role.RoleDetailHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/create", Handler: role.RoleCreateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/update", Handler: role.RoleUpdateHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/delete", Handler: role.RoleDeleteHandler(svcCtx)},
+		{Method: http.MethodPost, Path: "/api/v1/role/menus/options", Handler: role.RoleMenuOptionsHandler(svcCtx)},
+
 		// 用户管理（写操作需要管理员权限）
 		{Method: http.MethodPost, Path: "/api/v1/user/create", Handler: user.UserCreateHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/user/update", Handler: user.UserUpdateHandler(svcCtx)},
@@ -593,7 +598,7 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 	for i := range adminRoutes {
 		originalHandler := adminRoutes[i].Handler
 		adminRoutes[i].Handler = func(w http.ResponseWriter, r *http.Request) {
-			authMiddleware.Handle(middleware.RequireAdmin(http.HandlerFunc(originalHandler))).ServeHTTP(w, r)
+			authMiddleware.Handle(authMiddleware.RequireAdmin(http.HandlerFunc(originalHandler))).ServeHTTP(w, r)
 		}
 	}
 
