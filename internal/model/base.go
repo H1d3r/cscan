@@ -27,11 +27,15 @@ type Timestamped interface {
 // ==================== 分页参数 ====================
 
 // NormalizePage 分页上下限校验（L-2 修复）：
-//   - page <= 0 或 pageSize <= 0 视为"不分页"，原样返回（供 Find 方法跳过 skip/limit）
-//   - pageSize 大于 100 时截断为 100，防止 pageSize 过大导致全量返回或 OOM
+//   - page == 0 或 pageSize == 0 视为"不分页"，原样返回（供 Find 方法跳过 skip/limit）
+//   - page < 0 时回退为 1，pageSize < 0 时回退为默认值 20
+//   - pageSize > 100 时截断为 100，防止 pageSize 过大导致全量返回或 OOM
 //
 // 同时支持 int 与 int64（不同 model 方法的参数类型不同），通过泛型约束自动推导。
 func NormalizePage[T int | int64](page, pageSize T) (T, T) {
+	if page == 0 || pageSize == 0 {
+		return 0, 0
+	}
 	if page < 1 {
 		page = 1
 	}

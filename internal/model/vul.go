@@ -240,15 +240,19 @@ func (m *VulModel) FindBySeveritySort(ctx context.Context, filter bson.M, page, 
 			{Key: "first_seen_time", Value: -1},
 			{Key: "create_time", Value: -1},
 		}}},
-		{{Key: "$skip", Value: int64((page - 1) * pageSize)}},
-		{{Key: "$limit", Value: int64(pageSize)}},
-		{{Key: "$project", Value: bson.D{
-			{Key: "request", Value: 0},
-			{Key: "response", Value: 0},
-			{Key: "curl_command", Value: 0},
-			{Key: "severity_rank", Value: 0},
-		}}},
 	}
+	if page > 0 && pageSize > 0 {
+		pipeline = append(pipeline,
+			bson.D{{Key: "$skip", Value: int64((page - 1) * pageSize)}},
+			bson.D{{Key: "$limit", Value: int64(pageSize)}},
+		)
+	}
+	pipeline = append(pipeline, bson.D{{Key: "$project", Value: bson.D{
+		{Key: "request", Value: 0},
+		{Key: "response", Value: 0},
+		{Key: "curl_command", Value: 0},
+		{Key: "severity_rank", Value: 0},
+	}}})
 
 	cursor, err := m.coll.Aggregate(ctx, pipeline)
 	if err != nil {
