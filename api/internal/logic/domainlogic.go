@@ -39,28 +39,6 @@ func extractDomainFromAsset(asset *model.Asset) string {
 	return domain
 }
 
-// mergeDomainLabels 归并标签切片（去重、保持顺序），供域名行聚合多资产标签。
-func mergeDomainLabels(base, extra []string) []string {
-	if len(extra) == 0 {
-		return base
-	}
-	seen := make(map[string]struct{}, len(base)+len(extra))
-	out := make([]string, 0, len(base)+len(extra))
-	for _, v := range base {
-		if _, ok := seen[v]; !ok {
-			seen[v] = struct{}{}
-			out = append(out, v)
-		}
-	}
-	for _, v := range extra {
-		if _, ok := seen[v]; !ok {
-			seen[v] = struct{}{}
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
 type DomainLogic struct {
 	logx.Logger
 	ctx    context.Context
@@ -81,13 +59,9 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 
 	orgMap := common.LoadOrgMap(l.ctx, l.svcCtx)
 
-	// 用于去重和聚合域名
-	domainMap := make(map[string]*types.Domain)
-
 	assetModel := l.svcCtx.GetAssetModel()
 
 	// 构建查询条件
-	// 基础条件：category=domain 或 domain字段不为空 或 source=subfinder
 	baseCondition := []bson.M{
 		{"category": "domain"},
 		{"domain": bson.M{"$exists": true, "$ne": ""}},
@@ -108,14 +82,11 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 			}},
 		}
 	} else if req.Domain != "" {
-		// 域名搜索
 		filter["$and"] = []bson.M{
 			{"$or": baseCondition},
 			{"domain": bson.M{"$regex": regexp.QuoteMeta(req.Domain), "$options": "i"}},
 		}
 	} else if req.RootDomain != "" {
-		// 根域名搜索：匹配根域名自身（example.com）及其子域名（www.example.com）。
-		// 用 (^|\.) 前缀 + QuoteMeta 转义，避免根域自身的点被当作任意字符、子域漏配
 		escapedRoot := regexp.QuoteMeta(req.RootDomain)
 		conditions := []bson.M{
 			{"$or": baseCondition},
@@ -124,7 +95,6 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 				{"host": bson.M{"$regex": "(^|\\.)" + escapedRoot + "$", "$options": "i"}},
 			}},
 		}
-		// 目标详情子域名 Tab：rootDomain 预过滤之上再叠加过滤值（query）与标签条件
 		if q := strings.TrimSpace(req.Query); q != "" {
 			qm := regexp.QuoteMeta(q)
 			conditions = append(conditions, bson.M{"$or": []bson.M{
@@ -139,119 +109,49 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 		}
 		filter["$and"] = conditions
 	} else if req.IP != "" {
-		// IP搜索 - 搜索解析到该IP的域名
 		filter["$and"] = []bson.M{
 			{"$or": baseCondition},
 			{"ip.ipv4.ip": bson.M{"$regex": regexp.QuoteMeta(req.IP), "$options": "i"}},
 		}
 	} else {
-		// 无搜索条件，只用基础条件
 		filter["$or"] = baseCondition
 	}
 
-	// 组织
 	if req.OrgId != "" {
 		filter["org_id"] = req.OrgId
 	}
 
-	// 查询所有匹配的资产做内存去重聚合。走 FindAllForAgg 全量查询 + AssetAggProjection 瘦投影：
-	// 不能用 FindWithSort 传大 pageSize 绕过——NormalizePage 会把 pageSize 钳到 100，
-	// 只取最新 100 条资产去重会把老资产里的子域漏掉（列表数与目标详情统计对不上）。
-	assets, err := assetModel.FindAllForAgg(l.ctx, filter)
+	// 分页参数
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+
+	// 服务端聚合（$group by domain + $facet 分页），避免全量加载资产到内存
+	aggResults, total, err := assetModel.AggregateDomains(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
-		l.Logger.Errorf("DomainList 查询资产失败: %v", err)
+		l.Logger.Errorf("DomainList 聚合查询失败: %v", err)
 		return resp, nil
 	}
 
-	// 聚合域名信息
-	for _, asset := range assets {
-		domain := extractDomainFromAsset(&asset)
-		if domain == "" {
-			continue
-		}
-
-		if existing, ok := domainMap[domain]; ok {
-			// 更新已存在的域名记录 - 添加IP（去重）
-			for _, ipv4 := range asset.Ip.IpV4 {
-				found := false
-				for _, ip := range existing.IPs {
-					if ip == ipv4.IPName {
-						found = true
-						break
-					}
-				}
-				if !found && ipv4.IPName != "" {
-					existing.IPs = append(existing.IPs, ipv4.IPName)
-				}
-			}
-			// 标签取并集（同域名多条资产各自携带的任务/手工标签）
-			existing.Labels = mergeDomainLabels(existing.Labels, asset.Labels)
-			// 更新时间取最新
-			if assetUpdate := asset.UpdateTime.Local().Format("2006-01-02 15:04:05"); assetUpdate > existing.UpdateTime {
-				existing.UpdateTime = assetUpdate
-			}
-			// 创建时间取最早
-			if assetCreate := asset.CreateTime.Local().Format("2006-01-02 15:04:05"); existing.CreateTime == "" || assetCreate < existing.CreateTime {
-				existing.CreateTime = assetCreate
-			}
-		} else {
-			// 创建新的域名记录
-			rootDomain := common.GetRootDomain(domain)
-			ips := []string{}
-			for _, ipv4 := range asset.Ip.IpV4 {
-				if ipv4.IPName != "" {
-					ips = append(ips, ipv4.IPName)
-				}
-			}
-
-			source := asset.Source
-			if source == "" {
-				if asset.Category == "domain" {
-					source = "subfinder"
-				} else {
-					source = "scan"
-				}
-			}
-
-			domainMap[domain] = &types.Domain{
-				Id:         asset.Id.Hex(),
-				Domain:     domain,
-				RootDomain: rootDomain,
-				IPs:        ips,
-				CName:      asset.CName,
-				Source:     source,
-				Labels:     mergeDomainLabels(nil, asset.Labels),
-				OrgId:      asset.OrgId,
-				OrgName:    orgMap[asset.OrgId],
-				IsNew:      asset.IsNewAsset,
-				CreateTime: asset.CreateTime.Local().Format("2006-01-02 15:04:05"),
-				UpdateTime: asset.UpdateTime.Local().Format("2006-01-02 15:04:05"),
-			}
-		}
-	}
-
-	// 转换为列表
-	allDomains := make([]types.Domain, 0, len(domainMap))
-	for _, d := range domainMap {
-		allDomains = append(allDomains, *d)
-	}
-
-	// 分页
-	total := len(allDomains)
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	start := (req.Page - 1) * req.PageSize
-	end := start + req.PageSize
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
+	// 转换为响应类型
+	list := make([]types.Domain, 0, len(aggResults))
+	for _, r := range aggResults {
+		list = append(list, types.Domain{
+			Id:         r.Id.Hex(),
+			Domain:     r.Domain,
+			RootDomain: common.GetRootDomain(r.Domain),
+			IPs:        r.IPs,
+			CName:      r.CName,
+			Source:     r.Source,
+			Labels:     r.Labels,
+			OrgId:      r.OrgId,
+			OrgName:    orgMap[r.OrgId],
+			IsNew:      r.IsNew,
+			CreateTime: r.CreateTime.Local().Format("2006-01-02 15:04:05"),
+			UpdateTime: r.UpdateTime.Local().Format("2006-01-02 15:04:05"),
+		})
 	}
 
 	resp.Total = total
-	if start < total {
-		resp.List = allDomains[start:end]
-	}
+	resp.List = list
 	return resp, nil
 }
 

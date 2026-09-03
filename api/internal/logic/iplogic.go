@@ -3,7 +3,6 @@ package logic
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strconv"
 	"time"
 
@@ -37,18 +36,11 @@ func (l *IPLogic) IPList(req *types.IPListReq) (*types.IPListResp, error) {
 
 	orgMap := common.LoadOrgMap(l.ctx, l.svcCtx)
 
-	// 用于聚合IP信息
-	ipMap := make(map[string]*types.IPAsset)
-
 	assetModel := l.svcCtx.GetAssetModel()
 
-	// 构建查询条件 - 查询有IP的资产
-	// IP来源：host字段是IP 或 ip.ipv4有值
+	// 构建查询条件
 	filter := bson.M{}
 	conditions := []bson.M{}
-
-	// 基础条件：有IP的资产
-	// 不加基础条件，查询所有资产然后提取IP
 
 	// 最上方筛选 (Query)
 	if req.Query != "" {
@@ -94,165 +86,40 @@ func (l *IPLogic) IPList(req *types.IPListReq) (*types.IPListResp, error) {
 		filter["$and"] = conditions
 	}
 
-	// 查询所有匹配的资产做内存去重聚合。走 FindAllForAgg 全量查询 + AssetAggProjection 瘦投影：
-	// FindWithSort 会被 NormalizePage 把 pageSize 钳到 100，只取最新 100 条资产聚合会漏 IP。
-	assets, err := assetModel.FindAllForAgg(l.ctx, filter)
+	// 分页参数
+	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+
+	// 服务端聚合（$group by IP + $facet 分页），避免全量加载资产到内存
+	aggResults, total, err := assetModel.AggregateIPs(l.ctx, filter, req.Page, req.PageSize)
 	if err != nil {
-		l.Logger.Errorf("IPList 查询资产失败: %v", err)
+		l.Logger.Errorf("IPList 聚合查询失败: %v", err)
 		return resp, nil
 	}
 
-	// 聚合IP信息
-	for _, asset := range assets {
-		// 收集所有IP地址
-		var ips []string
-		var location string
-
-		// 从ip.ipv4字段获取IP
-		for _, ipv4 := range asset.Ip.IpV4 {
-			if ipv4.IPName != "" {
-				ips = append(ips, ipv4.IPName)
-				if location == "" && ipv4.Location != "" {
-					location = ipv4.Location
-				}
-			}
+	// 转换为响应类型
+	list := make([]types.IPAsset, 0, len(aggResults))
+	for _, r := range aggResults {
+		ports := make([]types.PortInfo, 0, len(r.Ports))
+		for _, p := range r.Ports {
+			ports = append(ports, types.PortInfo{Port: p.Port, Service: p.Service})
 		}
-
-		// 如果host是IP地址，也加入
-		if common.IsIPAddress(asset.Host) && asset.Host != "" {
-			found := false
-			for _, ip := range ips {
-				if ip == asset.Host {
-					found = true
-					break
-				}
-			}
-			if !found {
-				ips = append(ips, asset.Host)
-			}
-		}
-
-		// 如果没有IP，跳过
-		if len(ips) == 0 {
-			continue
-		}
-
-		// 为每个IP创建或更新记录
-		for _, ip := range ips {
-			if existing, ok := ipMap[ip]; ok {
-				// 更新已存在的IP记录
-				// 添加端口（去重）
-				if asset.Port > 0 {
-					portFound := false
-					for _, p := range existing.Ports {
-						if p.Port == asset.Port {
-							portFound = true
-							break
-						}
-					}
-					if !portFound {
-						existing.Ports = append(existing.Ports, types.PortInfo{
-							Port:    asset.Port,
-							Service: asset.Service,
-						})
-					}
-				}
-
-				// 添加域名（去重）
-				domain := asset.Domain
-				if domain == "" && !common.IsIPAddress(asset.Host) {
-					domain = asset.Host
-				}
-				if domain != "" {
-					domainFound := false
-					for _, d := range existing.Domains {
-						if d == domain {
-							domainFound = true
-							break
-						}
-					}
-					if !domainFound {
-						existing.Domains = append(existing.Domains, domain)
-						existing.DomainCount = len(existing.Domains)
-					}
-				}
-
-				// 更新位置信息
-				if existing.Location == "" && location != "" {
-					existing.Location = location
-				}
-
-				// 更新时间取最新
-				if assetUpdate := asset.UpdateTime.Local().Format("2006-01-02 15:04:05"); assetUpdate > existing.UpdateTime {
-					existing.UpdateTime = assetUpdate
-				}
-				// 创建时间取最早
-				if assetCreate := asset.CreateTime.Local().Format("2006-01-02 15:04:05"); existing.CreateTime == "" || assetCreate < existing.CreateTime {
-					existing.CreateTime = assetCreate
-				}
-			} else {
-				// 创建新的IP记录
-				ports := []types.PortInfo{}
-				if asset.Port > 0 {
-					ports = append(ports, types.PortInfo{
-						Port:    asset.Port,
-						Service: asset.Service,
-					})
-				}
-
-				domains := []string{}
-				domain := asset.Domain
-				if domain == "" && !common.IsIPAddress(asset.Host) {
-					domain = asset.Host
-				}
-				if domain != "" {
-					domains = append(domains, domain)
-				}
-
-				ipMap[ip] = &types.IPAsset{
-					Id:          asset.Id.Hex(),
-					IP:          ip,
-					Location:    location,
-					Ports:       ports,
-					Domains:     domains,
-					DomainCount: len(domains),
-					OrgId:       asset.OrgId,
-					OrgName:     orgMap[asset.OrgId],
-					CreateTime:  asset.CreateTime.Local().Format("2006-01-02 15:04:05"),
-					UpdateTime:  asset.UpdateTime.Local().Format("2006-01-02 15:04:05"),
-					IsNew:       asset.IsNewAsset,
-				}
-			}
-		}
-	}
-
-	// 转换为列表并排序
-	allIPs := make([]types.IPAsset, 0, len(ipMap))
-	for _, ip := range ipMap {
-		allIPs = append(allIPs, *ip)
-	}
-
-	// 按端口数量降序排序
-	sort.Slice(allIPs, func(i, j int) bool {
-		return len(allIPs[i].Ports) > len(allIPs[j].Ports)
-	})
-
-	// 分页
-	total := len(allIPs)
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	start := (req.Page - 1) * req.PageSize
-	end := start + req.PageSize
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
+		list = append(list, types.IPAsset{
+			Id:          r.Id.Hex(),
+			IP:          r.IP,
+			Location:    r.Location,
+			Ports:       ports,
+			Domains:     r.Domains,
+			DomainCount: len(r.Domains),
+			OrgId:       r.OrgId,
+			OrgName:     orgMap[r.OrgId],
+			CreateTime:  r.CreateTime.Local().Format("2006-01-02 15:04:05"),
+			UpdateTime:  r.UpdateTime.Local().Format("2006-01-02 15:04:05"),
+			IsNew:       r.IsNew,
+		})
 	}
 
 	resp.Total = total
-	if start < total {
-		resp.List = allIPs[start:end]
-	}
+	resp.List = list
 	return resp, nil
 }
 
