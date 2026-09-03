@@ -13,7 +13,7 @@
           <el-input v-model="searchKeyword" :placeholder="t('common.menuSearch')" clearable size="small"
             :prefix-icon="Search" />
         </div>
-        <el-menu ref="menuRef" :default-active="$route.path" :default-openeds="defaultOpeneds" :collapse="isCollapse"
+        <el-menu ref="menuRef" :default-active="$route.path" :collapse="isCollapse"
           router :unique-opened="false">
           <template v-for="(group, gi) in filteredMenuData" :key="group.index || `g-${gi}`">
             <div v-if="group.type === 'divider'" v-show="!searchKeyword" class="menu-divider"></div>
@@ -126,12 +126,8 @@ import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import OnboardingGuide from '@/components/OnboardingGuide.vue'
 import { getOnboardingStatus } from '@/api/auth'
 import { shouldShowOnboarding } from '@/utils/onboarding'
-import {
-  Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection,
-  Fold, Expand, Key, OfficeBuilding, Bell, User, UserFilled, Document,
-  CircleClose, Warning, Timer, Picture, MagicStick, Operation,
-  Folder, Files, Lock
-} from '@element-plus/icons-vue'
+import { buildMenu } from '@/config/menu'
+import { Search, Fold, Expand, Aim } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -141,19 +137,21 @@ const themeStore = useThemeStore()
 const brandingStore = useBrandingStore()
 const isCollapse = ref(false)
 const isMobile = ref(false)
-const defaultOpeneds = ref(['scan-config-menu', 'system-management'])
 
 // === 菜单搜索 ===
 const searchKeyword = ref('')
 const menuRef = ref()
-const isAdmin = computed(() => userStore.role === 'admin' || userStore.role === 'superadmin')
+const isAdmin = computed(() => userStore.isAdmin)
+
+// 菜单数据结构（数据驱动渲染 + 搜索过滤），随语言切换重新翻译
+const menu = computed(() => buildMenu(t))
 
 // 根据用户角色的 menuPaths 过滤菜单（menuPaths 为空表示不受限）
 const filteredMenuData = computed(() => {
   const permitted = userStore.menuPaths
-  if (!permitted || permitted.length === 0) return menu
+  if (!permitted || permitted.length === 0) return menu.value
 
-  return menu
+  return menu.value
     .map(group => group.type === 'submenu'
       ? { ...group, items: group.items.filter(item => permitted.includes(item.index)) }
       : group)
@@ -163,49 +161,6 @@ const filteredMenuData = computed(() => {
       return group.items.length > 0
     })
 })
-
-// 菜单数据结构（数据驱动渲染 + 搜索过滤）
-const menu = [
-  { type: 'item', index: '/dashboard', icon: Odometer, label: t('navigation.dashboard') },
-  { type: 'submenu', index: 'asset-menu', icon: Monitor, label: t('navigation.assetManagement'), items: [
-    { index: '/asset-management/space-search', icon: Search, label: t('navigation.assetSpaceSearch') },
-    // 子域名/IP/端口/站点/Icon/应用/截图/证书 已合并进资产空间搜索的目标详情 Tab
-    { index: '/asset-management/exposure/dir', icon: Folder, label: t('navigation.exposureDir') },
-    { index: '/asset-management/exposure/js', icon: Files, label: t('navigation.exposureJs') },
-    { index: '/asset-management/risk/sensitive-info', icon: Lock, label: t('navigation.riskSensitiveInfo') },
-    { index: '/asset-management/risk/vuln', icon: Warning, label: t('navigation.riskVuln') },
-  ]},
-  { type: 'divider' },
-  { type: 'item', index: '/task', icon: List, label: t('navigation.taskManagement') },
-  { type: 'submenu', index: 'space-engine-menu', icon: Connection, label: t('navigation.spaceEngine'), items: [
-    { index: '/space-engine/online-search', icon: Search, label: t('navigation.onlineSearch') },
-    { index: '/space-engine/api-config', icon: Key, label: t('navigation.spaceEngineApiConfig') },
-    { index: '/space-engine/cron-task', icon: Timer, label: t('navigation.spaceEngineCronTask') },
-  ]},
-  { type: 'submenu', index: 'scan-config-menu', icon: Operation, label: t('navigation.scanConfig'), items: [
-    { index: '/cron-task', icon: Timer, label: t('navigation.cronTask') },
-    { index: '/settings-subfinder', icon: Search, label: t('navigation.subdomainConfig') },
-    { index: '/poc', icon: Aim, label: t('navigation.pocManagement') },
-    { index: '/fingerprint', icon: Stamp, label: t('navigation.fingerprintManagement') },
-    { index: '/blacklist', icon: CircleClose, label: t('navigation.blacklist') },
-  ]},
-  { type: 'divider' },
-  { type: 'item', index: '/ai-config', icon: MagicStick, label: t('navigation.aiConfig'), adminOnly: true },
-  { type: 'item', index: '/worker', icon: Connection, label: t('navigation.workerNodes') },
-  { type: 'item', index: '/worker-logs', icon: Document, label: t('navigation.workerLogs') },
-  { type: 'submenu', index: 'advanced-config-menu', icon: Operation, label: t('navigation.advancedConfig'), items: [
-    { index: '/settings-notify', icon: Bell, label: t('navigation.notifyConfig') },
-    { index: '/settings-reverify', icon: Timer, label: t('navigation.reverifyConfig') },
-    { index: '/high-risk-filter', icon: Warning, label: t('navigation.highRiskFilter') },
-  ]},
-  { type: 'submenu', index: 'system-management', icon: Setting, label: t('navigation.systemManagement'), items: [
-    { index: '/user', icon: User, label: t('navigation.userManagement'), adminOnly: true },
-    { index: '/registration-config', icon: UserFilled, label: t('settings.registration.title'), adminOnly: true },
-    { index: '/organization', icon: OfficeBuilding, label: t('navigation.organizationManagement'), adminOnly: true },
-    { index: '/settings-branding', icon: Picture, label: t('navigation.brandingConfig'), adminOnly: true },
-    { index: '/settings-role', icon: User, label: t('navigation.roleManagement'), adminOnly: true },
-  ]},
-]
 
 function matchLabel(label) {
   if (!searchKeyword.value) return true
@@ -225,19 +180,14 @@ const hasAnyResult = computed(() => filteredMenuData.value.some(group => {
   return false
 }))
 
-// 搜索时自动展开/收起子菜单
+// 搜索时自动展开/收起子菜单；清空搜索仅保留当前路由所在子菜单展开
 watch(searchKeyword, (val) => {
   if (!menuRef.value) return
   nextTick(() => {
-    menu.forEach(group => {
+    menu.value.forEach(group => {
       if (group.type !== 'submenu') return
-      if (val && subMenuHasMatch(group)) {
-        menuRef.value.open(group.index)
-      } else if (!val && !defaultOpeneds.value.includes(group.index)) {
-        menuRef.value.close(group.index)
-      } else if (!val && defaultOpeneds.value.includes(group.index)) {
-        menuRef.value.open(group.index)
-      }
+      const keepOpen = val ? subMenuHasMatch(group) : group.items.some(item => item.index === route.path)
+      keepOpen ? menuRef.value.open(group.index) : menuRef.value.close(group.index)
     })
   })
 })

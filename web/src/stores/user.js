@@ -12,6 +12,10 @@ export const useUserStore = defineStore('user', () => {
   const role = ref(localStorage.getItem('role') || '')
   const avatar = ref(localStorage.getItem('avatar') || '')
   const menuPaths = ref(JSON.parse(localStorage.getItem('menuPaths') || '[]'))
+  // 系统全部受管控路径：用于区分「无权访问」与「不纳入权限管控」（如个人中心）
+  const managedPaths = ref(JSON.parse(localStorage.getItem('managedPaths') || '[]'))
+  // 管理员标记由后端按角色的 isSuperadmin 下发，自定义角色也可被授予管理员权限
+  const adminFlag = ref(localStorage.getItem('isAdmin') === '1')
   const profile = ref({
     email: '',
     phone: '',
@@ -21,7 +25,7 @@ export const useUserStore = defineStore('user', () => {
   })
 
   const isLoggedIn = computed(() => !!token.value)
-  const isAdmin = computed(() => role.value === 'admin' || role.value === 'superadmin')
+  const isAdmin = computed(() => adminFlag.value || role.value === 'admin' || role.value === 'superadmin')
   const avatarSrc = computed(() => avatar.value || DEFAULT_AVATAR)
 
   let profileRequestVersion = 0
@@ -48,6 +52,8 @@ export const useUserStore = defineStore('user', () => {
         menuPaths.value = res.menuPaths
         localStorage.setItem('menuPaths', JSON.stringify(res.menuPaths))
       }
+      setManagedPaths(res.allPaths)
+      setAdminFlag(res.isAdmin === true)
 
       await refreshProfile()
     }
@@ -66,8 +72,11 @@ export const useUserStore = defineStore('user', () => {
         setAvatar(res.avatar || '')
         setUsername(res.username || username.value)
         if (res.role) {
+          const roleChanged = res.role !== role.value
           role.value = res.role
           localStorage.setItem('role', res.role)
+          // 管理员在后台调整了该用户的角色：立即重新拉取菜单权限
+          if (roleChanged) syncMenus()
         }
         profile.value = {
           email: res.email || '',
@@ -114,6 +123,8 @@ export const useUserStore = defineStore('user', () => {
     role.value = ''
     avatar.value = ''
     menuPaths.value = []
+    managedPaths.value = []
+    adminFlag.value = false
     profile.value = { email: '', phone: '', status: '', lastLoginTime: 0, createTime: 0 }
 
     localStorage.removeItem('token')
@@ -122,11 +133,47 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('role')
     localStorage.removeItem('avatar')
     localStorage.removeItem('menuPaths')
+    localStorage.removeItem('managedPaths')
+    localStorage.removeItem('isAdmin')
   }
 
   function setMenuPaths(paths) {
     menuPaths.value = paths || []
     localStorage.setItem('menuPaths', JSON.stringify(menuPaths.value))
+  }
+
+  function setAdminFlag(flag) {
+    adminFlag.value = !!flag
+    localStorage.setItem('isAdmin', adminFlag.value ? '1' : '0')
+  }
+
+  function setManagedPaths(paths) {
+    if (!Array.isArray(paths)) return
+    managedPaths.value = paths
+    localStorage.setItem('managedPaths', JSON.stringify(paths))
+  }
+
+  // canAccess 判定路由是否可访问。不在受管控清单内的路由（如个人中心）恒放行。
+  function canAccess(routePath) {
+    if (!routePath) return true
+    if (!managedPaths.value.includes(routePath)) return true
+    if (!menuPaths.value || menuPaths.value.length === 0) return true
+    return menuPaths.value.includes(routePath)
+  }
+
+  // syncMenus 重新拉取当前角色的菜单权限与管理员标记（角色配置变更后调用）
+  async function syncMenus() {
+    if (!token.value) return
+    try {
+      const res = await syncRoleMenus()
+      if (res && res.code === 0) {
+        setMenuPaths(res.menuPaths || [])
+        setManagedPaths(res.allPaths)
+        setAdminFlag(res.isAdmin === true)
+      }
+    } catch (e) {
+      // 同步失败保留本地缓存的权限，避免菜单闪空
+    }
   }
 
   return {
@@ -136,6 +183,7 @@ export const useUserStore = defineStore('user', () => {
     role,
     avatar,
     menuPaths,
+    managedPaths,
     avatarSrc,
     profile,
     isLoggedIn,
@@ -146,6 +194,10 @@ export const useUserStore = defineStore('user', () => {
     setUsername,
     setProfile,
     setMenuPaths,
+    setAdminFlag,
+    setManagedPaths,
+    canAccess,
+    syncMenus,
     refreshProfile,
     refreshAvatar
   }

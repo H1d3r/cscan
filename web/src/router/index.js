@@ -305,13 +305,30 @@ router.beforeEach((to, from, next) => {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
     next('/dashboard')
-  } else if (to.meta.roles && !to.meta.roles.includes(userStore.role)) {
+  } else if (to.meta.roles && !to.meta.roles.includes(userStore.role) && !userStore.isAdmin) {
     // 角色不匹配：拦截直接输入 URL 的越权访问（后端亦有对应校验）
     next('/dashboard')
+  } else if (userStore.token && !userStore.canAccess(matchedRoutePath(to))) {
+    // 菜单权限不足：拦截直接输入 URL 绕过侧边栏过滤（后端管理接口亦有对应校验）
+    next(fallbackRoute(userStore))
   } else {
     next()
   }
 })
+
+// matchedRoutePath 取匹配到的最深层路由的路径模式（如 /task/edit/:id），
+// 而非带实参的 to.path，以便与角色配置的菜单路径精确比对。
+function matchedRoutePath(to) {
+  const matched = to.matched
+  return matched.length > 0 ? matched[matched.length - 1].path : to.path
+}
+
+// fallbackRoute 无权访问时的落点：优先仪表盘，否则取角色第一个有权限的菜单
+function fallbackRoute(userStore) {
+  if (userStore.canAccess('/dashboard')) return '/dashboard'
+  const first = (userStore.menuPaths || []).find(p => !p.includes(':'))
+  return first || '/profile'
+}
 
 // 路由加载完成后隐藏顶部进度条
 router.afterEach(() => {
