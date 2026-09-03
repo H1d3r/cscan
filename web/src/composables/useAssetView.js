@@ -92,7 +92,7 @@ export function useAssetView(options) {
     } else {
       ElMessage.info(t('asset.gettingAllData'))
       try {
-        const res = await request.post(`${apiPrefix}/list`, { ...proTableRef.value?.searchForm, page: 1, pageSize: 10000 })
+        const res = await request.post(`${apiPrefix}/list`, { ...proTableRef.value?.searchForm, page: 0, pageSize: 0 })
         if (res.code === 0) {
           data = res.list || []
         } else {

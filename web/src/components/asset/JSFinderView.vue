@@ -661,7 +661,7 @@ async function handleExport(command) {
     ElMessage.info(t('asset.gettingAllData'))
     try {
       const res = await request.post('/jsfinder/list', {
-        ...proTableRef.value?.searchForm, page: 1, pageSize: 10000
+        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
       })
       if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
@@ -697,7 +697,7 @@ async function handleExport(command) {
     ElMessage.info(t('asset.gettingAllData'))
     try {
       const res = await request.post('/jsfinder/list', {
-        ...proTableRef.value?.searchForm, page: 1, pageSize: 10000
+        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
       })
       if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }

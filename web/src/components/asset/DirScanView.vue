@@ -602,7 +602,7 @@ async function handleExport(command) {
   let data = []
   try {
     const res = await request.post('/dirscan/result/list', {
-      ...proTableRef.value?.searchForm, page: 1, pageSize: 10000
+      ...proTableRef.value?.searchForm, page: 0, pageSize: 0
     })
     if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
   } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }

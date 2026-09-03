@@ -607,7 +607,7 @@ async function handleExport(command) {
     try {
       const res = await request.post(props.exportApi || props.api, {
         query: searchQuery.value,
-      ...searchForm, page: 1, pageSize: 10000
+      ...searchForm, page: 0, pageSize: 0
       })
       if (res.code === 0) {
         // 处理嵌套的 data 包装情况
@@ -671,7 +671,7 @@ async function handleExport(command) {
     try {
       const res = await request.post(props.exportApi || props.api, {
         query: searchQuery.value,
-      ...searchForm, page: 1, pageSize: 10000
+      ...searchForm, page: 0, pageSize: 0
       })
       if (res.code === 0) {
         // 处理嵌套的 data 包装情况
