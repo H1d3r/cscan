@@ -147,15 +147,18 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 				resultSeverity = vul.Severity
 			}
 			validationResults = append(validationResults, &PocValidationResult{
-				PocId:      pocId,
-				PocName:    resultPocName,
-				TemplateId: pocId,
-				Severity:   resultSeverity,
-				Matched:    true,
-				MatchedUrl: vul.Url,
-				Details:    vul.Result,
-				Output:     vul.Extra,
-				PocType:    pocType,
+				PocId:       pocId,
+				PocName:     resultPocName,
+				TemplateId:  pocId,
+				Severity:    resultSeverity,
+				Matched:     true,
+				MatchedUrl:  vul.Url,
+				Details:     vul.Result,
+				Output:      vul.Extra,
+				PocType:     pocType,
+				MatcherName: vul.MatcherName,
+				Request:     vul.Request,
+				Response:    vul.Response,
 			})
 			logx.Infof("[%s] Vulnerability found! Matched URL: %s", task.TaskId, vul.Url)
 			w.taskLog(task.TaskId, LevelInfo, "[%s] Vulnerability found! Matched URL: %s", task.TaskId, vul.Url)
@@ -436,15 +439,18 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	if vulCount > 0 {
 		for _, vul := range vuls {
 			validationResults = append(validationResults, &PocValidationResult{
-				PocId:      pocId,
-				PocName:    pocName,
-				TemplateId: pocId,
-				Severity:   pocSeverity,
-				Matched:    true,
-				MatchedUrl: vul.Url,
-				Details:    vul.Result,
-				Output:     vul.Extra,
-				PocType:    pocType,
+				PocId:       pocId,
+				PocName:     pocName,
+				TemplateId:  pocId,
+				Severity:    pocSeverity,
+				Matched:     true,
+				MatchedUrl:  vul.Url,
+				Details:     vul.Result,
+				Output:      vul.Extra,
+				PocType:     pocType,
+				MatcherName: vul.MatcherName,
+				Request:     vul.Request,
+				Response:    vul.Response,
 			})
 		}
 	}
@@ -454,16 +460,19 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 
 // PocValidationResult POC验证结果
 type PocValidationResult struct {
-	PocId      string   `json:"pocId"`
-	PocName    string   `json:"pocName"`
-	TemplateId string   `json:"templateId"`
-	Severity   string   `json:"severity"`
-	Matched    bool     `json:"matched"`
-	MatchedUrl string   `json:"matchedUrl"`
-	Details    string   `json:"details"`
-	Output     string   `json:"output"`
-	PocType    string   `json:"pocType"`
-	Tags       []string `json:"tags"`
+	PocId       string   `json:"pocId"`
+	PocName     string   `json:"pocName"`
+	TemplateId  string   `json:"templateId"`
+	Severity    string   `json:"severity"`
+	Matched     bool     `json:"matched"`
+	MatchedUrl  string   `json:"matchedUrl"`
+	Details     string   `json:"details"`
+	Output      string   `json:"output"`
+	PocType     string   `json:"pocType"`
+	Tags        []string `json:"tags"`
+	MatcherName string   `json:"matcherName,omitempty"`
+	Request     string   `json:"request,omitempty"`
+	Response    string   `json:"response,omitempty"`
 }
 
 // savePocValidationResult 保存POC验证结果
