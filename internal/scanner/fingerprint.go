@@ -441,7 +441,7 @@ dispatch:
 			activeCount := s.customFingerprintEngine.GetActiveFingerprintCount()
 			taskLog("INFO", "Active fingerprint scan enabled, engine has %d active fingerprints", activeCount)
 			if activeCount > 0 {
-				s.RunActiveFingerprint(ctx, httpAssets, opts, taskLog)
+				s.RunActiveFingerprint(ctx, httpAssets, opts, taskLog, config.OnAssetUpdated)
 			} else {
 				taskLog("WARN", "Active fingerprint scan enabled but no active fingerprints loaded")
 			}
@@ -782,7 +782,7 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	// 修复 D6：port 未知(==0)时跳过截图，避免对默认端口做无意义 Chrome 启动
 	if opts.Screenshot && asset.Screenshot == "" && asset.Port > 0 {
 		// 截图独立预算：不依赖 httpx/指纹共用的 ctx，避免被上游模块耗尽预算而饿死
-		shotCtx, shotCancel := screenshotContext(opts)
+		shotCtx, shotCancel := screenshotContext(ctx, opts)
 		screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
 		shotCancel()
 		if screenshot != "" {
@@ -1062,7 +1062,7 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		// 修复 D6：port 未知(==0)时跳过截图
 		if opts.Screenshot && asset.Port > 0 {
 			// 截图独立预算：不依赖指纹探测共用的 ctx，避免被上游模块耗尽预算而饿死
-			shotCtx, shotCancel := screenshotContext(opts)
+			shotCtx, shotCancel := screenshotContext(ctx, opts)
 			screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
 			shotCancel()
 			taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
@@ -1184,16 +1184,17 @@ func (s *FingerprintScanner) getIconHash(baseUrl string) string {
 	return ""
 }
 
-// screenshotContext 为单次截图派生独立上下文预算，与 httpx/指纹共用的 ctx 彻底解耦。
-// 解决：上游模块（httpx）耗尽共享 ctx 预算后，截图派生的 ctx 一出生即 DeadlineExceeded，
-// 导致截图被静默跳过（饿死）。此处参考证书抓取（context.Background()）的独立预算模式。
-// 预算取单目标超时与 takeScreenshot 内部 60s 兜底的较大者，实际耗时仍由内部 timer 精确控制。
-func screenshotContext(opts *FingerprintOptions) (context.Context, context.CancelFunc) {
+// screenshotContext 为单次截图派生独立上下文预算，与 httpx/指纹共用的 ctx 解耦，
+// 避免 httpx 耗尽共享 ctx 预算后截图被静默跳过（饿死）。
+// 注意：外层 caller 必须同时传入扫描主 ctx，以便 Worker 停止时能快速中断在途截图，
+// 防止截图 goroutine 阻塞 Worker 退出或产生长期 renderer 进程。
+func screenshotContext(parentCtx context.Context, opts *FingerprintOptions) (context.Context, context.CancelFunc) {
 	budget := 60
 	if opts != nil && opts.TargetTimeout > budget {
 		budget = opts.TargetTimeout
 	}
-	return context.WithTimeout(context.Background(), time.Duration(budget)*time.Second)
+	// 以扫描主 ctx 为祖先，保证 Worker 取消时截图也能终止
+	return context.WithTimeout(parentCtx, time.Duration(budget)*time.Second)
 }
 
 // takeScreenshot 使用chromedp截图（共享浏览器 + Tab 模式）
@@ -1592,7 +1593,12 @@ func containsString(slice []string, str string) bool {
 	return false
 }
 
-func mergeActiveFingerprintApp(asset *Asset, fp *model.Fingerprint) {
+func mergeActiveFingerprintApp(asset *Asset, fp *model.Fingerprint) bool {
+	previousApps := make(map[string]struct{}, len(asset.App))
+	for _, app := range asset.App {
+		previousApps[app] = struct{}{}
+	}
+
 	appResults := make(map[string]*AppDetectionResult)
 	mergeExistingAppDetections(appResults, asset.App)
 	mergeAppDetectionResult(appResults, &AppDetectionResult{
@@ -1605,6 +1611,12 @@ func mergeActiveFingerprintApp(asset *Asset, fp *model.Fingerprint) {
 	for _, result := range appResults {
 		asset.App = append(asset.App, formatAppWithSources(result))
 	}
+
+	currentApps := make(map[string]struct{}, len(asset.App))
+	for _, app := range asset.App {
+		currentApps[app] = struct{}{}
+	}
+	return !reflect.DeepEqual(previousApps, currentApps)
 }
 
 // ==================== Active Fingerprint Scanning ====================
@@ -1621,7 +1633,7 @@ type ActiveFingerprintResult struct {
 
 // RunActiveFingerprint 执行主动指纹扫描
 // 参考 Slack 项目的 ActiveFingerScan 实现
-func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []*Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) {
+func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []*Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{}), onAssetUpdated func(*Asset)) {
 	if taskLog == nil {
 		taskLog = func(level, format string, args ...interface{}) {
 			switch level {
@@ -1683,6 +1695,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	}
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
+	changedAssets := make(map[*Asset]struct{})
 
 	// 获取主动指纹列表
 	activeFingerprints := s.customFingerprintEngine.GetActiveFingerprints()
@@ -1707,6 +1720,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	var successCount int32
 	var failCount int32
 
+dispatch:
 	for _, asset := range aliveAssets {
 		// 构建基础URL
 		scheme := asset.Service
@@ -1727,7 +1741,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 			for _, path := range fp.ActivePaths {
 				select {
 				case <-ctx.Done():
-					return
+					break dispatch
 				default:
 				}
 
@@ -1751,8 +1765,12 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 				visited[fullURL] = true
 				visitedMu.Unlock()
 
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					break dispatch
+				}
 				wg.Add(1)
-				sem <- struct{}{}
 
 				go func(asset *Asset, fp *model.Fingerprint, fullURL, path, baseURL string) {
 					defer wg.Done()
@@ -1821,7 +1839,11 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 						taskLog("DEBUG", "Active fingerprint matched: %s -> %s (path: %s)", baseURL, fp.Name, path)
 						taskLog("INFO", "Active fingerprint: %s -> %s", fullURL, fp.Name)
-						mergeActiveFingerprintApp(asset, fp)
+						s.assetMutex.Lock()
+						if mergeActiveFingerprintApp(asset, fp) {
+							changedAssets[asset] = struct{}{}
+						}
+						s.assetMutex.Unlock()
 					}
 				}(asset, fp, fullURL, path, baseURL)
 			}
@@ -1829,6 +1851,16 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	}
 
 	wg.Wait()
+	if onAssetUpdated != nil {
+		for _, asset := range aliveAssets {
+			if _, changed := changedAssets[asset]; !changed {
+				continue
+			}
+			assetSnapshot := *asset
+			assetSnapshot.App = append([]string(nil), asset.App...)
+			onAssetUpdated(&assetSnapshot)
+		}
+	}
 	taskLog("INFO", "Active fingerprint: scan completed, requests=%d, success=%d, fail=%d", requestCount, successCount, failCount)
 }
 

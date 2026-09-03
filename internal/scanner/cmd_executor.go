@@ -34,6 +34,25 @@ func acquireProcessSlot(ctx context.Context) bool {
 }
 func releaseProcessSlot() { <-processSem }
 
+// runCommandContext executes a short-lived command while ensuring cancellation
+// terminates the whole process group before the command returns.
+func runCommandContext(ctx context.Context, binary string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, binary, args...)
+	setSysProcAttr(cmd)
+
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			killProcessTree(cmd)
+		case <-finished:
+		}
+	}()
+	output, err := cmd.CombinedOutput()
+	close(finished)
+	return output, err
+}
+
 // cappedBuffer 带容量限制的 Buffer，超限后丢弃写入但返回成功以防管道阻塞
 type cappedBuffer struct {
 	buf       bytes.Buffer

@@ -398,6 +398,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	defer releaseProcessSlot()
 
 	cmd := exec.CommandContext(portCtx, "nmap", args...)
+	setSysProcAttr(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -512,6 +513,7 @@ func checkNmapInstalled() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nmap", "--version")
+	setSysProcAttr(cmd)
 	err := cmd.Run()
 	return err == nil
 }

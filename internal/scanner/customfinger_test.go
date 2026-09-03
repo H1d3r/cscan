@@ -1,7 +1,14 @@
 package scanner
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
@@ -137,9 +144,108 @@ func TestMergeActiveFingerprintAppCombinesExistingSources(t *testing.T) {
 	fp := &model.Fingerprint{Name: "Kibana", Enabled: true}
 	fp.Id = primitive.NewObjectID()
 
-	mergeActiveFingerprintApp(asset, fp)
+	if !mergeActiveFingerprintApp(asset, fp) {
+		t.Fatal("expected first active fingerprint merge to change asset.App")
+	}
 	want := "Kibana[httpx+custom(custom-id)+active(" + fp.Id.Hex() + ")]"
 	if len(asset.App) != 1 || asset.App[0] != want {
 		t.Fatalf("asset.App = %#v, want %#v", asset.App, []string{want})
+	}
+	if mergeActiveFingerprintApp(asset, fp) {
+		t.Fatal("expected duplicate active fingerprint merge to leave asset.App unchanged")
+	}
+	if len(asset.App) != 1 || asset.App[0] != want {
+		t.Fatalf("asset.App after duplicate merge = %#v, want %#v", asset.App, []string{want})
+	}
+}
+
+func TestRunActiveFingerprintNotifiesChangedAssetOnce(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("GeoServer marker"))
+	}))
+	defer server.Close()
+
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(serverURL.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := &model.Fingerprint{Name: "GeoServer", Rule: `body="GeoServer marker"`, ActivePaths: []string{"/first"}, Enabled: true}
+	first.Id = primitive.NewObjectID()
+	second := &model.Fingerprint{Name: "Nacos", Rule: `body="GeoServer marker"`, ActivePaths: []string{"/second"}, Enabled: true}
+	second.Id = primitive.NewObjectID()
+
+	scanner := NewFingerprintScanner()
+	scanner.SetCustomFingerprintEngine(NewCustomFingerprintEngineWithActive(nil, []*model.Fingerprint{first, second}))
+	asset := &Asset{Host: serverURL.Hostname(), Port: port, Service: "http", HttpStatus: "200"}
+	var snapshots []*Asset
+
+	scanner.RunActiveFingerprint(context.Background(), []*Asset{asset}, &FingerprintOptions{Concurrency: 2}, nil, func(updated *Asset) {
+		snapshots = append(snapshots, updated)
+	})
+
+	if len(snapshots) != 1 {
+		t.Fatalf("callback count = %d, want 1", len(snapshots))
+	}
+	joined := strings.Join(snapshots[0].App, "\n")
+	if !strings.Contains(joined, "GeoServer[active("+first.Id.Hex()+")]") {
+		t.Fatalf("callback App missing GeoServer result: %#v", snapshots[0].App)
+	}
+	if !strings.Contains(joined, "Nacos[active("+second.Id.Hex()+")]") {
+		t.Fatalf("callback App missing Nacos result: %#v", snapshots[0].App)
+	}
+
+	asset.App[0] = "mutated"
+	if snapshots[0].App[0] == "mutated" {
+		t.Fatal("callback App shares backing array with scanned asset")
+	}
+}
+
+func TestRunActiveFingerprintWaitsForStartedRequestAfterCancel(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		_, _ = w.Write([]byte("marker"))
+	}))
+	defer server.Close()
+
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(serverURL.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := &model.Fingerprint{Name: "Test", Rule: `body="marker"`, ActivePaths: []string{"/"}, Enabled: true}
+	fp.Id = primitive.NewObjectID()
+	scanner := NewFingerprintScanner()
+	scanner.SetCustomFingerprintEngine(NewCustomFingerprintEngineWithActive(nil, []*model.Fingerprint{fp}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		scanner.RunActiveFingerprint(ctx, []*Asset{{Host: serverURL.Hostname(), Port: port, Service: "http", HttpStatus: "200"}}, &FingerprintOptions{Concurrency: 1}, nil, nil)
+		close(done)
+	}()
+
+	<-started
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("active scan returned before the started request exited")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("active scan did not return after the started request exited")
 	}
 }

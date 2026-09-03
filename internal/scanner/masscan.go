@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -233,6 +234,7 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 	defer releaseProcessSlot()
 
 	cmd := exec.CommandContext(ctx, "masscan", args...)
+	setSysProcAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		logFn("ERROR", "masscan stdout pipe error: %v", err)
@@ -340,9 +342,9 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 
 // checkMasscanInstalled 检查masscan是否安装
 func checkMasscanInstalled() bool {
-	cmd := exec.Command("masscan", "--version")
-	output, _ := cmd.CombinedOutput()
-	// 通过检查输出内容来判断是否安装
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, _ := runCommandContext(ctx, "masscan", "--version")
 	return strings.Contains(string(output), "Masscan version")
 }
 

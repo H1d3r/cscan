@@ -1227,6 +1227,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 
 	// 执行ksubdomain命令
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
+	setSysProcAttr(cmd)
 
 	// 捕获输出
 	var stdout, stderr bytes.Buffer
@@ -1377,6 +1378,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 	defer releaseProcessSlot()
 
 	cmd := exec.CommandContext(cmdCtx, "ksubdomain", args...)
+	setSysProcAttr(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
