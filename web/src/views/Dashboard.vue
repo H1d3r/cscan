@@ -1,23 +1,5 @@
 <template>
   <div class="dashboard-pd" :class="[{ 'is-dark': themeStore.isDark }, `style-${themeStore.themeStyle}`]">
-    <!-- 顶部问候栏 -->
-    <div class="greeting-bar">
-      <div class="greeting-left">
-        <h1 class="greeting-title">Hello, {{ username }}!</h1>
-      </div>
-      <div class="greeting-right">
-        <div class="security-score" @click="$router.push('/asset-management/risk/vuln')">
-          <div class="score-ring" :class="scoreLevel">
-            <span class="score-num">{{ securityScore }}</span>
-          </div>
-          <div class="score-label">
-            <span class="score-text">{{ scoreText }}</span>
-            <span class="score-sub">{{ t('dashboard.securityScore') }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- ===== 上区：2列布局（左栏堆叠 / 右栏资产概览跨行）===== -->
     <div class="layout-top">
       <!-- 左列：开放漏洞 + 暴露面总览 -->
@@ -211,19 +193,32 @@
           <h2 class="panel-title">{{ t('dashboard.assetChanges') }}</h2>
         </div>
         <div class="change-body">
-          <div class="change-hero">
-            <span class="hero-num">{{ changes.assetTotal }}</span>
-            <span class="hero-label">{{ t('dashboard.assetTotal') }}</span>
-          </div>
-          <div class="change-row">
-            <span class="change-item up">
-              <span class="ci-num">+{{ changes.assetNewInWindow }}</span>
-              <span class="ci-label">{{ t('dashboard.newInWindow') }}</span>
-            </span>
-            <span class="change-item">
-              <span class="ci-num">{{ changes.assetGrowthRate }}%</span>
-              <span class="ci-label">{{ t('dashboard.growthRate') }}</span>
-            </span>
+          <div class="change-split">
+            <div class="change-main">
+              <div class="change-hero">
+                <span class="hero-num">{{ changes.assetTotal }}</span>
+                <span class="hero-label">{{ t('dashboard.assetTotal') }}</span>
+              </div>
+              <div class="change-row">
+                <span class="change-item up">
+                  <span class="ci-num">+{{ changes.assetNewInWindow }}</span>
+                  <span class="ci-label">{{ t('dashboard.newInWindow') }}</span>
+                </span>
+                <span class="change-item">
+                  <span class="ci-num">{{ changes.assetGrowthRate }}%</span>
+                  <span class="ci-label">{{ t('dashboard.growthRate') }}</span>
+                </span>
+              </div>
+            </div>
+            <div class="security-score" @click="$router.push('/asset-management/risk/vuln')">
+              <div class="score-ring" :class="scoreLevel">
+                <span class="score-num">{{ securityScore }}</span>
+              </div>
+              <div class="score-label">
+                <span class="score-text">{{ scoreText }}</span>
+                <span class="score-sub">{{ t('dashboard.securityScore') }}</span>
+              </div>
+            </div>
           </div>
           <div class="change-cats" v-if="assetCategoryList.length">
             <div class="cat-row" v-for="c in assetCategoryList" :key="c.key">
@@ -343,14 +338,10 @@ import * as echarts from 'echarts'
 import request from '@/api/request'
 import { getDashboardChanges } from '@/api/dashboard'
 import { useThemeStore } from '@/stores/theme'
-import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const themeStore = useThemeStore()
-const userStore = useUserStore()
 const { t } = useI18n()
-
-const username = computed(() => userStore.username || 'Admin')
 
 // === 安全评分（加权风险密度 + 资产归一化 + 修复率加成）===
 // 仅计入待处理（open）漏洞，已修复/已忽略的漏洞不再扣分
@@ -598,144 +589,78 @@ async function silentFetch(apiRoute, params = {}) {
 let isLoadingData = false
 let isComponentAlive = false
 
-async function loadAllData() {
+// Dashboard 统一汇总：单次请求获取全部首屏数据
+async function loadDashboardSummary() {
   if (isLoadingData) return
   const now = Date.now()
   if (now - _dashboardLastLoadTime < 3000) return
   _dashboardLastLoadTime = now
   isLoadingData = true
   try {
-    await Promise.all([
-      fetchAssetStat(),
-      fetchGroupsStat(),
-      fetchIpStat(),
-      fetchDomainStat(),
-      fetchSiteStat(),
-      fetchDirScanStat(),
-      fetchVulnStat(),
-      fetchTaskStat(),
-      fetchWorkerStat(),
-      fetchDashboardChanges()
-    ])
+    const res = await silentFetch('/api/v1/dashboard/summary')
+    if (!res) return
     if (!isComponentAlive) return
-    // 暴露面总数动画
-    animateValue('exposureTotal', stats.portCount + stats.sites + stats.dirScans)
-    await nextTick()
-    if (!isComponentAlive) return
-    initAllCharts()
-  } finally {
-    isLoadingData = false
-  }
-}
 
-async function fetchAssetStat() {
-  const res = await silentFetch('/asset/stat')
-  if (res) {
-    stats.ports = res.totalAsset || 0
+    // 资产概览
+    stats.ports = res.assetTotal || 0
     stats.portCount = res.portCount || 0
-    stats.assetNew = res.newCount || 0
+    stats.assetNew = res.assetNew || 0
     stats.topPorts = res.topPorts || []
     stats.topService = res.topService || []
     stats.topApp = res.topApp || []
     animateValue('ports', stats.portCount)
-  }
-}
 
-async function fetchGroupsStat() {
-  const res = await silentFetch('/asset/groups', { page: 1, pageSize: 1 })
-  if (res) {
-    stats.groups = res.total || 0
-    animateValue('groups', stats.groups)
-  }
-}
-
-async function fetchIpStat() {
-  const res = await silentFetch('/asset/ip/stat')
-  if (res) {
-    stats.ips = res.total || 0
-    stats.ipNew = res.newCount || 0
+    stats.ips = res.ipCount || 0
+    stats.ipNew = 0 // summary API 不提供 ipNew，保持 0
     animateValue('ips', stats.ips)
-  }
-}
 
-async function fetchDomainStat() {
-  const res = await silentFetch('/asset/domain/stat')
-  if (res) {
-    stats.domains = res.total || 0
-    stats.domainNew = res.newCount || 0
+    stats.domains = res.domainCount || 0
+    stats.domainNew = 0
     animateValue('domains', stats.domains)
-  }
-}
 
-async function fetchSiteStat() {
-  const res = await silentFetch('/asset/site/stat')
-  if (res) {
-    stats.sites = res.total || 0
-    stats.siteNew = res.newCount || 0
+    stats.sites = res.siteCount || 0
+    stats.siteNew = 0
     animateValue('sites', stats.sites)
-  }
-}
 
-async function fetchDirScanStat() {
-  const statRes = await silentFetch('/dirscan/result/stat')
-  if (statRes && statRes.stat) {
-    stats.dirScans = statRes.stat.total || 0
-  } else {
-    const listRes = await silentFetch('/dirscan/result/list', { page: 1, pageSize: 1 })
-    if (listRes) stats.dirScans = listRes.total || 0
-  }
-  animateValue('dirScans', stats.dirScans)
-}
+    stats.dirScans = res.dirScans || 0
+    animateValue('dirScans', stats.dirScans)
 
-async function fetchVulnStat() {
-  const statRes = await silentFetch('/vul/stat')
-  if (statRes) {
-    stats.vulns = statRes.total || 0
-    stats.vulnCritical = statRes.critical || 0
-    stats.vulnHigh = statRes.high || 0
-    stats.vulnMedium = statRes.medium || 0
-    stats.vulnLow = statRes.low || 0
-    stats.vulnInfo = statRes.info || 0
-    stats.vulnOpen = statRes.open || 0
-    stats.vulnFixed = statRes.fixed || 0
-    stats.vulnIgnored = statRes.ignored || 0
-    stats.vulnOpenCritical = statRes.openCritical || 0
-    stats.vulnOpenHigh = statRes.openHigh || 0
-    stats.vulnOpenMedium = statRes.openMedium || 0
-    stats.vulnOpenLow = statRes.openLow || 0
-    stats.vulnOpenInfo = statRes.openInfo || 0
+    stats.groups = res.groups || 0
+    animateValue('groups', stats.groups)
+
+    // 漏洞统计
+    stats.vulns = res.vulnTotal || 0
+    stats.vulnCritical = 0
+    stats.vulnHigh = 0
+    stats.vulnMedium = 0
+    stats.vulnLow = 0
+    stats.vulnInfo = 0
+    stats.vulnOpen = res.vulnOpen || 0
+    stats.vulnFixed = res.vulnFixed || 0
+    stats.vulnIgnored = res.vulnIgnored || 0
+    stats.vulnOpenCritical = res.vulnOpenCritical || 0
+    stats.vulnOpenHigh = res.vulnOpenHigh || 0
+    stats.vulnOpenMedium = res.vulnOpenMedium || 0
+    stats.vulnOpenLow = res.vulnOpenLow || 0
+    stats.vulnOpenInfo = res.vulnOpenInfo || 0
     animateValue('vulns', stats.vulnOpen)
-  }
-}
 
-async function fetchTaskStat() {
-  const res = await silentFetch('/task/stat')
-  if (res) {
-    taskStats.total = res.total || 0
-    taskStats.completed = res.completed || 0
-    taskStats.running = res.running || 0
-    taskStats.failed = res.failed || 0
-    taskStats.pending = res.pending || 0
+    // 任务统计
+    taskStats.total = res.taskTotal || 0
+    taskStats.completed = res.taskCompleted || 0
+    taskStats.running = res.taskRunning || 0
+    taskStats.failed = res.taskFailed || 0
+    taskStats.pending = res.taskPending || 0
     taskStats.trendDays = res.trendDays || []
     taskStats.trendCompleted = res.trendCompleted || []
     taskStats.trendFailed = res.trendFailed || []
-  }
-}
 
-async function fetchWorkerStat() {
-  const res = await silentFetch('/worker/list')
-  if (!isComponentAlive) return
-  if (res && res.list) {
-    workerStats.online = res.list.filter(w => w.status === 'running').length
-    workerStats.offline = res.list.filter(w => w.status !== 'running').length
-  }
-}
+    // Worker 统计
+    workerStats.online = res.workerOnline || 0
+    workerStats.offline = res.workerOffline || 0
 
-// 工作台变化卡片（T1.5）：资产变化 + 风险变化
-async function fetchDashboardChanges() {
-  try {
-    const res = await getDashboardChanges({ days: 7 })
-    if (res && res.code === 0 && res.asset && res.risk) {
+    // 工作台变化
+    if (res.asset && res.risk) {
       changes.assetTotal = res.asset.total || 0
       changes.assetNewInWindow = res.asset.newInWindow || 0
       changes.assetGrowthRate = res.asset.growthRate || 0
@@ -746,9 +671,19 @@ async function fetchDashboardChanges() {
       changes.riskNetChange = res.risk.netChange || 0
       changes.riskBySeverity = res.risk.bySeverity || {}
     }
-  } catch (e) {
-    // 忽略单卡片拉取失败，不影响其余面板
+
+    // 暴露面总数动画
+    animateValue('exposureTotal', stats.portCount + stats.sites + stats.dirScans)
+    await nextTick()
+    if (!isComponentAlive) return
+    initAllCharts()
+  } finally {
+    isLoadingData = false
   }
+}
+
+async function loadAllData() {
+  await loadDashboardSummary()
 }
 
 // === 图表渲染 ===
@@ -911,43 +846,13 @@ onUnmounted(() => {
   transition: background-color 0.2s ease;
 }
 
-// === 问候栏 ===
-.greeting-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.greeting-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.greeting-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: hsl(var(--foreground));
-}
-
-.greeting-badge {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: hsl(var(--muted));
-  color: hsl(var(--muted-foreground));
-  border: 1px solid hsl(var(--border));
-}
-
 // === 安全评分 ===
 .security-score {
   display: flex;
   align-items: center;
   gap: 12px;
   cursor: pointer;
+  flex-shrink: 0;
   padding: 8px 14px;
   border-radius: var(--radius, 8px);
   border: 1px solid hsl(var(--border));
@@ -1576,6 +1481,24 @@ onUnmounted(() => {
 // === 变化卡片 ===
 .change-panel {
   .change-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  // 左侧变化数据 + 右侧安全评分并排
+  .change-split {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+
+    @media (max-width: 768px) {
+      flex-wrap: wrap;
+    }
+  }
+
+  .change-main {
     display: flex;
     flex-direction: column;
     gap: 16px;
