@@ -597,7 +597,7 @@ async function loadDashboardSummary() {
   _dashboardLastLoadTime = now
   isLoadingData = true
   try {
-    const res = await silentFetch('/api/v1/dashboard/summary')
+    const res = await silentFetch('/dashboard/summary')
     if (!res) return
     if (!isComponentAlive) return
 
