@@ -2,9 +2,9 @@
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = $ScriptDir
 Set-Location $ProjectRoot
-$env:CSCAN_DEV = "1"
-$env:CSCAN_WORKER_KEY = "dev-worker-key"
-$env:CSCAN_MONGO_URI = "mongodb://localhost:27017"
+if ([string]::IsNullOrWhiteSpace($env:CSCAN_DEV)) { $env:CSCAN_DEV = "1" }
+if ([string]::IsNullOrWhiteSpace($env:CSCAN_WORKER_KEY)) { $env:CSCAN_WORKER_KEY = [Guid]::NewGuid().ToString("N") }
+if ([string]::IsNullOrWhiteSpace($env:CSCAN_MONGO_URI)) { $env:CSCAN_MONGO_URI = "mongodb://127.0.0.1:27017" }
 
 $logDir = Join-Path $ProjectRoot "log"
 if (-not (Test-Path $logDir)) {
@@ -32,7 +32,7 @@ Write-Host "[dev] Logs:"
 Write-Host "  API   : $apiLog"
 Write-Host "  Worker: $workerLog"
 Write-Host "  Web   : $webLog"
-Write-Host "[dev] Press Ctrl+C to stop all."
+Write-Host "[dev] Press Ctrl+C to stop all (volumes are preserved by default; set CLEAN_DEV_VOLUMES=1 to remove them)."
 
 try {
     Wait-Process -Id $api.Id, $worker.Id, $web.Id
@@ -41,7 +41,12 @@ try {
     @($api, $worker, $web) | ForEach-Object {
         if (-not $_.HasExited) { taskkill /T /F /PID $_.Id 2>$null }
     }
-    Write-Host "[dev] Stopping dependency stack and cleaning volumes..."
-    docker-compose -f docker-compose.dev.yaml down -v 2>$null
+    if ($env:CLEAN_DEV_VOLUMES -eq "1") {
+        Write-Host "[dev] Stopping dependency stack and removing volumes..."
+        docker-compose -f docker-compose.dev.yaml down -v 2>$null
+    } else {
+        Write-Host "[dev] Stopping dependency stack (volumes are preserved; set CLEAN_DEV_VOLUMES=1 to remove them)..."
+        docker-compose -f docker-compose.dev.yaml down 2>$null
+    }
     Write-Host "[dev] All stopped"
 }

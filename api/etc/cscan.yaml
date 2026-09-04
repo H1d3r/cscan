@@ -1,5 +1,5 @@
 Name: cscan-api
-Host: 0.0.0.0
+Host: 127.0.0.1
 Port: 8888
 MaxBytes: 104857600  # 100MB
 Timeout: 300000      # 5分钟超时 (毫秒)
