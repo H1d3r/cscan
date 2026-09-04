@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cscan/internal/model"
+	"cscan/internal/notification"
 	"cscan/internal/scheduler"
 	"cscan/pkg/utils"
 
@@ -123,11 +124,11 @@ var atomicPopFromBucketsScript = redis.NewScript(`
 
 // CheckTaskResult 任务拉取结果
 type CheckTaskResult struct {
-	IsExist     bool
-	IsFinished  bool
-	TaskId      string
-	MainTaskId  string
-	Config      string
+	IsExist    bool
+	IsFinished bool
+	TaskId     string
+	MainTaskId string
+	Config     string
 }
 
 // CheckTask 从 Redis 队列中获取待执行的任务
@@ -238,11 +239,11 @@ func (s *ServiceContext) popTaskFromQueue(ctx context.Context, queueKey, process
 	s.updateMainTaskToStarted(ctx, task.MainTaskId)
 
 	return &CheckTaskResult{
-		IsExist:     true,
-		IsFinished:  false,
-		TaskId:      task.TaskId,
-		MainTaskId:  task.MainTaskId,
-		Config:      task.Config,
+		IsExist:    true,
+		IsFinished: false,
+		TaskId:     task.TaskId,
+		MainTaskId: task.MainTaskId,
+		Config:     task.Config,
 	}, nil
 }
 
@@ -278,11 +279,11 @@ func (s *ServiceContext) popTaskFromBuckets(ctx context.Context, workerQueueKey,
 	s.updateMainTaskToStarted(ctx, task.MainTaskId)
 
 	return &CheckTaskResult{
-		IsExist:     true,
-		IsFinished:  false,
-		TaskId:      task.TaskId,
-		MainTaskId:  task.MainTaskId,
-		Config:      task.Config,
+		IsExist:    true,
+		IsFinished: false,
+		TaskId:     task.TaskId,
+		MainTaskId: task.MainTaskId,
+		Config:     task.Config,
 	}, nil
 }
 
@@ -312,6 +313,15 @@ func (s *ServiceContext) updateMainTaskToStarted(ctx context.Context, mainTaskId
 	}
 }
 
+func isWorkerTerminalState(state string) bool {
+	switch state {
+	case model.TaskStatusSuccess, model.TaskStatusPartial, model.TaskStatusFailure, "COMPLETED":
+		return true
+	default:
+		return false
+	}
+}
+
 // UpdateTask 更新任务状态
 func (s *ServiceContext) UpdateTask(ctx context.Context, taskId, state, worker, result, phase string) error {
 	// 更新任务进度
@@ -327,7 +337,7 @@ func (s *ServiceContext) UpdateTask(ctx context.Context, taskId, state, worker, 
 
 	// 读取 taskInfo（终态时删除前先读取）
 	var taskInfoData string
-	if state == "SUCCESS" || state == "FAILURE" || state == "COMPLETED" {
+	if isWorkerTerminalState(state) {
 		taskInfoKey := "cscan:task:info:" + taskId
 		if data, err := s.RedisClient.Get(ctx, taskInfoKey).Result(); err == nil {
 			taskInfoData = data
@@ -355,7 +365,7 @@ func (s *ServiceContext) UpdateTask(ctx context.Context, taskId, state, worker, 
 	}
 
 	// 终态清理
-	if state == "SUCCESS" || state == "FAILURE" || state == "COMPLETED" {
+	if isWorkerTerminalState(state) {
 		taskInfoKey := "cscan:task:info:" + taskId
 		s.RedisClient.Del(ctx, taskInfoKey)
 
@@ -422,6 +432,12 @@ func (s *ServiceContext) updateTaskInDB(ctx context.Context, taskId, state, resu
 		}
 		update["start_time"] = now
 	case "SUCCESS", "COMPLETED":
+		// Executor success is not evidence of complete scan coverage. Main-task
+		// terminal state is owned exclusively by FinalizeFromScanSummary.
+		return
+	case model.TaskStatusPartial:
+		// A PARTIAL terminal state must remain distinct from SUCCESS. Distributed
+		// scan tasks are finalized from persisted phase summaries instead.
 		if subTaskCount > 1 {
 			return
 		}
@@ -457,15 +473,92 @@ func isValidObjectID(s string) bool {
 
 // IncrSubTaskDoneResult 子任务完成结果
 type IncrSubTaskDoneResult struct {
-	Success      bool
-	Message      string
-	SubTaskDone  int32
-	SubTaskCount int32
-	AllDone      bool
+	Success             bool
+	Message             string
+	SubTaskDone         int32
+	SubTaskCount        int32
+	AllDone             bool
+	Recorded            bool
+	Finalized           bool
+	FinalizationPending bool
+	ScanSummary         *model.TaskScanSummary
+}
+
+// normalizeWorkerPhaseSummary accepts both rollout payload shapes. The server
+// persists a single phase report and always recomputes the final outcome; a
+// worker-provided aggregate outcome is never trusted as an authoritative state.
+func normalizeWorkerPhaseSummary(taskId, phase string, incrAmount int, phaseResult *model.TaskPhaseSummary, taskSummary *model.TaskScanSummary) model.TaskPhaseSummary {
+	canonicalPhase := canonicalTaskPhaseName(phase)
+	var normalized model.TaskPhaseSummary
+
+	if phaseResult != nil && phaseResult.Status != "" {
+		normalized = *phaseResult
+		normalized.ReasonCodes = append([]string(nil), phaseResult.ReasonCodes...)
+	} else if taskSummary != nil {
+		reportKey := model.TaskPhaseReportKey(taskId, canonicalPhase)
+		if candidate, ok := taskSummary.Phases[reportKey]; ok && candidate.Status != "" {
+			normalized = candidate
+		}
+		if normalized.Status == "" {
+			for _, candidate := range taskSummary.Phases {
+				candidatePhase := canonicalTaskPhaseName(candidate.Phase)
+				if candidate.Status != "" && candidatePhase == canonicalPhase && (candidate.SubTaskId == "" || candidate.SubTaskId == taskId) {
+					normalized = candidate
+					break
+				}
+			}
+		}
+		if normalized.Status != "" {
+			if normalized.Assets == 0 {
+				normalized.Assets = taskSummary.Assets
+			}
+			if normalized.Vulnerabilities == 0 {
+				normalized.Vulnerabilities = taskSummary.Vulnerabilities
+			}
+			if normalized.VulnerabilityConclusion == "" {
+				normalized.VulnerabilityConclusion = taskSummary.VulnerabilityConclusion
+			}
+			normalized.ReasonCodes = appendUniqueReasonCodes(normalized.ReasonCodes, taskSummary.WarningCodes...)
+		}
+	}
+
+	if normalized.Status == "" {
+		normalized = model.TaskPhaseSummary{
+			Status:      "UNKNOWN",
+			ReasonCodes: []string{"legacy_summary_missing"},
+		}
+	}
+	normalized.SubTaskId = taskId
+	if normalized.Phase == "" {
+		normalized.Phase = canonicalPhase
+	} else {
+		normalized.Phase = canonicalTaskPhaseName(normalized.Phase)
+	}
+	normalized.Weight = incrAmount
+	return normalized
+}
+
+func appendUniqueReasonCodes(existing []string, values ...string) []string {
+	result := append([]string(nil), existing...)
+	seen := make(map[string]struct{}, len(result))
+	for _, value := range result {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 // IncrSubTaskDone 递增子任务完成数
-func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, phase string, incrAmount int) (*IncrSubTaskDoneResult, error) {
+func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, phase string, incrAmount int, phaseResult *model.TaskPhaseSummary, taskSummary *model.TaskScanSummary) (*IncrSubTaskDoneResult, error) {
 	if mainTaskId == "" {
 		return &IncrSubTaskDoneResult{Success: false, Message: "mainTaskId is empty"}, nil
 	}
@@ -474,7 +567,7 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 	if !isValidObjectID(mainTaskId) {
 		return &IncrSubTaskDoneResult{
 			Success: true, Message: "ok (quick validation task)",
-			SubTaskDone: 1, SubTaskCount: 1, AllDone: true,
+			SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true,
 		}, nil
 	}
 
@@ -486,15 +579,17 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
-
-	task, incremented, err := taskModel.IncrSubTaskDoneAtomic(mongoCtx, mainTaskId, incrAmount)
+	canonicalPhase := canonicalTaskPhaseName(phase)
+	normalizedPhase := normalizeWorkerPhaseSummary(taskId, phase, incrAmount, phaseResult, taskSummary)
+	reportKey := model.TaskPhaseReportKey(taskId, canonicalPhase)
+	task, recorded, err := taskModel.RecordPhaseSummaryAtomic(mongoCtx, mainTaskId, reportKey, normalizedPhase, incrAmount)
 	if err != nil {
 		return &IncrSubTaskDoneResult{Success: false, Message: err.Error()}, nil
 	}
 
-	if !incremented {
-		logx.Infof("[IncrSubTaskDone] already at limit, mainTaskId=%s, done=%d, total=%d",
-			mainTaskId, task.SubTaskDone, task.SubTaskCount)
+	if !recorded {
+		logx.Infof("[IncrSubTaskDone] duplicate phase report merged, mainTaskId=%s taskId=%s phase=%s",
+			mainTaskId, taskId, canonicalPhase)
 	}
 
 	allDone := task.SubTaskDone >= task.SubTaskCount
@@ -512,23 +607,68 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 		"current_phase": phase,
 	})
 
-	// 如果全部完成，标记任务完成
+	// Count completion only opens the finalization gate; summaries decide outcome.
+	var finalSummary *model.TaskScanSummary
+	finalized := false
+	finalizationPending := false
 	if allDone {
-		updated, err := taskModel.MarkTaskCompleted(mongoCtx, mainTaskId)
-		if err != nil {
-			logx.Errorf("[IncrSubTaskDone] mark completed failed, mainTaskId=%s, error=%v", mainTaskId, err)
-		} else if updated {
-			logx.Infof("[IncrSubTaskDone] task marked as completed, mainTaskId=%s", mainTaskId)
-			// 完成态立即失效列表缓存，扫描状态无需等 30s TTL
-			s.QueryCache.Clear()
+		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummary(mongoCtx, mainTaskId)
+		if finalizeErr != nil {
+			finalizationPending = true
+			logx.Errorf("[IncrSubTaskDone] semantic finalization failed; phase report remains acknowledged and finalization is retryable, mainTaskId=%s, error=%v", mainTaskId, finalizeErr)
+		} else {
+			finalSummary = summary
+			terminal := model.IsTerminalTaskStatus(task.Status)
+			finalized = updated || terminal
+			if !updated && !terminal {
+				finalizationPending = true
+				logx.Infof("[IncrSubTaskDone] semantic finalization is still pending, mainTaskId=%s", mainTaskId)
+			}
+			if updated {
+				logx.Infof("[IncrSubTaskDone] task finalized, mainTaskId=%s, outcome=%s", mainTaskId, summary.Outcome)
+				if s.QueryCache != nil {
+					s.QueryCache.Clear()
+				}
+				if s.RedisClient != nil {
+					notifySvc := notification.NewService(s.MongoDB, s.RedisClient)
+					if nerr := notifySvc.NotifyTaskCompleted(mongoCtx, mainTaskId, summary.Outcome); nerr != nil {
+						logx.Errorf("[IncrSubTaskDone] notification failed, mainTaskId=%s, error=%v", mainTaskId, nerr)
+					}
+				}
+			}
 		}
 	}
 
 	return &IncrSubTaskDoneResult{
-		Success:      true,
-		Message:      "ok",
-		SubTaskDone:  int32(task.SubTaskDone),
-		SubTaskCount: int32(task.SubTaskCount),
-		AllDone:      allDone,
+		Success: true, Message: "ok", SubTaskDone: int32(task.SubTaskDone), SubTaskCount: int32(task.SubTaskCount),
+		AllDone: allDone, Recorded: recorded, Finalized: finalized, FinalizationPending: finalizationPending, ScanSummary: finalSummary,
 	}, nil
+}
+
+func canonicalTaskPhaseName(phase string) string {
+	switch phase {
+	case "子域名扫描":
+		return "domainscan"
+	case "端口扫描":
+		return "portscan"
+	case "端口识别":
+		return "portidentify"
+	case "指纹识别":
+		return "fingerprint"
+	case "弱口令扫描":
+		return "brutescan"
+	case "目录扫描":
+		return "dirscan"
+	case "JS扫描":
+		return "jsfinder"
+	case "漏洞扫描":
+		return "poc"
+	case "完成":
+		return "complete"
+	default:
+		if phase == "" {
+			return "unknown"
+		}
+		return phase
+	}
 }

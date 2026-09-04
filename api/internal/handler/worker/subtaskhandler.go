@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"cscan/api/internal/svc"
+	"cscan/internal/model"
 	"cscan/pkg/response"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -15,21 +16,27 @@ import (
 
 // WorkerSubTaskDoneReq 子任务完成请求
 type WorkerSubTaskDoneReq struct {
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	Phase       string `json:"phase"`
-	IsCompleted bool   `json:"isCompleted"`
-	IncrAmount  int    `json:"incrAmount"`
+	TaskId      string                  `json:"taskId"`
+	MainTaskId  string                  `json:"mainTaskId"`
+	Phase       string                  `json:"phase"`
+	IsCompleted bool                    `json:"isCompleted"`
+	IncrAmount  int                     `json:"incrAmount"`
+	PhaseResult *model.TaskPhaseSummary `json:"phaseResult,omitempty"`
+	TaskSummary *model.TaskScanSummary  `json:"taskSummary,omitempty"`
 }
 
 // WorkerSubTaskDoneResp 子任务完成响应
 type WorkerSubTaskDoneResp struct {
-	Code         int    `json:"code"`
-	Msg          string `json:"msg"`
-	Success      bool   `json:"success"`
-	SubTaskDone  int32  `json:"subTaskDone"`
-	SubTaskCount int32  `json:"subTaskCount"`
-	AllDone      bool   `json:"allDone"`
+	Code                int                    `json:"code"`
+	Msg                 string                 `json:"msg"`
+	Success             bool                   `json:"success"`
+	SubTaskDone         int32                  `json:"subTaskDone"`
+	SubTaskCount        int32                  `json:"subTaskCount"`
+	AllDone             bool                   `json:"allDone"`
+	Recorded            bool                   `json:"recorded,omitempty"`
+	Finalized           bool                   `json:"finalized,omitempty"`
+	FinalizationPending bool                   `json:"finalizationPending,omitempty"`
+	ScanSummary         *model.TaskScanSummary `json:"scanSummary,omitempty"`
 }
 
 // ==================== SubTask Handler ====================
@@ -49,7 +56,7 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.Phase, req.IncrAmount)
+		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.Phase, req.IncrAmount, req.PhaseResult, req.TaskSummary)
 		if err != nil {
 			logx.Errorf("[WorkerSubTaskDone] IncrSubTaskDone error: %v", err)
 			response.Error(w, err)
@@ -57,12 +64,16 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 		}
 
 		httpx.OkJson(w, &WorkerSubTaskDoneResp{
-			Code:         0,
-			Msg:          result.Message,
-			Success:      result.Success,
-			SubTaskDone:  result.SubTaskDone,
-			SubTaskCount: result.SubTaskCount,
-			AllDone:      result.AllDone,
+			Code:                0,
+			Msg:                 result.Message,
+			Success:             result.Success,
+			SubTaskDone:         result.SubTaskDone,
+			SubTaskCount:        result.SubTaskCount,
+			AllDone:             result.AllDone,
+			Recorded:            result.Recorded,
+			Finalized:           result.Finalized,
+			FinalizationPending: result.FinalizationPending,
+			ScanSummary:         result.ScanSummary,
 		})
 	}
 }

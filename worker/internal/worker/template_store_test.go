@@ -1,6 +1,9 @@
 package worker
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,5 +121,132 @@ func TestTemplateStoreCleanupOrphansAndIndexRoundtrip(t *testing.T) {
 	// 指纹比较：数值与秒级时间一致即相等（不受 time.Time loc 指针影响）
 	if !(TemplateFingerprint{NucleiTotal: 3}).equal(TemplateFingerprint{NucleiTotal: 3}) {
 		t.Fatal("identical fingerprints must be equal")
+	}
+}
+
+func validTemplate(id string) string {
+	return "id: " + id + "\ninfo:\n  name: deterministic fixture\n  author: test\n  severity: info\nhttp:\n  - method: GET\n"
+}
+
+func TestTemplateLoadResultLocalHit(t *testing.T) {
+	s := newTestStore(t)
+	result, missedN, missedC := s.materializeIDsResult([]string{"cve-2024-0001"}, []string{"poc-1"})
+	if result.Outcome != TemplateLoadLoaded || result.Source != "local_store" {
+		t.Fatalf("unexpected local outcome: %+v", result)
+	}
+	if result.Requested != 2 || result.Loaded != 2 || result.Invalid != 0 {
+		t.Fatalf("unexpected local counts: %+v", result)
+	}
+	if len(missedN) != 0 || len(missedC) != 0 || len(result.FileRefs) != 2 {
+		t.Fatalf("local hit should not fall back: result=%+v missedN=%v missedC=%v", result, missedN, missedC)
+	}
+}
+
+func TestTemplateLoadResultMongoFallback(t *testing.T) {
+	s := newTestStore(t)
+	fallbackCalls := 0
+	result, err := resolveTemplateIDsWithFallback(t.Context(), s, []string{"cve-2024-0001", "mongo-only"}, nil,
+		func(_ context.Context, req *TemplatesReq) (TemplateLoadResult, error) {
+			fallbackCalls++
+			if len(req.NucleiTemplateIds) != 1 || req.NucleiTemplateIds[0] != "mongo-only" {
+				t.Fatalf("fallback received wrong IDs: %+v", req)
+			}
+			content := validTemplate("mongo-only")
+			return TemplateLoadResult{
+				Contents: []string{content}, Requested: 1, Loaded: 1,
+				Source: "mongo", Outcome: TemplateLoadLoaded,
+			}, nil
+		})
+	if err != nil {
+		t.Fatalf("unexpected fallback error: %v", err)
+	}
+	if fallbackCalls != 1 || result.Outcome != TemplateLoadLoaded || result.Source != "mixed" || result.Loaded != 2 {
+		t.Fatalf("unexpected mixed fallback result: calls=%d result=%+v", fallbackCalls, result)
+	}
+	if len(result.Contents) != 1 || len(result.FileRefs) != 1 || len(result.MissingIDs) != 0 {
+		t.Fatalf("fallback should preserve both validated input forms: %+v", result)
+	}
+}
+
+func TestTemplateLoadResultNoMatchDoesNotFallback(t *testing.T) {
+	s := newTestStore(t)
+	called := false
+	result, err := resolveTemplateTagsWithFallback(t.Context(), s, []string{"does-not-exist"}, nil, false,
+		func(context.Context, *TemplatesReq) (TemplateLoadResult, error) {
+			called = true
+			return TemplateLoadResult{}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || result.Outcome != TemplateLoadNoMatch || result.ReasonCode != "templates_no_match" {
+		t.Fatalf("completed zero-match query must remain no_match without fallback: called=%v result=%+v", called, result)
+	}
+}
+
+func TestTemplateLoadResultSeverityAndDisabledFiltering(t *testing.T) {
+	s := newTestStore(t)
+
+	severity := s.materializeByTagsResult([]string{"seeyon"}, []string{"critical"}, false)
+	if severity.Outcome != TemplateLoadFiltered || severity.Requested != 2 || severity.Loaded != 0 {
+		t.Fatalf("severity filtering not diagnosed: %+v", severity)
+	}
+
+	disabled, _, _ := s.materializeIDsResult([]string{"cve-2024-0002"}, nil)
+	if disabled.Outcome != TemplateLoadFiltered || disabled.Requested != 1 || disabled.Loaded != 0 {
+		t.Fatalf("disabled filtering not diagnosed: %+v", disabled)
+	}
+}
+
+func TestTemplateLoadResultDBErrorIsReturned(t *testing.T) {
+	expected := errors.New("deterministic database failure")
+	result, err := resolveTemplateTagsWithFallback(t.Context(), nil, []string{"seeyon"}, nil, false,
+		func(context.Context, *TemplatesReq) (TemplateLoadResult, error) {
+			return TemplateLoadResult{Source: "mongo", Outcome: TemplateLoadDBError, ReasonCode: "mongo_nuclei_query_failed"}, expected
+		})
+	if !errors.Is(err, expected) {
+		t.Fatalf("database error must be returned, got %v", err)
+	}
+	if result.Outcome != TemplateLoadDBError || result.ReasonCode != "mongo_nuclei_query_failed" {
+		t.Fatalf("database error diagnostic lost: %+v", result)
+	}
+}
+
+func TestTemplateLoadResultInvalidContent(t *testing.T) {
+	valid, invalid := validateTemplateContents([]string{validTemplate("valid"), "id: [broken"})
+	if len(valid) != 1 || invalid != 1 {
+		t.Fatalf("content validation counts are wrong: valid=%d invalid=%d", len(valid), invalid)
+	}
+
+	result := TemplateLoadResult{Contents: valid, Requested: 2, Loaded: len(valid), Invalid: invalid, Source: "mongo"}
+	classifyTemplateLoadResult(&result, 0, false)
+	if result.Outcome != TemplateLoadInvalidContent || result.ReasonCode != "template_content_invalid" {
+		t.Fatalf("invalid content must be explicit even when valid templates remain: %+v", result)
+	}
+}
+
+func TestTemplateLoadResultMissingFile(t *testing.T) {
+	s := newTestStore(t)
+	entry := s.entries["n:cve-2024-0001"]
+	if err := os.Remove(filepath.Join(s.baseDir, fileNameOfHash(entry.Hash))); err != nil {
+		t.Fatal(err)
+	}
+
+	result, missedN, _ := s.materializeIDsResult([]string{"cve-2024-0001"}, nil)
+	if result.Outcome != TemplateLoadInvalidContent || result.Invalid != 1 || result.Loaded != 0 {
+		t.Fatalf("missing file must be invalid_content: %+v", result)
+	}
+	if len(missedN) != 1 || len(result.MissingIDs) != 1 || result.MissingIDs[0] != "cve-2024-0001" {
+		t.Fatalf("missing file ID not reported: result=%+v missed=%v", result, missedN)
+	}
+}
+
+func TestTemplateLoadMissingIDsAreBounded(t *testing.T) {
+	var ids []string
+	for i := 0; i < maxTemplateMissingIDs+10; i++ {
+		ids = appendBoundedMissingID(ids, fmt.Sprintf("missing-%d", i))
+	}
+	if len(ids) != maxTemplateMissingIDs {
+		t.Fatalf("missing IDs must be bounded to %d, got %d", maxTemplateMissingIDs, len(ids))
 	}
 }

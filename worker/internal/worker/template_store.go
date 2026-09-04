@@ -23,17 +23,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	templateStoreIndexFile   = "index.json"
-	templateStoreCheckPeriod = 30 * time.Second // 指纹校验最小间隔，避免任务密集时反复 count
+	templateStoreIndexFile    = "index.json"
+	templateStoreCheckPeriod  = 30 * time.Second // 指纹校验最小间隔，避免任务密集时反复 count
+	maxTemplateMissingIDs     = 50
+	minimumTemplateContentLen = 30
 )
 
 // TemplateEntry 索引项：模板 ID → 内容哈希与筛选元数据
@@ -314,8 +318,8 @@ func (s *TemplateStore) cleanupOrphans(entries map[string]*TemplateEntry) int {
 // persistIndex 索引落盘（临时文件 + 原子改名），供重启后免拉取复用
 func (s *TemplateStore) persistIndex(fp TemplateFingerprint) {
 	data, err := json.Marshal(struct {
-		Fingerprint TemplateFingerprint        `json:"fingerprint"`
-		Entries     map[string]*TemplateEntry  `json:"entries"`
+		Fingerprint TemplateFingerprint       `json:"fingerprint"`
+		Entries     map[string]*TemplateEntry `json:"entries"`
 	}{Fingerprint: fp, Entries: s.entries})
 	if err != nil {
 		return
@@ -348,101 +352,196 @@ func (s *TemplateStore) loadIndexFromDisk() {
 	}
 }
 
-// MaterializeIDs 按 ID 解析启用模板的库文件路径。
-// 索引未命中的 ID 通过返回值交还调用方回退 Mongo 内容加载（禁用项静默跳过，
-// 与 loadTemplates 的 enabled 过滤语义一致）。
+// MaterializeIDs 按 ID 解析启用模板的库文件路径。旧签名保留给现有调用方。
 func (s *TemplateStore) MaterializeIDs(nucleiIds, customIds []string) (paths, missedNucleiIds, missedCustomIds []string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for _, id := range nucleiIds {
-		if e, ok := s.entries["n:"+id]; ok {
-			if !e.Enabled {
-				continue
-			}
-			if p := s.entryPath(e); p != "" {
-				paths = append(paths, p)
-				continue
-			}
-		}
-		missedNucleiIds = append(missedNucleiIds, id)
-	}
-	for _, id := range customIds {
-		if e, ok := s.entries["c:"+id]; ok {
-			if !e.Enabled {
-				continue
-			}
-			if p := s.entryPath(e); p != "" {
-				paths = append(paths, p)
-				continue
-			}
-		}
-		missedCustomIds = append(missedCustomIds, id)
-	}
-	return paths, missedNucleiIds, missedCustomIds
+	result, missedNucleiIds, missedCustomIds := s.materializeIDsResult(nucleiIds, customIds)
+	return result.FileRefs, missedNucleiIds, missedCustomIds
 }
 
-// MaterializeByTags 按标签/严重级别解析（等价 loadTemplates tags 分支：
-// nuclei 模板与自定义 POC 都按 enabled + tags 交集 + severity 过滤）。
-// ok=false 表示库未同步或不可用，调用方需回退 Mongo。
+func (s *TemplateStore) materializeIDsResult(nucleiIds, customIds []string) (TemplateLoadResult, []string, []string) {
+	result := TemplateLoadResult{
+		Requested: len(nucleiIds) + len(customIds),
+		Source:    "local_store",
+		Outcome:   TemplateLoadNoMatch,
+	}
+	filtered := 0
+	var missedN, missedC []string
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	load := func(key, id string, custom bool) {
+		e, ok := s.entries[key]
+		if !ok {
+			result.MissingIDs = appendBoundedMissingID(result.MissingIDs, id)
+			if custom {
+				missedC = append(missedC, id)
+			} else {
+				missedN = append(missedN, id)
+			}
+			return
+		}
+		if !e.Enabled {
+			filtered++
+			return
+		}
+		path, valid := s.validatedEntryPath(e)
+		if !valid {
+			result.Invalid++
+			result.MissingIDs = appendBoundedMissingID(result.MissingIDs, id)
+			if custom {
+				missedC = append(missedC, id)
+			} else {
+				missedN = append(missedN, id)
+			}
+			return
+		}
+		result.FileRefs = append(result.FileRefs, path)
+	}
+	for _, id := range nucleiIds {
+		load("n:"+id, id, false)
+	}
+	for _, id := range customIds {
+		load("c:"+id, id, true)
+	}
+	result.Loaded = len(result.FileRefs)
+	classifyTemplateLoadResult(&result, filtered, false)
+	return result, missedN, missedC
+}
+
+// MaterializeByTags keeps the legacy availability bit while detailed callers use
+// materializeByTagsResult to distinguish no-match, filtering, and invalid files.
 func (s *TemplateStore) MaterializeByTags(tags, severities []string) (paths []string, ok bool) {
+	result := s.materializeByTagsResult(tags, severities, false)
+	return result.FileRefs, result.Outcome != TemplateLoadStoreUnavailable
+}
+
+func (s *TemplateStore) materializeByTagsResult(tags, severities []string, customOnly bool) TemplateLoadResult {
+	result := TemplateLoadResult{Source: "local_store", Outcome: TemplateLoadNoMatch}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if !s.synced {
-		return nil, false
+		classifyTemplateLoadResult(&result, 0, true)
+		return result
 	}
 
 	sevSet := make(map[string]bool, len(severities))
-	for _, s := range severities {
-		sevSet[s] = true
+	for _, severity := range severities {
+		sevSet[severity] = true
 	}
 	tagSet := make(map[string]bool, len(tags))
-	for _, t := range tags {
-		tagSet[t] = true
+	for _, tag := range tags {
+		tagSet[tag] = true
 	}
-
-	for _, e := range s.entries {
-		if !e.Enabled {
-			continue
-		}
-		if len(sevSet) > 0 && !sevSet[e.Severity] {
+	filtered := 0
+	for key, e := range s.entries {
+		if customOnly && !strings.HasPrefix(key, "c:") {
 			continue
 		}
 		if len(tagSet) > 0 && !hasAnyTag(e.Tags, tagSet) {
 			continue
 		}
-		if p := s.entryPath(e); p != "" {
-			paths = append(paths, p)
+		result.Requested++
+		if !e.Enabled || (len(sevSet) > 0 && !sevSet[e.Severity]) {
+			filtered++
+			continue
 		}
+		path, valid := s.validatedEntryPath(e)
+		if !valid {
+			result.Invalid++
+			continue
+		}
+		result.FileRefs = append(result.FileRefs, path)
 	}
-	return paths, true
+	result.Loaded = len(result.FileRefs)
+	classifyTemplateLoadResult(&result, filtered, false)
+	return result
 }
 
-// MaterializeCustomPocs 全部启用自定义 POC（按严重级别过滤），等价 getAllCustomPocs。
-// ok=false 表示库未同步或不可用，调用方需回退 Mongo。
+// MaterializeCustomPocs preserves the old API while using the same validation
+// and diagnostics as tag-based loading.
 func (s *TemplateStore) MaterializeCustomPocs(severities []string) (paths []string, ok bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if !s.synced {
-		return nil, false
-	}
+	result := s.materializeByTagsResult(nil, severities, true)
+	return result.FileRefs, result.Outcome != TemplateLoadStoreUnavailable
+}
 
-	sevSet := make(map[string]bool, len(severities))
-	for _, s := range severities {
-		sevSet[s] = true
+// validatedEntryPath verifies both file existence and the same minimal id/info
+// shape enforced by Nuclei's content path before returning a reference.
+func (s *TemplateStore) validatedEntryPath(e *TemplateEntry) (string, bool) {
+	path := s.entryPath(e)
+	if path == "" {
+		return "", false
 	}
-	for key, e := range s.entries {
-		if len(key) < 2 || key[:2] != "c:" || !e.Enabled {
+	content, err := os.ReadFile(path)
+	if err != nil || validateTemplateContent(string(content)) != nil {
+		return "", false
+	}
+	return path, true
+}
+
+func validateTemplateContents(contents []string) ([]string, int) {
+	valid := make([]string, 0, len(contents))
+	invalid := 0
+	for _, content := range contents {
+		if err := validateTemplateContent(content); err != nil {
+			invalid++
 			continue
 		}
-		if len(sevSet) > 0 && !sevSet[e.Severity] {
-			continue
-		}
-		if p := s.entryPath(e); p != "" {
-			paths = append(paths, p)
+		valid = append(valid, content)
+	}
+	return valid, invalid
+}
+
+func validateTemplateContent(content string) error {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) < minimumTemplateContentLen {
+		return fmt.Errorf("template content too short")
+	}
+	if !strings.Contains(content, "id:") {
+		return fmt.Errorf("template id missing")
+	}
+	var wrapper struct {
+		ID   string      `yaml:"id"`
+		Info interface{} `yaml:"info"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &wrapper); err != nil {
+		return fmt.Errorf("template YAML invalid: %w", err)
+	}
+	if strings.TrimSpace(wrapper.ID) == "" || wrapper.Info == nil {
+		return fmt.Errorf("template id or info missing")
+	}
+	return nil
+}
+
+func classifyTemplateLoadResult(result *TemplateLoadResult, filtered int, unavailable bool) {
+	switch {
+	case unavailable:
+		result.Outcome = TemplateLoadStoreUnavailable
+		result.ReasonCode = "template_store_unavailable"
+	case result.Invalid > 0:
+		result.Outcome = TemplateLoadInvalidContent
+		result.ReasonCode = "template_content_invalid"
+	case result.Loaded > 0:
+		result.Outcome = TemplateLoadLoaded
+		result.ReasonCode = ""
+	case filtered > 0:
+		result.Outcome = TemplateLoadFiltered
+		result.ReasonCode = "templates_filtered"
+	default:
+		result.Outcome = TemplateLoadNoMatch
+		result.ReasonCode = "templates_no_match"
+	}
+}
+
+func appendBoundedMissingID(ids []string, id string) []string {
+	if id == "" || len(ids) >= maxTemplateMissingIDs {
+		return ids
+	}
+	for _, existing := range ids {
+		if existing == id {
+			return ids
 		}
 	}
-	return paths, true
+	return append(ids, id)
 }
 
 // entryPath 返回库文件绝对路径；文件缺失（异常状态）返回空串由调用方按未命中处理。
@@ -487,6 +586,8 @@ func objectIdHex(v interface{}) string {
 
 // ==================== Worker 集成：库优先解析 + Mongo 内容回退 ====================
 
+type templateLoadFallback func(context.Context, *TemplatesReq) (TemplateLoadResult, error)
+
 // ensureTemplateStore POC 扫描前的库同步检查（指纹节流，通常只做 4 次便宜的 count 查询）；
 // 失败仅告警不阻断，后续解析自动回退 Mongo 内容加载
 func (w *Worker) ensureTemplateStore(ctx context.Context) {
@@ -495,42 +596,125 @@ func (w *Worker) ensureTemplateStore(ctx context.Context) {
 	}
 	syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := w.templateStore.EnsureSynced(syncCtx, w.mongoDB); err != nil {
+	if err := w.templateStore.EnsureSynced(syncCtx, w.mongoDB); err != nil && w.logger != nil {
 		w.logger.Warn("TemplateStore sync check failed: %v, POC scan falls back to Mongo content loading", err)
 	}
 }
 
-// resolveTemplatesByIds 手动选择模式：优先本地库按 ID 解析库文件，
-// 索引未命中的 ID 回退 Mongo 内容加载（禁用项在两侧语义一致地跳过）
-func (w *Worker) resolveTemplatesByIds(ctx context.Context, nucleiIds, customIds []string) (contents []string, refs []string) {
-	if w.templateStore != nil {
-		var missedN, missedC []string
-		refs, missedN, missedC = w.templateStore.MaterializeIDs(nucleiIds, customIds)
-		if len(missedN) > 0 || len(missedC) > 0 {
-			contents = w.getTemplatesByIds(ctx, missedN, missedC)
+func resolveTemplateIDsWithFallback(ctx context.Context, store *TemplateStore, nucleiIDs, customIDs []string, fallback templateLoadFallback) (TemplateLoadResult, error) {
+	var local TemplateLoadResult
+	var missedN, missedC []string
+	if store == nil {
+		local = TemplateLoadResult{
+			Requested: len(nucleiIDs) + len(customIDs), Source: "local_store",
+			Outcome: TemplateLoadStoreUnavailable, ReasonCode: "template_store_unavailable",
 		}
-		return contents, refs
+		missedN, missedC = append([]string(nil), nucleiIDs...), append([]string(nil), customIDs...)
+	} else {
+		local, missedN, missedC = store.materializeIDsResult(nucleiIDs, customIDs)
 	}
-	return w.getTemplatesByIds(ctx, nucleiIds, customIds), nil
+	if len(missedN) == 0 && len(missedC) == 0 {
+		return local, nil
+	}
+	if fallback == nil {
+		return local, nil
+	}
+
+	mongoResult, err := fallback(ctx, &TemplatesReq{NucleiTemplateIds: missedN, CustomPocIds: missedC})
+	merged := mergeTemplateLoadResults(local, mongoResult, len(nucleiIDs)+len(customIDs))
+	if err != nil {
+		merged.Outcome = TemplateLoadDBError
+		if merged.ReasonCode == "" {
+			merged.ReasonCode = "mongo_template_fallback_failed"
+		}
+		return merged, err
+	}
+	return merged, nil
 }
 
-// resolveTemplatesByTags 自动分组模式：优先本地库按标签/严重级别解析
-//（nuclei 模板 + 自定义 POC 同时命中，语义同 loadTemplates tags 分支），库不可用回退 Mongo
+func resolveTemplateTagsWithFallback(ctx context.Context, store *TemplateStore, tags, severities []string, customOnly bool, fallback templateLoadFallback) (TemplateLoadResult, error) {
+	var local TemplateLoadResult
+	if store == nil {
+		local = TemplateLoadResult{Source: "local_store", Outcome: TemplateLoadStoreUnavailable, ReasonCode: "template_store_unavailable"}
+	} else {
+		local = store.materializeByTagsResult(tags, severities, customOnly)
+	}
+	// A completed local query, including a true zero match, must not be confused
+	// with an unavailable store and must not trigger a redundant Mongo query.
+	if local.Outcome != TemplateLoadStoreUnavailable || fallback == nil {
+		return local, nil
+	}
+	req := &TemplatesReq{Tags: tags, Severities: severities, CustomPocOnly: customOnly}
+	mongoResult, err := fallback(ctx, req)
+	if err != nil {
+		mongoResult.Outcome = TemplateLoadDBError
+		if mongoResult.ReasonCode == "" {
+			mongoResult.ReasonCode = "mongo_template_fallback_failed"
+		}
+		return mongoResult, err
+	}
+	return mongoResult, nil
+}
+
+func mergeTemplateLoadResults(local, fallback TemplateLoadResult, requested int) TemplateLoadResult {
+	result := TemplateLoadResult{
+		Contents:   append(append([]string(nil), local.Contents...), fallback.Contents...),
+		FileRefs:   append(append([]string(nil), local.FileRefs...), fallback.FileRefs...),
+		Requested:  requested,
+		Invalid:    local.Invalid + fallback.Invalid,
+		MissingIDs: append([]string(nil), fallback.MissingIDs...),
+		ReasonCode: fallback.ReasonCode,
+	}
+	result.Loaded = len(result.Contents) + len(result.FileRefs)
+	switch {
+	case local.Loaded > 0 && fallback.Loaded > 0:
+		result.Source = "mixed"
+	case fallback.Loaded > 0 || local.Outcome == TemplateLoadStoreUnavailable:
+		result.Source = "mongo"
+	default:
+		result.Source = "local_store"
+	}
+	classifyTemplateLoadResult(&result, 0, false)
+	if result.Loaded == 0 && fallback.Outcome == TemplateLoadFiltered {
+		result.Outcome, result.ReasonCode = TemplateLoadFiltered, fallback.ReasonCode
+	}
+	return result
+}
+
+func (w *Worker) resolveTemplatesByIdsResult(ctx context.Context, nucleiIDs, customIDs []string) (TemplateLoadResult, error) {
+	return resolveTemplateIDsWithFallback(ctx, w.templateStore, nucleiIDs, customIDs, w.loadTemplatesWithResult)
+}
+
+func (w *Worker) resolveTemplatesByTagsResult(ctx context.Context, tags, severities []string) (TemplateLoadResult, error) {
+	return resolveTemplateTagsWithFallback(ctx, w.templateStore, tags, severities, false, w.loadTemplatesWithResult)
+}
+
+func (w *Worker) resolveAllCustomPocsResult(ctx context.Context, severities []string) (TemplateLoadResult, error) {
+	return resolveTemplateTagsWithFallback(ctx, w.templateStore, nil, severities, true, w.loadTemplatesWithResult)
+}
+
+// Legacy wrappers preserve existing callers while ensuring only validated
+// contents/files reach Nuclei. New coverage code consumes the Result variants.
+func (w *Worker) resolveTemplatesByIds(ctx context.Context, nucleiIDs, customIDs []string) (contents []string, refs []string) {
+	result, err := w.resolveTemplatesByIdsResult(ctx, nucleiIDs, customIDs)
+	if err != nil && w.logger != nil {
+		w.logger.Error("ResolveTemplatesByIds failed: %v", err)
+	}
+	return result.Contents, result.FileRefs
+}
+
 func (w *Worker) resolveTemplatesByTags(ctx context.Context, tags, severities []string) (contents []string, refs []string) {
-	if w.templateStore != nil {
-		if paths, ok := w.templateStore.MaterializeByTags(tags, severities); ok {
-			return nil, paths
-		}
+	result, err := w.resolveTemplatesByTagsResult(ctx, tags, severities)
+	if err != nil && w.logger != nil {
+		w.logger.Error("ResolveTemplatesByTags failed: %v", err)
 	}
-	return w.getTemplatesByTags(ctx, tags, severities), nil
+	return result.Contents, result.FileRefs
 }
 
-// resolveAllCustomPocs 仅自定义POC模式：优先本地库解析全部启用自定义POC，库不可用回退 Mongo
 func (w *Worker) resolveAllCustomPocs(ctx context.Context, severities []string) (contents []string, refs []string) {
-	if w.templateStore != nil {
-		if paths, ok := w.templateStore.MaterializeCustomPocs(severities); ok {
-			return nil, paths
-		}
+	result, err := w.resolveAllCustomPocsResult(ctx, severities)
+	if err != nil && w.logger != nil {
+		w.logger.Error("ResolveAllCustomPocs failed: %v", err)
 	}
-	return w.getAllCustomPocs(ctx, severities), nil
+	return result.Contents, result.FileRefs
 }

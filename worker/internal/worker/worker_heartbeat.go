@@ -73,6 +73,9 @@ func (w *Worker) sendHeartbeatWithRetry() error {
 
 // doSendHeartbeat 执行心跳发送
 func (w *Worker) doSendHeartbeat(ctx context.Context) error {
+	defer func() {
+		w.logger.Info("scan_metrics=%s", structuredMetricsJSON())
+	}()
 	cpuLoad := GetCPULoad()
 	memUsed := GetMemoryUsage()
 

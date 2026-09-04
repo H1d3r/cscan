@@ -9,6 +9,7 @@ func TestMapTaskStatusToScanStatus(t *testing.T) {
 		TaskStatusPaused:  "pending",
 		TaskStatusStarted: "in_progress",
 		TaskStatusSuccess: "completed",
+		TaskStatusPartial: "completed",
 		TaskStatusFailure: "failed",
 		TaskStatusRevoked: "cancelled",
 		TaskStatusStopped: "cancelled",

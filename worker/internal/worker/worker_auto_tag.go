@@ -13,11 +13,64 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// AssetGroup 资产组，具有相同标签集的资产归为一组
+// AssetGroup 资产组，具有相同标签集的资产归为一组。
+// Untagged groups are explicit applicable groups with no automatic template
+// selector; they must remain visible as uncovered instead of being discarded.
 type AssetGroup struct {
-	Assets []*scanner.Asset
-	Tags   []string
+	GroupKey string
+	Assets   []*scanner.Asset
+	Tags     []string
+	Untagged bool
 }
+
+// PocVulnerabilityConclusion separates a legitimate zero-finding result from
+// a scan that did not evaluate any applicable asset.
+type PocVulnerabilityConclusion string
+
+const (
+	PocConclusionFindings           PocVulnerabilityConclusion = "FINDINGS"
+	PocConclusionNoFindings         PocVulnerabilityConclusion = "NO_FINDINGS"
+	PocConclusionNotEvaluated       PocVulnerabilityConclusion = "NOT_EVALUATED"
+	PocConclusionPartiallyEvaluated PocVulnerabilityConclusion = "PARTIALLY_EVALUATED"
+)
+
+// PocGroupResult is the auditable outcome of one applicable asset group.
+type PocGroupResult struct {
+	GroupKey            string              `json:"groupKey" bson:"group_key"`
+	Tags                []string            `json:"tags,omitempty" bson:"tags,omitempty"`
+	AssetCount          int                 `json:"assetCount" bson:"asset_count"`
+	RequestedTemplates  int                 `json:"requestedTemplates" bson:"requested_templates"`
+	ValidTemplates      int                 `json:"validTemplates" bson:"valid_templates"`
+	ExecutedTemplates   int                 `json:"executedTemplates" bson:"executed_templates"`
+	ScannedAssets       int                 `json:"scannedAssets" bson:"scanned_assets"`
+	Vulnerabilities     int                 `json:"vulnerabilities" bson:"vulnerabilities"`
+	Status              scanner.PhaseStatus `json:"status" bson:"status"`
+	ReasonCode          string              `json:"reasonCode,omitempty" bson:"reason_code,omitempty"`
+	TemplateLoadOutcome TemplateLoadOutcome `json:"templateLoadOutcome" bson:"template_load_outcome"`
+	TemplateSource      string              `json:"templateSource,omitempty" bson:"template_source,omitempty"`
+	InvalidTemplates    int                 `json:"invalidTemplates" bson:"invalid_templates"`
+}
+
+// PocCoverageResult aggregates group and asset coverage without conflating an
+// empty vulnerability slice with a successful scan.
+type PocCoverageResult struct {
+	Groups                  []PocGroupResult           `json:"groups" bson:"groups"`
+	TotalGroups             int                        `json:"totalGroups" bson:"total_groups"`
+	ScannedGroups           int                        `json:"scannedGroups" bson:"scanned_groups"`
+	UncoveredGroups         int                        `json:"uncoveredGroups" bson:"uncovered_groups"`
+	FailedGroups            int                        `json:"failedGroups" bson:"failed_groups"`
+	TotalAssets             int                        `json:"totalAssets" bson:"total_assets"`
+	ScannedAssets           int                        `json:"scannedAssets" bson:"scanned_assets"`
+	UncoveredAssets         int                        `json:"uncoveredAssets" bson:"uncovered_assets"`
+	ValidTemplates          int                        `json:"validTemplates" bson:"valid_templates"`
+	ExecutedTemplates       int                        `json:"executedTemplates" bson:"executed_templates"`
+	Vulnerabilities         int                        `json:"vulnerabilities" bson:"vulnerabilities"`
+	Status                  scanner.PhaseStatus        `json:"status" bson:"status"`
+	VulnerabilityConclusion PocVulnerabilityConclusion `json:"vulnerabilityConclusion" bson:"vulnerability_conclusion"`
+	VulnerabilityResults    []*scanner.Vulnerability   `json:"-" bson:"-"`
+}
+
+type pocTemplateLoader func(context.Context, []string, []string) (TemplateLoadResult, error)
 
 // generateAssetTags 为单个资产生成标签（基于自定义标签映射和Wappalyzer映射）
 func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.PocScanConfig) []string {
@@ -25,7 +78,7 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 
 	for _, app := range asset.App {
 		appName := parseAppName(app)
-		if appName == "" {
+		if appName == "" || !isConfirmedFingerprintApp(asset, app, appName) {
 			continue
 		}
 		appNameLower := strings.ToLower(appName)
@@ -77,38 +130,388 @@ func (w *Worker) generateAssetTags(asset *scanner.Asset, pocConfig *scheduler.Po
 	return tags
 }
 
-// groupAssetsByTags 按标签集对资产进行分组
-// 具有相同标签集的资产归为同一组，可以共享同一套POC模板
+// isConfirmedFingerprintApp keeps legacy/non-fingerprint App entries usable,
+// while preventing a custom/active candidate retained in historical or mixed
+// data from expanding automatic POC scope. New scans only place CONFIRMED
+// findings in App, so this is a defense-in-depth compatibility boundary.
+func isConfirmedFingerprintApp(asset *scanner.Asset, formattedApp, appName string) bool {
+	if asset == nil || len(asset.FingerprintFindings) == 0 {
+		return true
+	}
+	hasFinding := false
+	for _, finding := range asset.FingerprintFindings {
+		if !strings.EqualFold(strings.TrimSpace(finding.Name), strings.TrimSpace(appName)) {
+			continue
+		}
+		hasFinding = true
+		if finding.Decision == "CONFIRMED" {
+			return true
+		}
+	}
+	if !hasFinding {
+		return true
+	}
+	lower := strings.ToLower(formattedApp)
+	return !strings.Contains(lower, "[custom") && !strings.Contains(lower, "+custom") &&
+		!strings.Contains(lower, "[active") && !strings.Contains(lower, "+active")
+}
+
+// groupAssetsByTags 按标签集对资产进行分组。
+// 无标签资产属于适用但未覆盖的显式 untagged 分组，不能静默丢弃。
 func (w *Worker) groupAssetsByTags(assets []*scanner.Asset, pocConfig *scheduler.PocScanConfig) []*AssetGroup {
-	// 使用标签集的签名作为key进行分组
 	groups := make(map[string]*AssetGroup)
 
 	for _, asset := range assets {
 		tags := w.generateAssetTags(asset, pocConfig)
-		if len(tags) == 0 {
+		sortedTags := append([]string(nil), tags...)
+		sort.Strings(sortedTags)
+		key := strings.Join(sortedTags, ",")
+		untagged := len(sortedTags) == 0
+		if untagged {
+			key = "untagged"
+		}
+
+		if _, ok := groups[key]; !ok {
+			groups[key] = &AssetGroup{
+				GroupKey: key,
+				Assets:   make([]*scanner.Asset, 0),
+				Tags:     sortedTags,
+				Untagged: untagged,
+			}
+		}
+		groups[key].Assets = append(groups[key].Assets, asset)
+	}
+
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]*AssetGroup, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, groups[key])
+	}
+	return result
+}
+
+// executePocGroups runs the same grouped POC path for production and
+// deterministic tests. Template loading and Nuclei execution remain injectable,
+// while all status/conclusion decisions are centralized here.
+func executePocGroups(
+	ctx context.Context,
+	groups []*AssetGroup,
+	severities []string,
+	baseOptions *scanner.NucleiOptions,
+	loader pocTemplateLoader,
+	nuclei scanner.Scanner,
+	taskLogger func(level, format string, args ...interface{}),
+) PocCoverageResult {
+	return executePocGroupsWithEvents(ctx, groups, severities, baseOptions, loader, nuclei, taskLogger, nil)
+}
+
+func executePocGroupsWithEvents(
+	ctx context.Context,
+	groups []*AssetGroup,
+	severities []string,
+	baseOptions *scanner.NucleiOptions,
+	loader pocTemplateLoader,
+	nuclei scanner.Scanner,
+	taskLogger func(level, format string, args ...interface{}),
+	eventLogger scanner.ScanEventLogger,
+) PocCoverageResult {
+	summary := PocCoverageResult{Groups: make([]PocGroupResult, 0, len(groups))}
+	if len(groups) == 0 {
+		summary.Status = scanner.PhaseSkippedNotApplicable
+		summary.VulnerabilityConclusion = PocConclusionNotEvaluated
+		return summary
+	}
+
+	for _, group := range groups {
+		groupResult := PocGroupResult{
+			GroupKey:   group.GroupKey,
+			Tags:       append([]string(nil), group.Tags...),
+			AssetCount: len(group.Assets),
+		}
+		summary.TotalGroups++
+		summary.TotalAssets += groupResult.AssetCount
+
+		if err := ctx.Err(); err != nil {
+			groupResult.Status = scanner.PhaseCanceled
+			groupResult.ReasonCode = scanner.ReasonCanceled
+			appendPocGroupEvent(&summary, groupResult, eventLogger)
 			continue
 		}
 
-		// 创建标签集的签名（排序后拼接）
-		sortedTags := make([]string, len(tags))
-		copy(sortedTags, tags)
-		sort.Strings(sortedTags)
-		sig := strings.Join(sortedTags, ",")
+		if group.Untagged {
+			groupResult.Status = scanner.PhaseUncovered
+			groupResult.TemplateLoadOutcome = TemplateLoadNoMatch
+			groupResult.ReasonCode = "untagged_assets"
+			appendPocGroupEvent(&summary, groupResult, eventLogger)
+			continue
+		}
 
-		if _, ok := groups[sig]; !ok {
-			groups[sig] = &AssetGroup{
-				Assets: make([]*scanner.Asset, 0),
-				Tags:   tags,
+		loadResult, loadErr := loader(ctx, group.Tags, severities)
+		groupResult.RequestedTemplates = loadResult.Requested
+		groupResult.ValidTemplates = loadResult.Loaded
+		groupResult.InvalidTemplates = loadResult.Invalid
+		groupResult.TemplateLoadOutcome = loadResult.Outcome
+		groupResult.TemplateSource = loadResult.Source
+		groupResult.ReasonCode = loadResult.ReasonCode
+		if groupResult.ValidTemplates == 0 {
+			groupResult.ValidTemplates = len(loadResult.Contents) + len(loadResult.FileRefs)
+		}
+
+		if loadErr != nil && groupResult.ValidTemplates == 0 {
+			if ctx.Err() != nil {
+				groupResult.Status = scanner.PhaseCanceled
+				groupResult.ReasonCode = scanner.ReasonCanceled
+			} else {
+				groupResult.Status = scanner.PhaseFailed
+				if groupResult.ReasonCode == "" {
+					groupResult.ReasonCode = "template_load_failed"
+				}
+			}
+			appendPocGroupEvent(&summary, groupResult, eventLogger)
+			continue
+		}
+		if groupResult.ValidTemplates == 0 {
+			groupResult.Status = templateZeroCoverageStatus(loadResult.Outcome)
+			if groupResult.ReasonCode == "" {
+				groupResult.ReasonCode = templateLoadReason(loadResult.Outcome)
+			}
+			appendPocGroupEvent(&summary, groupResult, eventLogger)
+			continue
+		}
+		if nuclei == nil {
+			groupResult.Status = scanner.PhaseFailed
+			groupResult.ReasonCode = "nuclei_unavailable"
+			appendPocGroupEvent(&summary, groupResult, eventLogger)
+			continue
+		}
+
+		opts := scanner.NucleiOptions{}
+		if baseOptions != nil {
+			opts = *baseOptions
+		}
+		opts.Tags = append([]string(nil), group.Tags...)
+		opts.CustomTemplates = append([]string(nil), loadResult.Contents...)
+		opts.TemplateFileRefs = append([]string(nil), loadResult.FileRefs...)
+		opts.AutoScan = false
+		opts.AutomaticScan = false
+		opts.CustomPocOnly = false
+		opts.TagMappings = nil
+
+		result, scanErr := nuclei.Scan(ctx, &scanner.ScanConfig{
+			Assets:      group.Assets,
+			Options:     &opts,
+			TaskLogger:  taskLogger,
+			EventLogger: eventLogger,
+		})
+		applyPocScanResult(&groupResult, result, scanErr)
+		if loadErr != nil || loadResult.Invalid > 0 {
+			if groupResult.Status == scanner.PhaseComplete {
+				groupResult.Status = scanner.PhasePartial
+			}
+			if groupResult.ReasonCode == "" {
+				groupResult.ReasonCode = templateLoadReason(loadResult.Outcome)
 			}
 		}
-		groups[sig].Assets = append(groups[sig].Assets, asset)
+		if result != nil {
+			summary.VulnerabilityResults = append(summary.VulnerabilityResults, result.Vulnerabilities...)
+		}
+		appendPocGroupEvent(&summary, groupResult, eventLogger)
 	}
 
-	result := make([]*AssetGroup, 0, len(groups))
-	for _, group := range groups {
-		result = append(result, group)
+	finalizePocCoverage(&summary)
+	return summary
+}
+
+func appendPocGroupEvent(summary *PocCoverageResult, group PocGroupResult, eventLogger scanner.ScanEventLogger) {
+	summary.Groups = append(summary.Groups, group)
+	if eventLogger == nil {
+		return
 	}
-	return result
+	eventLogger(EventPocTemplateLoad, "poc", string(group.Status), map[string]interface{}{
+		"group_key": group.GroupKey, "tags": append([]string(nil), group.Tags...),
+		"asset_count": group.AssetCount, "requested": group.RequestedTemplates,
+		"loaded": group.ValidTemplates, "invalid": group.InvalidTemplates,
+		"source": group.TemplateSource, "outcome": string(group.TemplateLoadOutcome),
+		"reason_code": group.ReasonCode, "scanned_assets": group.ScannedAssets,
+		"vulnerabilities": group.Vulnerabilities,
+	})
+}
+
+func applyPocScanResult(group *PocGroupResult, result *scanner.ScanResult, scanErr error) {
+	if result != nil {
+		group.Vulnerabilities = len(result.Vulnerabilities)
+	}
+	if scanErr != nil {
+		if result != nil && result.Diagnostic != nil && result.Diagnostic.Coverage.Succeeded > 0 {
+			group.Status = scanner.PhasePartial
+			group.ScannedAssets = minInt(group.AssetCount, result.Diagnostic.Coverage.Succeeded)
+			group.ExecutedTemplates = group.ValidTemplates
+		} else if result != nil && result.Diagnostic != nil && result.Diagnostic.Status == scanner.PhaseCanceled {
+			group.Status = scanner.PhaseCanceled
+			group.ReasonCode = scanner.ReasonCanceled
+		} else {
+			group.Status = scanner.PhaseFailed
+			group.ReasonCode = scanner.ReasonExecutionError
+		}
+		return
+	}
+	if result != nil && result.Diagnostic != nil {
+		diagnostic := result.Diagnostic
+		group.Status = diagnostic.Status
+		group.ScannedAssets = minInt(group.AssetCount, diagnostic.Coverage.Succeeded)
+		if diagnostic.Coverage.Attempted > 0 {
+			group.ExecutedTemplates = group.ValidTemplates
+		}
+		if group.ReasonCode == "" && len(diagnostic.WarningCodes) > 0 {
+			group.ReasonCode = diagnostic.WarningCodes[0]
+		}
+		return
+	}
+
+	// Legacy/fake scanners without diagnostics retain the historical contract:
+	// a nil error means every supplied asset completed against every template.
+	group.Status = scanner.PhaseComplete
+	group.ScannedAssets = group.AssetCount
+	group.ExecutedTemplates = group.ValidTemplates
+}
+
+func finalizePocCoverage(summary *PocCoverageResult) {
+	canceled := false
+	partial := false
+	for _, group := range summary.Groups {
+		summary.ValidTemplates += group.ValidTemplates
+		summary.ExecutedTemplates += group.ExecutedTemplates
+		summary.ScannedAssets += group.ScannedAssets
+		summary.Vulnerabilities += group.Vulnerabilities
+		if group.ScannedAssets > 0 {
+			summary.ScannedGroups++
+		}
+		uncoveredAssets := group.AssetCount - group.ScannedAssets
+		if uncoveredAssets > 0 {
+			summary.UncoveredAssets += uncoveredAssets
+		}
+		switch group.Status {
+		case scanner.PhaseCanceled:
+			canceled = true
+		case scanner.PhaseUncovered:
+			summary.UncoveredGroups++
+		case scanner.PhaseFailed:
+			summary.FailedGroups++
+		case scanner.PhasePartial:
+			partial = true
+		}
+	}
+
+	switch {
+	case canceled:
+		summary.Status = scanner.PhaseCanceled
+	case summary.TotalAssets == 0:
+		summary.Status = scanner.PhaseSkippedNotApplicable
+	case summary.ScannedAssets == 0 && summary.FailedGroups > 0:
+		summary.Status = scanner.PhaseFailed
+	case summary.ScannedAssets == 0:
+		summary.Status = scanner.PhaseUncovered
+	case summary.ScannedAssets < summary.TotalAssets || summary.UncoveredGroups > 0 || summary.FailedGroups > 0 || partial:
+		summary.Status = scanner.PhasePartial
+	default:
+		summary.Status = scanner.PhaseComplete
+	}
+
+	switch {
+	case summary.Vulnerabilities > 0:
+		summary.VulnerabilityConclusion = PocConclusionFindings
+	case summary.Status == scanner.PhaseComplete:
+		summary.VulnerabilityConclusion = PocConclusionNoFindings
+	case summary.ScannedAssets == 0:
+		summary.VulnerabilityConclusion = PocConclusionNotEvaluated
+	default:
+		summary.VulnerabilityConclusion = PocConclusionPartiallyEvaluated
+	}
+}
+
+func templateZeroCoverageStatus(outcome TemplateLoadOutcome) scanner.PhaseStatus {
+	switch outcome {
+	case TemplateLoadStoreUnavailable, TemplateLoadDBError, TemplateLoadInvalidContent:
+		return scanner.PhaseFailed
+	default:
+		return scanner.PhaseUncovered
+	}
+}
+
+func templateLoadReason(outcome TemplateLoadOutcome) string {
+	switch outcome {
+	case TemplateLoadFiltered:
+		return "templates_filtered"
+	case TemplateLoadStoreUnavailable:
+		return "template_store_unavailable"
+	case TemplateLoadDBError:
+		return "template_load_db_error"
+	case TemplateLoadInvalidContent:
+		return "template_content_invalid"
+	default:
+		return "templates_no_match"
+	}
+}
+
+func templatePhaseReason(result TemplateLoadResult, loadErr error) string {
+	if loadErr != nil {
+		return scanner.ReasonTemplateUnavailable
+	}
+	switch result.Outcome {
+	case TemplateLoadStoreUnavailable, TemplateLoadDBError:
+		return scanner.ReasonTemplateUnavailable
+	case TemplateLoadInvalidContent:
+		return scanner.ReasonTemplateInvalid
+	case TemplateLoadFiltered, TemplateLoadNoMatch:
+		return scanner.ReasonTemplateNoMatch
+	default:
+		if result.Invalid > 0 {
+			return scanner.ReasonTemplateInvalid
+		}
+		return ""
+	}
+}
+
+func applyExplicitPocTemplateCoverage(pocPhaseResult PhaseResult, templateLoadResult TemplateLoadResult, templateLoadErr error, assetCount int) PhaseResult {
+	loaded := templateLoadResult.Loaded
+	if loaded == 0 {
+		loaded = len(templateLoadResult.Contents) + len(templateLoadResult.FileRefs)
+	}
+	reasonCode := templatePhaseReason(templateLoadResult, templateLoadErr)
+	partialLoad := templateLoadErr != nil || templateLoadResult.Invalid > 0 ||
+		(templateLoadResult.Requested > 0 && loaded < templateLoadResult.Requested)
+	if partialLoad {
+		if pocPhaseResult.Status == scanner.PhaseComplete {
+			pocPhaseResult.Status = scanner.PhasePartial
+		}
+		if reasonCode != "" {
+			pocPhaseResult.ReasonCodes = append(pocPhaseResult.ReasonCodes, reasonCode)
+		}
+	}
+	if pocPhaseResult.Status != scanner.PhaseSkippedNotApplicable || assetCount <= 0 {
+		return pocPhaseResult
+	}
+
+	coverage := scanner.Coverage{Input: assetCount, Uncovered: assetCount}
+	if templateLoadErr != nil || templateLoadResult.Outcome == TemplateLoadStoreUnavailable ||
+		templateLoadResult.Outcome == TemplateLoadDBError || templateLoadResult.Outcome == TemplateLoadInvalidContent {
+		coverage.Attempted = assetCount
+		coverage.Failed = assetCount
+	}
+	pocPhaseResult = NewPhaseResult("poc", coverage, false, reasonCode)
+	pocPhaseResult.VulnerabilityConclusion = model.VulnerabilityConclusionNotEvaluated
+	return pocPhaseResult
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // getTemplatesByTags 通过 HTTP 接口从数据库获取符合标签的模板
@@ -221,20 +624,23 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 		// 转换为model.Fingerprint（被动指纹）
 		for _, fp := range resp.Fingerprints {
 			mfp := &model.Fingerprint{
-				Name:      fp.Name,
-				Category:  fp.Category,
-				Rule:      fp.Rule,
-				Source:    fp.Source,
-				Headers:   fp.Headers,
-				Cookies:   fp.Cookies,
-				HTML:      fp.Html,
-				Scripts:   fp.Scripts,
-				ScriptSrc: fp.ScriptSrc,
-				Meta:      fp.Meta,
-				CSS:       fp.Css,
-				URL:       fp.Url,
-				IsBuiltin: fp.IsBuiltin,
-				Enabled:   fp.Enabled,
+				Name:          fp.Name,
+				Category:      fp.Category,
+				Rule:          fp.Rule,
+				Source:        fp.Source,
+				Headers:       fp.Headers,
+				Cookies:       fp.Cookies,
+				HTML:          fp.Html,
+				Scripts:       fp.Scripts,
+				ScriptSrc:     fp.ScriptSrc,
+				Meta:          fp.Meta,
+				CSS:           fp.Css,
+				URL:           fp.Url,
+				ConflictGroup: fp.ConflictGroup,
+				Coexistence:   append([]string(nil), fp.Coexistence...),
+				ExclusiveWith: append([]string(nil), fp.ExclusiveWith...),
+				IsBuiltin:     fp.IsBuiltin,
+				Enabled:       fp.Enabled,
 			}
 			// 解析ID
 			if fp.Id != "" {
@@ -287,12 +693,12 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 						mfp.CSS = passiveFp.CSS
 						mfp.URL = passiveFp.URL
 						mfp.Category = passiveFp.Category
-						w.logger.Debug("Active fingerprint '%s' linked to local passive fingerprint with rule: %s", afp.Name, passiveFp.Rule)
+						w.logger.Debug("Active fingerprint '%s' linked to local passive fingerprint", afp.Name)
 					} else {
 						w.logger.Warn("Active fingerprint '%s' has no matching rule", afp.Name)
 					}
 				} else if mfp.Rule != "" {
-					w.logger.Debug("Active fingerprint '%s' loaded with rule from API: %s", afp.Name, mfp.Rule)
+					w.logger.Debug("Active fingerprint '%s' loaded with rule from API", afp.Name)
 				}
 
 				// 解析ID

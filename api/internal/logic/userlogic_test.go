@@ -60,8 +60,8 @@ func TestUserInfo_DefaultRole(t *testing.T) {
 	}
 }
 
-// TestPageReq_Normalization 测试分页参数规范化
-func TestPageReq_Normalization(t *testing.T) {
+// TestNormalizePage 测试分页参数规范化及显式不分页哨兵。
+func TestNormalizePage(t *testing.T) {
 	testCases := []struct {
 		name             string
 		page, pageSize   int
@@ -69,9 +69,11 @@ func TestPageReq_Normalization(t *testing.T) {
 		expectedPageSize int
 	}{
 		{"正常分页", 2, 20, 2, 20},
-		{"零页码应规范化", 0, 20, 1, 20},
+		{"零页码表示不分页", 0, 20, 0, 0},
+		{"零页大小表示不分页", 1, 0, 0, 0},
+		{"双零表示不分页", 0, 0, 0, 0},
 		{"负页码应规范化", -1, 20, 1, 20},
-		{"零页大小应规范化", 1, 0, 1, 20},
+		{"负页大小应规范化", 1, -1, 1, 20},
 		{"超大页大小应限制", 1, 200, 1, 100},
 	}
 

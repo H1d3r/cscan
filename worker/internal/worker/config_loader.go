@@ -26,46 +26,124 @@ type TemplatesReq struct {
 	CustomPocOnly     bool     `json:"customPocOnly,omitempty"`
 }
 
-// TemplatesResp 模板加载响应
-type TemplatesResp struct {
-	Code      int      `json:"code"`
-	Msg       string   `json:"msg"`
-	Success   bool     `json:"success"`
-	Templates []string `json:"templates"`
-	Count     int32    `json:"count"`
+// TemplateLoadOutcome is the stable classification for one template lookup.
+type TemplateLoadOutcome string
+
+const (
+	TemplateLoadLoaded           TemplateLoadOutcome = "loaded"
+	TemplateLoadNoMatch          TemplateLoadOutcome = "no_match"
+	TemplateLoadFiltered         TemplateLoadOutcome = "filtered"
+	TemplateLoadStoreUnavailable TemplateLoadOutcome = "store_unavailable"
+	TemplateLoadDBError          TemplateLoadOutcome = "db_error"
+	TemplateLoadInvalidContent   TemplateLoadOutcome = "invalid_content"
+)
+
+// TemplateLoadResult separates template data from lookup/validation diagnostics.
+// Contents and FileRefs preserve the two existing Nuclei input forms. MissingIDs
+// is bounded before the result leaves the loader.
+type TemplateLoadResult struct {
+	Contents   []string            `json:"contents,omitempty"`
+	FileRefs   []string            `json:"fileRefs,omitempty"`
+	Requested  int                 `json:"requested"`
+	Loaded     int                 `json:"loaded"`
+	Invalid    int                 `json:"invalid"`
+	Source     string              `json:"source,omitempty"`
+	Outcome    TemplateLoadOutcome `json:"outcome"`
+	MissingIDs []string            `json:"missingIds,omitempty"`
+	ReasonCode string              `json:"reasonCode,omitempty"`
 }
 
-// loadTemplates 加载 POC 模板内容（语义同 WorkerConfigTemplatesHandler）：
-// 优先按 ID（仅取启用且内容非空），其次 CustomPocOnly（按严重级别取全部自定义 POC），
-// 否则按标签/严重级别取 Nuclei 模板 + 同标签自定义 POC（后者失败容忍）。
+// TemplatesResp 模板加载响应. LoadResult is optional so older callers and JSON
+// consumers continue to see the original fields unchanged.
+type TemplatesResp struct {
+	Code       int                 `json:"code"`
+	Msg        string              `json:"msg"`
+	Success    bool                `json:"success"`
+	Templates  []string            `json:"templates"`
+	Count      int32               `json:"count"`
+	LoadResult *TemplateLoadResult `json:"loadResult,omitempty"`
+}
+
+// loadTemplates preserves the historical response while exposing diagnostics to
+// upgraded callers through LoadResult. Database errors are returned instead of
+// being collapsed into an empty successful response.
 func (w *Worker) loadTemplates(ctx context.Context, req *TemplatesReq) (*TemplatesResp, error) {
+	result, err := w.loadTemplatesWithResult(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &TemplatesResp{
+		Code:       0,
+		Msg:        "success",
+		Success:    true,
+		Templates:  result.Contents,
+		Count:      int32(result.Loaded),
+		LoadResult: &result,
+	}, nil
+}
+
+// loadTemplatesWithResult performs the Mongo lookup and validates every content
+// before it can be passed to Nuclei.
+func (w *Worker) loadTemplatesWithResult(ctx context.Context, req *TemplatesReq) (TemplateLoadResult, error) {
+	result := TemplateLoadResult{Source: "mongo", Outcome: TemplateLoadNoMatch}
+	if req == nil {
+		result.ReasonCode = "template_request_missing"
+		return result, nil
+	}
 	if w.mongoDB == nil {
-		return nil, fmt.Errorf("mongo direct connection unavailable")
+		result.Outcome = TemplateLoadStoreUnavailable
+		result.ReasonCode = "mongo_unavailable"
+		return result, fmt.Errorf("mongo direct connection unavailable")
 	}
 
-	var templates []string
+	var contents []string
+	filtered := 0
+	matchedIDs := make(map[string]bool)
+
+	fail := func(reason string, err error) (TemplateLoadResult, error) {
+		result.Outcome = TemplateLoadDBError
+		result.ReasonCode = reason
+		return result, err
+	}
 
 	if len(req.NucleiTemplateIds) > 0 || len(req.CustomPocIds) > 0 {
+		result.Requested = len(req.NucleiTemplateIds) + len(req.CustomPocIds)
 		if len(req.NucleiTemplateIds) > 0 {
 			docs, err := model.NewNucleiTemplateModel(w.mongoDB).FindByIds(ctx, req.NucleiTemplateIds)
 			if err != nil {
-				return nil, err
+				return fail("mongo_nuclei_query_failed", err)
 			}
 			for _, t := range docs {
-				if t.Content != "" && t.Enabled {
-					templates = append(templates, t.Content)
+				matchedIDs["n:"+t.TemplateId] = true
+				if !t.Enabled {
+					filtered++
+					continue
 				}
+				contents = append(contents, t.Content)
 			}
 		}
 		if len(req.CustomPocIds) > 0 {
 			docs, err := model.NewCustomPocModel(w.mongoDB).FindByIds(ctx, req.CustomPocIds)
 			if err != nil {
-				return nil, err
+				return fail("mongo_custom_query_failed", err)
 			}
 			for _, p := range docs {
-				if p.Content != "" && p.Enabled {
-					templates = append(templates, p.Content)
+				matchedIDs["c:"+p.Id.Hex()] = true
+				if !p.Enabled {
+					filtered++
+					continue
 				}
+				contents = append(contents, p.Content)
+			}
+		}
+		for _, id := range req.NucleiTemplateIds {
+			if !matchedIDs["n:"+id] {
+				result.MissingIDs = appendBoundedMissingID(result.MissingIDs, id)
+			}
+		}
+		for _, id := range req.CustomPocIds {
+			if !matchedIDs["c:"+id] {
+				result.MissingIDs = appendBoundedMissingID(result.MissingIDs, id)
 			}
 		}
 	} else if req.CustomPocOnly {
@@ -75,12 +153,11 @@ func (w *Worker) loadTemplates(ctx context.Context, req *TemplatesReq) (*Templat
 		}
 		pocs, err := model.NewCustomPocModel(w.mongoDB).FindWithFilter(ctx, filter, 0, 0)
 		if err != nil {
-			return nil, err
+			return fail("mongo_custom_query_failed", err)
 		}
+		result.Requested = len(pocs)
 		for _, p := range pocs {
-			if p.Content != "" {
-				templates = append(templates, p.Content)
-			}
+			contents = append(contents, p.Content)
 		}
 	} else {
 		filter := bson.M{"enabled": true}
@@ -92,60 +169,56 @@ func (w *Worker) loadTemplates(ctx context.Context, req *TemplatesReq) (*Templat
 		}
 		docs, err := model.NewNucleiTemplateModel(w.mongoDB).FindEnabledByFilter(ctx, filter)
 		if err != nil {
-			return nil, err
+			return fail("mongo_nuclei_query_failed", err)
 		}
+		result.Requested += len(docs)
 		for _, t := range docs {
-			if t.Content != "" {
-				templates = append(templates, t.Content)
-			}
+			contents = append(contents, t.Content)
 		}
-		// 同标签自定义 POC 查询失败不影响已取到的 Nuclei 模板（与服务端行为一致）
 		if len(req.Tags) > 0 {
-			customFilter := bson.M{
-				"enabled": true,
-				"tags":    bson.M{"$in": req.Tags},
-			}
+			customFilter := bson.M{"enabled": true, "tags": bson.M{"$in": req.Tags}}
 			if len(req.Severities) > 0 {
 				customFilter["severity"] = bson.M{"$in": req.Severities}
 			}
-			if pocs, err := model.NewCustomPocModel(w.mongoDB).FindWithFilter(ctx, customFilter, 0, 0); err == nil {
-				for _, p := range pocs {
-					if p.Content != "" {
-						templates = append(templates, p.Content)
-					}
-				}
+			pocs, err := model.NewCustomPocModel(w.mongoDB).FindWithFilter(ctx, customFilter, 0, 0)
+			if err != nil {
+				return fail("mongo_custom_query_failed", err)
+			}
+			result.Requested += len(pocs)
+			for _, p := range pocs {
+				contents = append(contents, p.Content)
 			}
 		}
 	}
 
-	return &TemplatesResp{
-		Code:      0,
-		Msg:       "success",
-		Success:   true,
-		Templates: templates,
-		Count:     int32(len(templates)),
-	}, nil
+	result.Contents, result.Invalid = validateTemplateContents(contents)
+	result.Loaded = len(result.Contents)
+	classifyTemplateLoadResult(&result, filtered, false)
+	return result, nil
 }
 
 // ==================== 被动指纹 ====================
 
 // FingerprintDocument 指纹文档
 type FingerprintDocument struct {
-	Id        string            `json:"id"`
-	Name      string            `json:"name"`
-	Category  string            `json:"category"`
-	Rule      string            `json:"rule"`
-	Source    string            `json:"source"`
-	Headers   map[string]string `json:"headers"`
-	Cookies   map[string]string `json:"cookies"`
-	Html      []string          `json:"html"`
-	Scripts   []string          `json:"scripts"`
-	ScriptSrc []string          `json:"scriptSrc"`
-	Meta      map[string]string `json:"meta"`
-	Css       []string          `json:"css"`
-	Url       []string          `json:"url"`
-	IsBuiltin bool              `json:"isBuiltin"`
-	Enabled   bool              `json:"enabled"`
+	Id            string            `json:"id"`
+	Name          string            `json:"name"`
+	Category      string            `json:"category"`
+	Rule          string            `json:"rule"`
+	Source        string            `json:"source"`
+	Headers       map[string]string `json:"headers"`
+	Cookies       map[string]string `json:"cookies"`
+	Html          []string          `json:"html"`
+	Scripts       []string          `json:"scripts"`
+	ScriptSrc     []string          `json:"scriptSrc"`
+	Meta          map[string]string `json:"meta"`
+	Css           []string          `json:"css"`
+	Url           []string          `json:"url"`
+	ConflictGroup string            `json:"conflictGroup,omitempty"`
+	Coexistence   []string          `json:"coexistence,omitempty"`
+	ExclusiveWith []string          `json:"exclusiveWith,omitempty"`
+	IsBuiltin     bool              `json:"isBuiltin"`
+	Enabled       bool              `json:"enabled"`
 }
 
 // FingerprintsResp 指纹加载响应
@@ -176,21 +249,24 @@ func (w *Worker) loadFingerprints(ctx context.Context, enabledOnly bool) (*Finge
 	fingerprints := make([]FingerprintDocument, 0, len(fps))
 	for _, fp := range fps {
 		fingerprints = append(fingerprints, FingerprintDocument{
-			Id:        fp.Id.Hex(),
-			Name:      fp.Name,
-			Category:  fp.Category,
-			Rule:      fp.Rule,
-			Source:    fp.Source,
-			Headers:   fp.Headers,
-			Cookies:   fp.Cookies,
-			Html:      fp.HTML,
-			Scripts:   fp.Scripts,
-			ScriptSrc: fp.ScriptSrc,
-			Meta:      fp.Meta,
-			Css:       fp.CSS,
-			Url:       fp.URL,
-			IsBuiltin: fp.IsBuiltin,
-			Enabled:   fp.Enabled,
+			Id:            fp.Id.Hex(),
+			Name:          fp.Name,
+			Category:      fp.Category,
+			Rule:          fp.Rule,
+			Source:        fp.Source,
+			Headers:       fp.Headers,
+			Cookies:       fp.Cookies,
+			Html:          fp.HTML,
+			Scripts:       fp.Scripts,
+			ScriptSrc:     fp.ScriptSrc,
+			Meta:          fp.Meta,
+			Css:           fp.CSS,
+			Url:           fp.URL,
+			ConflictGroup: fp.ConflictGroup,
+			Coexistence:   fp.Coexistence,
+			ExclusiveWith: fp.ExclusiveWith,
+			IsBuiltin:     fp.IsBuiltin,
+			Enabled:       fp.Enabled,
 		})
 	}
 
@@ -234,7 +310,7 @@ type ActiveFingerprintsResp struct {
 }
 
 // loadActiveFingerprints 加载主动指纹并关联同名被动指纹规则
-//（语义同 WorkerConfigActiveFingerprintsHandler：按小写名称关联，关联查询失败容忍）
+// （语义同 WorkerConfigActiveFingerprintsHandler：按小写名称关联，关联查询失败容忍）
 func (w *Worker) loadActiveFingerprints(ctx context.Context, enabledOnly bool) (*ActiveFingerprintsResp, error) {
 	if w.mongoDB == nil {
 		return nil, fmt.Errorf("mongo direct connection unavailable")

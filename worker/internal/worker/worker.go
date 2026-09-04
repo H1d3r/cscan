@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +106,11 @@ type Worker struct {
 	// 活跃任务的日志记录器（维持 buffer 生命周期）
 	taskLoggers sync.Map // mainTaskId -> *TaskLoggerWS
 
+	// 逐任务结构化目标事件采用固定上限与确定性采样，任务结束时清理。
+	eventSampleMu     sync.Mutex
+	eventSampleSeen   map[string]int
+	eventSampleLogged map[string]int
+
 	// 主任务实时进度缓存（incrSubTaskDone 时刷新，onProgress 时读取计算）
 	progressMu           sync.Mutex
 	cachedSubTaskDone    int
@@ -165,11 +171,106 @@ func (w *Worker) taskLog(taskId, level, format string, args ...interface{}) {
 	}
 }
 
+func (w *Worker) taskLogEvent(taskId, level, message, event, phase, outcome string, fields map[string]interface{}) {
+	if w == nil {
+		return
+	}
+	cleanEvent, cleanPhase, cleanOutcome, cleanFields := sanitizeStructuredEvent(event, phase, outcome, fields)
+	if cleanEvent == "" {
+		return
+	}
+	globalScanMetrics.record(cleanEvent, cleanPhase, cleanOutcome, cleanFields)
+	if !w.shouldPersistStructuredEvent(taskId, cleanEvent) {
+		return
+	}
+	mainTaskId := getMainTaskId(taskId)
+	val, ok := w.taskLoggers.Load(mainTaskId)
+	if !ok {
+		newLogger := NewTaskLoggerWS(w.config.Name, mainTaskId)
+		val, _ = w.taskLoggers.LoadOrStore(mainTaskId, newLogger)
+	}
+	val.(*TaskLoggerWS).Event(level, message, cleanEvent, cleanPhase, cleanOutcome, cleanFields)
+}
+
+func (w *Worker) scannerEventLogger(taskId string) scanner.ScanEventLogger {
+	return func(event, phase, outcome string, fields map[string]interface{}) {
+		w.taskLogEvent(taskId, LevelInfo,
+			fmt.Sprintf("%s: phase=%s outcome=%s", event, phase, outcome),
+			event, phase, outcome, fields)
+	}
+}
+
+func (w *Worker) shouldPersistStructuredEvent(taskId, event string) bool {
+	switch event {
+	case scanner.EventNaabuParseComplete, scanner.EventNmapPortResult, scanner.EventSchemeProbeComplete, scanner.EventFingerprintDecision:
+	default:
+		return true
+	}
+	const (
+		initialSample = 20
+		sampleEvery   = 10
+		maxLogged     = 100
+	)
+	key := getMainTaskId(taskId) + "\x00" + event
+	w.eventSampleMu.Lock()
+	defer w.eventSampleMu.Unlock()
+	if w.eventSampleSeen == nil {
+		w.eventSampleSeen = make(map[string]int)
+		w.eventSampleLogged = make(map[string]int)
+	}
+	w.eventSampleSeen[key]++
+	seen := w.eventSampleSeen[key]
+	if w.eventSampleLogged[key] >= maxLogged || (seen > initialSample && seen%sampleEvery != 0) {
+		return false
+	}
+	w.eventSampleLogged[key]++
+	return true
+}
+
+func phaseEventFields(result PhaseResult) map[string]interface{} {
+	return map[string]interface{}{
+		"input": result.Coverage.Input, "attempted": result.Coverage.Attempted,
+		"succeeded": result.Coverage.Succeeded, "timed_out": result.Coverage.TimedOut,
+		"failed": result.Coverage.Failed, "skipped": result.Coverage.Skipped,
+		"uncovered": result.Coverage.Uncovered, "unconfirmed": result.Coverage.Unconfirmed,
+		"zero_update": result.Coverage.ZeroUpdate, "status": string(result.Status),
+		"reason_codes": append([]string(nil), result.ReasonCodes...), "assets": result.Assets,
+		"vulnerabilities": result.Vulnerabilities, "vulnerability_conclusion": result.VulnerabilityConclusion,
+	}
+}
+
+func taskFinalizedEventFields(summary *model.TaskScanSummary) map[string]interface{} {
+	if summary == nil {
+		return nil
+	}
+	incomplete := make([]string, 0)
+	for _, phase := range summary.Phases {
+		if phase.Status != model.TaskPhaseComplete && phase.Status != model.TaskPhaseSkippedNotApplicable {
+			incomplete = append(incomplete, phase.Phase)
+		}
+	}
+	sort.Strings(incomplete)
+	return map[string]interface{}{
+		"outcome": summary.Outcome, "assets": summary.Assets, "vulnerabilities": summary.Vulnerabilities,
+		"incomplete_phases": incomplete, "warning_codes": append([]string(nil), summary.WarningCodes...),
+		"vulnerability_conclusion": summary.VulnerabilityConclusion, "complete": summary.Complete,
+	}
+}
+
 // cleanupTaskLogger 清理任务日志记录器
 func (w *Worker) cleanupTaskLogger(taskId string) {
 	mainTaskId := getMainTaskId(taskId)
 	// 日志直写 MongoDB，无需 flush 缓冲区
 	w.taskLoggers.Delete(mainTaskId)
+	w.eventSampleMu.Lock()
+	prefix := mainTaskId + "\x00"
+	for key := range w.eventSampleSeen {
+		if strings.HasPrefix(key, prefix) {
+			delete(w.eventSampleSeen, key)
+			delete(w.eventSampleLogged, key)
+		}
+	}
+	w.eventSampleMu.Unlock()
 }
 
 // VulnerabilityBuffer 批量缓冲保存漏洞
@@ -295,14 +396,16 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	w := &Worker{
-		ctx:        ctx,
-		cancel:     cancel,
-		config:     config,
-		httpClient: httpClient,
-		scanners:   make(map[string]scanner.Scanner),
-		taskChan:   make(chan *scheduler.TaskInfo, config.Concurrency),
-		stopChan:   make(chan struct{}),
-		logger:     NewWorkerLoggerLocal(config.Name), // 使用本地日志
+		ctx:               ctx,
+		cancel:            cancel,
+		config:            config,
+		httpClient:        httpClient,
+		scanners:          make(map[string]scanner.Scanner),
+		taskChan:          make(chan *scheduler.TaskInfo, config.Concurrency),
+		stopChan:          make(chan struct{}),
+		logger:            NewWorkerLoggerLocal(config.Name), // 使用本地日志
+		eventSampleSeen:   make(map[string]int),
+		eventSampleLogged: make(map[string]int),
 	}
 
 	// Phase 2: 按需启用客户端优先级队列管理器
@@ -786,7 +889,8 @@ func (w *Worker) processTaskLoop() {
 			w.taskLog(task.TaskId, LevelInfo, "Task %s skipped because it was stopped while waiting in queue", task.TaskId)
 			w.cleanupTaskLogger(task.TaskId)
 			// 队列内被丢弃时一次性发出本批次应有的全部增量，避免 sub_task_done 永远到不了 sub_task_count
-			w.incrSubTaskDone(taskCtx, task, "完成", true, w.expectedTaskIncr(task.Config))
+			canceledPhase := PhaseResult{Phase: "execution", Status: scanner.PhaseCanceled, Coverage: scanner.Coverage{Input: 1, Attempted: 1}}
+			w.incrSubTaskDone(taskCtx, task, "完成", true, w.expectedTaskIncr(task.Config), canceledPhase)
 			continue
 		}
 		w.logger.Info("processTaskLoop: calling executeTask for task %s", task.TaskId)
@@ -1212,6 +1316,32 @@ func (w *Worker) handleTaskControl(ctx context.Context, task *scheduler.TaskInfo
 	return false
 }
 
+func enabledTaskPhaseKeys(config *scheduler.TaskConfig) []string {
+	if config == nil {
+		return nil
+	}
+	checks := []struct {
+		key     string
+		enabled bool
+	}{
+		{"domainscan", config.DomainScan != nil && config.DomainScan.Enable},
+		{"portscan", config.PortScan != nil && config.PortScan.Enable},
+		{"portidentify", config.PortIdentify != nil && config.PortIdentify.Enable},
+		{"fingerprint", config.Fingerprint != nil && config.Fingerprint.Enable},
+		{"brutescan", config.BruteScan != nil && config.BruteScan.Enable},
+		{"dirscan", config.DirScan != nil && config.DirScan.Enable},
+		{"jsfinder", config.JSFinder != nil && config.JSFinder.Enable},
+		{"poc", config.PocScan != nil && config.PocScan.Enable},
+	}
+	keys := make([]string, 0, len(checks))
+	for _, check := range checks {
+		if check.enabled {
+			keys = append(keys, check.key)
+		}
+	}
+	return keys
+}
+
 // skippedEnabledPhases 按扫描链顺序返回「已启用但尚未完成」的阶段中文名，
 // 供任务中途退出时明确提示哪些阶段被跳过。
 func skippedEnabledPhases(config *scheduler.TaskConfig, completedPhases map[string]bool) []string {
@@ -1385,22 +1515,64 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// PAUSE 信号下跳过，恢复后由新一轮执行递增。
 	// 此 defer 在 cleanup state defer 之后注册，按 LIFO 先执行，可在控制信号被清除前读取。
 	finalIncrSent := false
-	targetCount := 0  // 仅用于日志展示
-	expectedIncr := 1 // 单 sub-task 应发增量 = enabledModules + 1，配置解析后赋真值
-	incrSent := 0     // 已发出的增量数
+	targetCount := 0 // 仅用于日志展示
+	incrSent := 0    // 已确认由服务端记录的增量数
+	expectedPhaseKeys := []string(nil)
+	reportedPhaseKeys := make(map[string]bool)
+	reportPhase := func(reportCtx context.Context, phase string, isCompleted bool, incrAmount int, phaseResult PhaseResult) phaseReportAck {
+		if incrAmount <= 0 {
+			incrAmount = 1
+		}
+		ack := w.incrSubTaskDone(reportCtx, task, phase, isCompleted, incrAmount, phaseResult)
+		if !ack.Recorded {
+			return ack
+		}
+		incrSent += incrAmount
+		canonical := canonicalTaskPhase(phaseResult.Phase)
+		if canonical != "complete" && canonical != "subtask_complete" && canonical != "execution" {
+			reportedPhaseKeys[canonical] = true
+		}
+		return ack
+	}
+	reportMissingPhases := func(reportCtx context.Context, canceled, skipped bool) {
+		for _, expectedPhase := range expectedPhaseKeys {
+			if reportedPhaseKeys[expectedPhase] {
+				continue
+			}
+			var missing PhaseResult
+			if skipped {
+				missing = NewPhaseResult(expectedPhase, scanner.Coverage{}, false)
+			} else {
+				missing = missingPhaseResult(expectedPhase)
+				if canceled {
+					missing.Status = scanner.PhaseCanceled
+					missing.Coverage = scanner.Coverage{Input: 1, Attempted: 1}
+					missing.ReasonCodes = []string{scanner.ReasonCanceled}
+				}
+			}
+			reportPhase(reportCtx, expectedPhase+":missing", false, 1, missing)
+		}
+	}
 	defer func() {
 		if finalIncrSent {
 			return
 		}
 		bgCtx := context.Background()
-		if ctrl := w.checkTaskControl(bgCtx, task.TaskId); ctrl == "PAUSE" {
+		ctrl := w.checkTaskControl(bgCtx, task.TaskId)
+		if ctrl == "PAUSE" {
 			return
 		}
-		remaining := expectedIncr - incrSent
-		if remaining < 1 {
-			remaining = 1
+		reportMissingPhases(bgCtx, ctrl == "STOP", false)
+		fallbackPhase := missingPhaseResult("execution")
+		if ctrl == "STOP" {
+			fallbackPhase.Status = scanner.PhaseCanceled
+			fallbackPhase.Coverage = scanner.Coverage{Input: 1, Attempted: 1}
+			fallbackPhase.ReasonCodes = []string{scanner.ReasonCanceled}
 		}
-		w.incrSubTaskDone(bgCtx, task, "完成", true, remaining)
+		ack := reportPhase(bgCtx, "完成", true, 1, fallbackPhase)
+		if ack.Recorded && ack.Finalized {
+			finalIncrSent = true
+		}
 	}()
 
 	// 检查是否有停止信号（任务可能在队列中被停止)
@@ -1429,9 +1601,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		return
 	}
 	w.taskLog(task.TaskId, LevelInfo, "Step 6: Config parsed successfully, keys=%d", len(taskConfig))
-
-	// 计算本 sub-task 应发出的总增量数 = 启用模块数 + 1，供早退路径与最终路径补齐使用
-	expectedIncr = utils.CountEnabledModules(taskConfig) + 1
 
 	// 检查任务类型，处理POC验证任务
 	taskType, _ := taskConfig["taskType"].(string)
@@ -1487,7 +1656,6 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 获取组织ID
 	orgId, _ := taskConfig["orgId"].(string)
 	w.taskLog(task.TaskId, LevelInfo, "Task started")
-	w.taskLog(task.TaskId, LevelDebug, "Full task config: %s", task.Config)
 
 	var allAssets []*scanner.Asset
 	var allVuls []*scanner.Vulnerability
@@ -1497,16 +1665,18 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	config, err := scheduler.ParseTaskConfig(task.Config)
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "Failed to parse task config: %v", err)
-		w.taskLog(task.TaskId, LevelDebug, "Raw config string: %s", task.Config)
 		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "配置解析失败: "+err.Error())
 		return
 	}
 	if config == nil {
 		w.taskLog(task.TaskId, LevelError, "Task config is nil after parsing")
-		w.taskLog(task.TaskId, LevelDebug, "Raw config string: %s", task.Config)
 		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "任务配置为空")
 		return
 	}
+
+	// 记录启用阶段的稳定 canonical key；结束时若某阶段报告未被服务端确认，
+	// 逐个写入 FAILED/CANCELED 结论，不能用 complete 的额外 weight 补齐。
+	expectedPhaseKeys = enabledTaskPhaseKeys(config)
 
 	// 输出任务开始日志（包含关键配置信息）
 	var enabledPhases []string
@@ -1621,13 +1791,17 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		}
 		if len(targets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "All targets filtered by blacklist, marking task as complete")
-			blacklistRemaining := expectedIncr - incrSent
-			if blacklistRemaining < 1 {
-				blacklistRemaining = 1
+			// 黑名单过滤是合法的“不适用”：每个启用阶段都显式记录
+			// SKIPPED_NOT_APPLICABLE，完成报告只承担最后一个计数单位。
+			reportMissingPhases(ctx, false, true)
+			blacklistPhase := NewPhaseResult("complete", scanner.Coverage{Input: 1, Attempted: 1, Succeeded: 1}, false)
+			ack := reportPhase(ctx, "完成", true, 1, blacklistPhase)
+			if ack.Recorded && ack.Finalized {
+				finalIncrSent = true
+				w.taskLog(task.TaskId, LevelInfo, "All targets filtered by blacklist")
+			} else {
+				w.taskLog(task.TaskId, LevelError, "Failed to report blacklist completion")
 			}
-			w.incrSubTaskDone(ctx, task, "完成", true, blacklistRemaining)
-			finalIncrSent = true
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, "All targets filtered by blacklist")
 			return
 		}
 	}
@@ -1691,8 +1865,8 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		if len(eligibleTargets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Domain scan: skipped (no eligible registrable domains; IP/subdomain targets are not scanned for subdomains)")
 			completedPhases["domainscan"] = true
-			w.incrSubTaskDone(ctx, task, "子域名扫描", false, 1)
-			incrSent++
+			reportPhase(ctx, "子域名扫描", false, 1, NewPhaseResult("domainscan", scanner.Coverage{}, false))
+
 			goto domainScanDone
 		}
 		domainScanTarget := strings.Join(eligibleTargets, "\n")
@@ -1996,8 +2170,12 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 
 		completedPhases["domainscan"] = true
 		// 子域名扫描模块完成，递增子任务进度
-		w.incrSubTaskDone(ctx, task, "子域名扫描", false, 1)
-		incrSent++
+		domainCoverage := scanner.Coverage{Input: len(eligibleTargets), Attempted: len(eligibleTargets), Succeeded: len(eligibleTargets)}
+		domainPhase := NewPhaseResult("domainscan", domainCoverage, false)
+		domainPhase.Assets = len(mergedAssets)
+		domainPhase.UsableResults = domainCoverage.Succeeded > 0 || len(mergedAssets) > 0
+		reportPhase(ctx, "子域名扫描", false, 1, domainPhase)
+
 	}
 
 domainScanDone:
@@ -2029,8 +2207,8 @@ domainScanDone:
 			if len(resolvable) == 0 {
 				w.taskLog(task.TaskId, LevelWarn, "Port scan: no resolvable targets, skipping port scan phase")
 				completedPhases["portscan"] = true
-				w.incrSubTaskDone(ctx, task, "端口扫描", false, 1)
-				incrSent++
+				reportPhase(ctx, "端口扫描", false, 1, NewPhaseResult("portscan", scanner.Coverage{}, false))
+
 				goto portScanDone
 			}
 			targets = resolvable
@@ -2105,6 +2283,7 @@ domainScanDone:
 		portCtx, portCancel := context.WithTimeout(ctx, time.Duration(portScanTimeout)*time.Second)
 
 		var openPorts []*scanner.Asset
+		portPhaseResult := NewPhaseResult("portscan", scanner.Coverage{Input: portTargetCount, Attempted: portTargetCount, Succeeded: portTargetCount}, false)
 
 		// 创建任务日志回调
 		taskLogger := func(level, format string, args ...interface{}) {
@@ -2137,6 +2316,7 @@ domainScanDone:
 				w.taskLog(task.TaskId, LevelError, "Masscan error: %v", err)
 			}
 			if masscanResult != nil {
+				portPhaseResult = PhaseResultFromDiagnostic("portscan", masscanResult.Diagnostic, len(masscanResult.Assets))
 				if len(masscanResult.Assets) > 0 {
 					openPorts = masscanResult.Assets
 					w.taskLog(task.TaskId, LevelInfo, "Found %d open ports", len(openPorts))
@@ -2190,6 +2370,7 @@ domainScanDone:
 				w.taskLog(task.TaskId, LevelError, "TCP scan error: %v", err)
 			}
 			if tcpResult != nil {
+				portPhaseResult = PhaseResultFromDiagnostic("portscan", tcpResult.Diagnostic, len(tcpResult.Assets))
 				if len(tcpResult.Assets) > 0 {
 					openPorts = tcpResult.Assets
 					w.taskLog(task.TaskId, LevelInfo, "Found %d open ports", len(openPorts))
@@ -2206,10 +2387,11 @@ domainScanDone:
 			w.taskLog(task.TaskId, LevelInfo, "Port scan: Naabu")
 			naabuScanner := w.scanners["naabu"]
 			naabuResult, err := naabuScanner.Scan(portCtx, &scanner.ScanConfig{
-				Target:     target,
-				Options:    config.PortScan,
-				TaskLogger: taskLogger,
-				OnProgress: onProgress,
+				Target:      target,
+				Options:     config.PortScan,
+				TaskLogger:  taskLogger,
+				EventLogger: w.scannerEventLogger(task.TaskId),
+				OnProgress:  onProgress,
 				OnTargetDone: func(target string, assets []*scanner.Asset) {
 					// 流式入库：单目标端口扫描完成立即保存
 					if len(assets) == 0 {
@@ -2243,6 +2425,7 @@ domainScanDone:
 				w.taskLog(task.TaskId, LevelError, "Naabu error: %v", err)
 			}
 			if naabuResult != nil {
+				portPhaseResult = PhaseResultFromDiagnostic("portscan", naabuResult.Diagnostic, len(naabuResult.Assets))
 				if len(naabuResult.Assets) > 0 {
 					openPorts = naabuResult.Assets
 					w.taskLog(task.TaskId, LevelInfo, "Found %d open ports", len(openPorts))
@@ -2293,8 +2476,10 @@ domainScanDone:
 		}
 		completedPhases["portscan"] = true
 		// 端口扫描模块完成，递增子任务进度
-		w.incrSubTaskDone(ctx, task, "端口扫描", false, 1)
-		incrSent++
+		portPhaseResult.Assets = len(openPorts)
+		portPhaseResult.UsableResults = len(openPorts) > 0 || portPhaseResult.Coverage.Succeeded > 0
+		reportPhase(ctx, "端口扫描", false, 1, portPhaseResult)
+
 	}
 
 portScanDone:
@@ -2321,8 +2506,8 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Port identify: skipped (no assets)")
 			completedPhases["portidentify"] = true
-			w.incrSubTaskDone(ctx, task, "端口识别", false, 1)
-			incrSent++
+			reportPhase(ctx, "端口识别", false, 1, NewPhaseResult("portidentify", scanner.Coverage{}, false))
+
 		} else {
 			// 检查控制信号
 			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
@@ -2332,26 +2517,29 @@ portScanDone:
 			// 更新当前阶段
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 40, "端口识别中", "端口识别")
 
-			identifiedAssets := w.executePortIdentify(ctx, task, allAssets, config.PortIdentify, orgId)
-			if len(identifiedAssets) > 0 {
-				// 合并而非替换：保留 nmap 未处理的域名资产（port=0），
-				// 避免 subfinder 发现的子域名在内存中丢失导致后续阶段无法扫描。
-				identifiedHostPorts := make(map[string]bool)
-				for _, a := range identifiedAssets {
-					identifiedHostPorts[fmt.Sprintf("%s:%d", a.Host, a.Port)] = true
-				}
-				for _, a := range allAssets {
-					if a.Port == 0 && !identifiedHostPorts[fmt.Sprintf("%s:%d", a.Host, a.Port)] {
-						identifiedAssets = append(identifiedAssets, a)
-					}
-				}
-				allAssets = identifiedAssets
-				// 结果已通过 executePortIdentify 内部流式入库
+			var identifiedAssets []*scanner.Asset
+			var identifyPhase PhaseResult
+			tool := strings.ToLower(strings.TrimSpace(config.PortIdentify.Tool))
+			if tool == "" || tool == "nmap" {
+				merged := w.executePortIdentifyWithNmapResult(ctx, task, allAssets, config.PortIdentify, orgId)
+				identifiedAssets = merged.Assets
+				identifyPhase = merged.Phase
+			} else {
+				identifiedAssets = w.executePortIdentify(ctx, task, allAssets, config.PortIdentify, orgId)
+				identifyPhase = NewPhaseResult("portidentify", scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets), Succeeded: len(identifiedAssets)}, false)
 			}
+			// Nmap execution already returns the cloned, stable-deduplicated discovery
+			// baseline with per-port outcomes merged. Do not reconstruct or supplement
+			// it here: doing so previously reintroduced replacement semantics.
+			if tool == "" || tool == "nmap" || len(identifiedAssets) > 0 {
+				allAssets = identifiedAssets
+			}
+			identifyPhase.Assets = len(allAssets)
+			identifyPhase.UsableResults = len(allAssets) > 0
 			completedPhases["portidentify"] = true
 			// 端口识别模块完成，递增子任务进度
-			w.incrSubTaskDone(ctx, task, "端口识别", false, 1)
-			incrSent++
+			reportPhase(ctx, "端口识别", false, 1, identifyPhase)
+
 		}
 	}
 
@@ -2362,6 +2550,7 @@ portScanDone:
 
 	// 执行指纹识别
 	if config.Fingerprint != nil && config.Fingerprint.Enable && !completedPhases["fingerprint"] {
+		fingerprintPhaseResult := NewPhaseResult("fingerprint", scanner.Coverage{}, false)
 		// 强制扫描模式：没有资产时从用户输入目标生成资产
 		// GenerateAssetsFromTargets 已过滤DNS解析失败的域名
 		if len(allAssets) == 0 && target != "" && config.Fingerprint.ForceScan {
@@ -2377,8 +2566,8 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Fingerprint: skipped (no assets)")
 			completedPhases["fingerprint"] = true
-			w.incrSubTaskDone(ctx, task, "指纹识别", false, 1)
-			incrSent++
+			reportPhase(ctx, "指纹识别", false, 1, fingerprintPhaseResult)
+
 		} else {
 			// 在指纹识别开始前检查停止信号
 			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
@@ -2507,9 +2696,10 @@ portScanDone:
 				})
 
 				result, err := s.Scan(fpCtx, &scanner.ScanConfig{
-					Assets:     assetsToScan,
-					Options:    config.Fingerprint,
-					TaskLogger: fpTaskLogger,
+					Assets:      assetsToScan,
+					Options:     config.Fingerprint,
+					TaskLogger:  fpTaskLogger,
+					EventLogger: w.scannerEventLogger(task.TaskId),
 					OnAssetUpdated: func(asset *scanner.Asset) {
 						copiedAsset := *asset
 						assetBuffer.Add(&copiedAsset)
@@ -2520,6 +2710,11 @@ portScanDone:
 					},
 				})
 				fpCancel()
+				if result != nil {
+					fingerprintPhaseResult = PhaseResultFromDiagnostic("fingerprint", result.Diagnostic, len(result.Assets))
+				} else if err != nil {
+					fingerprintPhaseResult = NewPhaseResult("fingerprint", scanner.Coverage{Input: len(assetsToScan), Attempted: len(assetsToScan), Failed: len(assetsToScan)}, false)
+				}
 
 				// fpCtx 现为取消专用（无自带 deadline），阶段级超时由各模块单目标超时独立控制；
 				// 任务级取消/停止由下方 ctx.Err() 与 STOP 检查统一判定。
@@ -2548,12 +2743,15 @@ portScanDone:
 							originalAsset.Service = fpAsset.Service
 							originalAsset.Title = fpAsset.Title
 							originalAsset.App = fpAsset.App
+							originalAsset.FingerprintFindings = fpAsset.FingerprintFindings
+							originalAsset.FingerprintFindingsCollected = fpAsset.FingerprintFindingsCollected
 							originalAsset.HttpStatus = fpAsset.HttpStatus
 							originalAsset.HttpHeader = fpAsset.HttpHeader
 							originalAsset.HttpBody = fpAsset.HttpBody
 							originalAsset.Server = fpAsset.Server
 							originalAsset.IconHash = fpAsset.IconHash
 							originalAsset.IsHTTP = fpAsset.IsHTTP
+							originalAsset.ProtocolProbeStatus = fpAsset.ProtocolProbeStatus
 							if len(fpAsset.IconData) > 0 {
 								originalAsset.IconData = fpAsset.IconData
 							}
@@ -2571,8 +2769,8 @@ portScanDone:
 			}
 			completedPhases["fingerprint"] = true
 			// 指纹识别模块完成，递增子任务进度
-			w.incrSubTaskDone(ctx, task, "指纹识别", false, 1)
-			incrSent++
+			reportPhase(ctx, "指纹识别", false, 1, fingerprintPhaseResult)
+
 		} // 结束 len(allAssets) > 0 的 else 分支
 	}
 
@@ -2604,8 +2802,8 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Brute scan: skipped (no assets)")
 			completedPhases["brutescan"] = true
-			w.incrSubTaskDone(ctx, task, "弱口令扫描", false, 1)
-			incrSent++
+			reportPhase(ctx, "弱口令扫描", false, 1, NewPhaseResult("brutescan", scanner.Coverage{}, false))
+
 		} else {
 			// 检查控制信号
 			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
@@ -2621,8 +2819,11 @@ portScanDone:
 				w.taskLog(task.TaskId, LevelInfo, "Brute scan completed: found %d weak passwords", len(bruteVulns))
 			}
 			completedPhases["brutescan"] = true
-			w.incrSubTaskDone(ctx, task, "弱口令扫描", false, 1)
-			incrSent++
+			brutePhase := NewPhaseResult("brutescan", scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets), Succeeded: len(allAssets)}, false)
+			brutePhase.UsableResults = len(allAssets) > 0 || len(bruteVulns) > 0
+			brutePhase.Vulnerabilities = len(bruteVulns)
+			reportPhase(ctx, "弱口令扫描", false, 1, brutePhase)
+
 		}
 	}
 
@@ -2647,8 +2848,8 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "Dir scan: skipped (no assets)")
 			completedPhases["dirscan"] = true
-			w.incrSubTaskDone(ctx, task, "目录扫描", false, 1)
-			incrSent++
+			reportPhase(ctx, "目录扫描", false, 1, NewPhaseResult("dirscan", scanner.Coverage{}, false))
+
 		} else {
 			// 检查控制信号
 			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
@@ -2667,8 +2868,10 @@ portScanDone:
 				// 目录扫描结果已在 executeDirScan 中通过 saveDirScanResults 保存到数据库
 			}
 			completedPhases["dirscan"] = true
-			w.incrSubTaskDone(ctx, task, "目录扫描", false, 1)
-			incrSent++
+			dirPhase := NewPhaseResult("dirscan", scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets), Succeeded: len(allAssets)}, false)
+			dirPhase.UsableResults = len(allAssets) > 0 || len(dirScanAssets) > 0
+			reportPhase(ctx, "目录扫描", false, 1, dirPhase)
+
 		}
 	}
 
@@ -2692,8 +2895,8 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "JSFinder: skipped (no assets)")
 			completedPhases["jsfinder"] = true
-			w.incrSubTaskDone(ctx, task, "JS扫描", false, 1)
-			incrSent++
+			reportPhase(ctx, "JS扫描", false, 1, NewPhaseResult("jsfinder", scanner.Coverage{}, false))
+
 		} else {
 			if w.handleTaskControl(ctx, task, config, completedPhases, allAssets, "") {
 				return
@@ -2708,8 +2911,10 @@ portScanDone:
 			}
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 85, "JS扫描完成", "JS扫描")
 			completedPhases["jsfinder"] = true
-			w.incrSubTaskDone(ctx, task, "JS扫描", false, 1)
-			incrSent++
+			jsPhase := NewPhaseResult("jsfinder", scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets), Succeeded: len(allAssets)}, false)
+			jsPhase.UsableResults = len(allAssets) > 0 || len(jsfinderResults) > 0
+			reportPhase(ctx, "JS扫描", false, 1, jsPhase)
+
 		}
 	}
 
@@ -2720,6 +2925,7 @@ portScanDone:
 
 	// 执行POC扫描 (使用Nuclei引擎)
 	if config.PocScan != nil && config.PocScan.Enable && !completedPhases["pocscan"] {
+		pocPhaseResult := NewPhaseResult("poc", scanner.Coverage{}, false)
 		// 强制扫描模式：没有资产时从用户输入目标生成资产
 		if len(allAssets) == 0 && target != "" && config.PocScan.ForceScan {
 			generatedAssets := scanner.GenerateAssetsFromTargets(target)
@@ -2734,8 +2940,9 @@ portScanDone:
 		if len(allAssets) == 0 {
 			w.taskLog(task.TaskId, LevelInfo, "POC scan: skipped (no assets)")
 			completedPhases["pocscan"] = true
-			w.incrSubTaskDone(ctx, task, "漏洞扫描", false, 1)
-			incrSent++
+			pocPhaseResult = NewPhaseResult("poc", scanner.Coverage{}, false)
+			reportPhase(ctx, "漏洞扫描", false, 1, pocPhaseResult)
+
 		} else {
 			// 在POC扫描开始前检查停止信号
 			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
@@ -2750,6 +2957,11 @@ portScanDone:
 			// 更新当前阶段
 			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "漏洞扫描中", "漏洞扫描")
 
+			var templates []string
+			var templateRefs []string
+			var templateLoadResult TemplateLoadResult
+			var templateLoadErr error
+			explicitTemplateSelection := false
 			if s, ok := w.scanners["nuclei"]; ok {
 				// 获取单目标超时配置
 				pocTargetTimeout := config.PocScan.TargetTimeout
@@ -2760,23 +2972,42 @@ portScanDone:
 
 				// 模板解析：优先本地模板库（库文件硬链接进扫描目录），未命中回退 Mongo 内容加载
 				w.ensureTemplateStore(ctx)
-				var templates []string
-				var templateRefs []string
-
 				// 检查是否有模板ID列表（任务创建时已筛选好的模板）
 				if len(config.PocScan.NucleiTemplateIds) > 0 || len(config.PocScan.CustomPocIds) > 0 {
-					// 按ID获取模板（包括默认模板和自定义POC)
+					explicitTemplateSelection = true
 					w.taskLog(task.TaskId, LevelInfo, "POC template request: nucleiTemplateIds=%d, customPocIds=%d", len(config.PocScan.NucleiTemplateIds), len(config.PocScan.CustomPocIds))
-					templates, templateRefs = w.resolveTemplatesByIds(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
-					w.taskLog(task.TaskId, LevelInfo, "Loaded %d POC templates (%d from local store)", len(templates)+len(templateRefs), len(templateRefs))
+					templateLoadResult, templateLoadErr = w.resolveTemplatesByIdsResult(ctx, config.PocScan.NucleiTemplateIds, config.PocScan.CustomPocIds)
+					templates, templateRefs = templateLoadResult.Contents, templateLoadResult.FileRefs
+					loaded := len(templates) + len(templateRefs)
+					if templateLoadResult.Loaded == 0 {
+						templateLoadResult.Loaded = loaded
+					}
+					w.taskLog(task.TaskId, LevelInfo, "Loaded %d/%d POC templates (%d from local store), invalid=%d missing=%d", loaded, templateLoadResult.Requested, len(templateRefs), templateLoadResult.Invalid, len(templateLoadResult.MissingIDs))
+					w.taskLogEvent(task.TaskId, LevelInfo, "POC explicit template load completed", EventPocTemplateLoad, "poc", string(templateLoadResult.Outcome), map[string]interface{}{
+						"group_key": "explicit_ids", "asset_count": len(allAssets),
+						"requested": templateLoadResult.Requested, "loaded": loaded, "invalid": templateLoadResult.Invalid,
+						"missing": len(templateLoadResult.MissingIDs), "source": templateLoadResult.Source,
+						"outcome": string(templateLoadResult.Outcome), "reason_code": templateLoadResult.ReasonCode,
+					})
 				} else if config.PocScan.CustomPocOnly {
+					explicitTemplateSelection = true
 					// 只使用自定义POC模式，但没有指定具体ID，获取所有自定义POC
 					severities := []string{}
 					if config.PocScan.Severity != "" {
 						severities = strings.Split(config.PocScan.Severity, ",")
 					}
-					templates, templateRefs = w.resolveAllCustomPocs(ctx, severities)
-					w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d custom POC templates (%d from local store)", len(templates)+len(templateRefs), len(templateRefs))
+					templateLoadResult, templateLoadErr = w.resolveAllCustomPocsResult(ctx, severities)
+					templates, templateRefs = templateLoadResult.Contents, templateLoadResult.FileRefs
+					loaded := len(templates) + len(templateRefs)
+					if templateLoadResult.Loaded == 0 {
+						templateLoadResult.Loaded = loaded
+					}
+					w.taskLog(task.TaskId, LevelInfo, "CustomPocOnly mode: loaded %d/%d custom POC templates (%d from local store), invalid=%d", loaded, templateLoadResult.Requested, len(templateRefs), templateLoadResult.Invalid)
+					w.taskLogEvent(task.TaskId, LevelInfo, "POC custom template load completed", EventPocTemplateLoad, "poc", string(templateLoadResult.Outcome), map[string]interface{}{
+						"group_key": "custom_poc_only", "asset_count": len(allAssets), "requested": templateLoadResult.Requested,
+						"loaded": loaded, "invalid": templateLoadResult.Invalid, "source": templateLoadResult.Source,
+						"outcome": string(templateLoadResult.Outcome), "reason_code": templateLoadResult.ReasonCode,
+					})
 				} else {
 					// 优化：按资产分组，每组只加载相关的POC模板
 					// 当AutoScan或AutomaticScan启用时，按资产的指纹标签进行分组
@@ -2842,55 +3073,53 @@ portScanDone:
 							severities = strings.Split(config.PocScan.Severity, ",")
 						}
 
-						for _, group := range groups {
-							groupContents, groupRefs := w.resolveTemplatesByTags(ctx, group.Tags, severities)
-							if len(groupContents) == 0 && len(groupRefs) == 0 {
-								w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v): no templates loaded, skipping", group.Tags)
-								continue
-							}
-							w.taskLog(task.TaskId, LevelInfo, "Group (tags=%v, assets=%d): loaded %d templates (%d from local store)", group.Tags, len(group.Assets), len(groupContents)+len(groupRefs), len(groupRefs))
-
-							// 构建该分组的扫描选项（并发和速率由自适应调度器决定）
-							groupOpts := &scanner.NucleiOptions{
-								Severity:         config.PocScan.Severity,
-								Tags:             group.Tags,
-								ExcludeTags:      config.PocScan.ExcludeTags,
-								TargetTimeout:    targetTimeout,
-								AutoScan:         false,
-								AutomaticScan:    false,
-								CustomPocOnly:    false,
-								CustomTemplates:  groupContents,
-								TemplateFileRefs: groupRefs,
-								TagMappings:      nil,
-								CustomHeaders:    config.PocScan.CustomHeaders,
-								ForceScan:        config.PocScan.ForceScan,
-								OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
-									vulCount++
-									w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
-									vulBuffer.Add(vul)
-								},
-								OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
-							}
-
-							// 创建任务日志回调
-							pocTaskLogger := func(level, format string, args ...interface{}) {
-								w.taskLog(task.TaskId, level, format, args...)
-							}
-
-							// 扫描该分组的资产
-							result, err := s.Scan(pocCtx, &scanner.ScanConfig{
-								Assets:     group.Assets,
-								Options:    groupOpts,
-								TaskLogger: pocTaskLogger,
-							})
-
-							if err != nil {
-								w.taskLog(task.TaskId, LevelError, "POC scan error (group tags=%v): %v", group.Tags, err)
-							}
-							if result != nil {
-								allVuls = append(allVuls, result.Vulnerabilities...)
-							}
+						baseOptions := &scanner.NucleiOptions{
+							Severity:      config.PocScan.Severity,
+							ExcludeTags:   config.PocScan.ExcludeTags,
+							TargetTimeout: targetTimeout,
+							CustomHeaders: config.PocScan.CustomHeaders,
+							ForceScan:     config.PocScan.ForceScan,
+							OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
+								vulCount++
+								w.taskLog(taskIdForCallback, LevelInfo, "Vulnerability found: %s → %s", vul.PocFile, vul.Url)
+								vulBuffer.Add(vul)
+							},
+							OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
 						}
+						pocTaskLogger := func(level, format string, args ...interface{}) {
+							w.taskLog(task.TaskId, level, format, args...)
+						}
+						coverage := executePocGroupsWithEvents(
+							pocCtx,
+							groups,
+							severities,
+							baseOptions,
+							w.resolveTemplatesByTagsResult,
+							s,
+							pocTaskLogger,
+							w.scannerEventLogger(task.TaskId),
+						)
+						pocPhaseResult = PhaseResult{
+							Phase: "poc", Status: coverage.Status,
+							Coverage:                scanner.Coverage{Input: coverage.TotalAssets, Attempted: coverage.ScannedAssets, Succeeded: coverage.ScannedAssets, Failed: coverage.FailedGroups, Uncovered: coverage.UncoveredAssets},
+							UsableResults:           coverage.ScannedAssets > 0 || len(coverage.VulnerabilityResults) > 0,
+							Vulnerabilities:         coverage.Vulnerabilities,
+							VulnerabilityConclusion: string(coverage.VulnerabilityConclusion),
+						}
+						allVuls = append(allVuls, coverage.VulnerabilityResults...)
+						for _, groupResult := range coverage.Groups {
+							w.taskLog(task.TaskId, LevelInfo,
+								"POC group result: key=%s tags=%v assets=%d requested=%d valid=%d executed=%d scanned=%d vuls=%d load=%s status=%s reason=%s",
+								groupResult.GroupKey, groupResult.Tags, groupResult.AssetCount, groupResult.RequestedTemplates,
+								groupResult.ValidTemplates, groupResult.ExecutedTemplates, groupResult.ScannedAssets,
+								groupResult.Vulnerabilities, groupResult.TemplateLoadOutcome, groupResult.Status, groupResult.ReasonCode)
+						}
+						w.taskLog(task.TaskId, LevelInfo,
+							"POC coverage: groups(total=%d scanned=%d uncovered=%d failed=%d) assets(total=%d scanned=%d uncovered=%d) templates(valid=%d executed=%d) vuls=%d status=%s conclusion=%s",
+							coverage.TotalGroups, coverage.ScannedGroups, coverage.UncoveredGroups, coverage.FailedGroups,
+							coverage.TotalAssets, coverage.ScannedAssets, coverage.UncoveredAssets,
+							coverage.ValidTemplates, coverage.ExecutedTemplates, coverage.Vulnerabilities,
+							coverage.Status, coverage.VulnerabilityConclusion)
 
 						pocCancel()
 
@@ -2978,9 +3207,10 @@ portScanDone:
 					}
 
 					result, err := s.Scan(pocCtx, &scanner.ScanConfig{
-						Assets:     allAssets,
-						Options:    nucleiOpts,
-						TaskLogger: pocTaskLogger,
+						Assets:      allAssets,
+						Options:     nucleiOpts,
+						TaskLogger:  pocTaskLogger,
+						EventLogger: w.scannerEventLogger(task.TaskId),
 					})
 
 					if err != nil {
@@ -2988,6 +3218,25 @@ portScanDone:
 					}
 					if result != nil {
 						allVuls = append(allVuls, result.Vulnerabilities...)
+						if result.Diagnostic != nil {
+							pocPhaseResult = PhaseResult{
+								Phase: "poc", Status: result.Diagnostic.Status, Coverage: result.Diagnostic.Coverage,
+								ReasonCodes:     append([]string(nil), result.Diagnostic.WarningCodes...),
+								UsableResults:   result.Diagnostic.Coverage.Succeeded > 0 || len(result.Vulnerabilities) > 0,
+								Vulnerabilities: len(result.Vulnerabilities),
+							}
+						}
+					}
+					if result == nil || result.Diagnostic == nil {
+						coverage := scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets)}
+						if err == nil {
+							coverage.Succeeded = len(allAssets)
+						} else {
+							coverage.Failed = len(allAssets)
+						}
+						pocPhaseResult = NewPhaseResult("poc", coverage, false)
+						pocPhaseResult.UsableResults = coverage.Succeeded > 0 || vulCount > 0
+						pocPhaseResult.Vulnerabilities = vulCount
 					}
 
 					pocCancel()
@@ -3002,9 +3251,15 @@ portScanDone:
 					}
 				}
 			}
-			// POC扫描模块完成，递增子任务进度
-			w.incrSubTaskDone(ctx, task, "漏洞扫描", false, 1)
-			incrSent++
+			if explicitTemplateSelection {
+				pocPhaseResult = applyExplicitPocTemplateCoverage(pocPhaseResult, templateLoadResult, templateLoadErr, len(allAssets))
+			} else if pocPhaseResult.Status == scanner.PhaseSkippedNotApplicable && len(allAssets) > 0 {
+				pocPhaseResult = NewPhaseResult("poc", scanner.Coverage{Input: len(allAssets), Uncovered: len(allAssets)}, false, scanner.ReasonZeroCoverage)
+				pocPhaseResult.VulnerabilityConclusion = model.VulnerabilityConclusionNotEvaluated
+			}
+			// POC扫描模块完成，递增子任务进度并上报结构化覆盖结论
+			reportPhase(ctx, "漏洞扫描", false, 1, pocPhaseResult)
+
 		} // 结束 len(allAssets) > 0 的 else 分支
 	}
 
@@ -3012,18 +3267,21 @@ portScanDone:
 	duration := time.Since(startTime).Seconds()
 	result := fmt.Sprintf("Assets:%d Vuls:%d Duration:%.0fs", len(allAssets), len(allVuls), duration)
 
-	// 显式递增计数器，确保 progress=100 与 status=SUCCESS 原子落盘。
-	// 正常路径下各模块已递增 enabledModules 次，此处补齐最终 +1 即可；
-	// 若中途有路径未发出预期增量，clamp 兜底确保 sub_task_done 不超 sub_task_count。
-	finalRemaining := expectedIncr - incrSent
-	if finalRemaining < 1 {
-		finalRemaining = 1
+	// 每个启用阶段必须先有自己的语义报告；报告失败时保留其身份和失败状态。
+	reportMissingPhases(ctx, false, false)
+	finalPhase := NewPhaseResult("complete", scanner.Coverage{Input: 1, Attempted: 1, Succeeded: 1}, false)
+	finalPhase.UsableResults = len(allAssets) > 0 || len(allVuls) > 0
+	finalPhase.Assets = len(allAssets)
+	finalPhase.Vulnerabilities = len(allVuls)
+	finalPhase.ResultPrefix = result
+	ack := reportPhase(ctx, "完成", true, 1, finalPhase)
+	if ack.Recorded && ack.Finalized {
+		finalIncrSent = true
+		w.taskLog(task.TaskId, LevelInfo, "Completed: %s", result)
+	} else {
+		w.taskLog(task.TaskId, LevelError, "Failed to report task completion: %s", result)
 	}
-	w.incrSubTaskDone(ctx, task, "完成", true, finalRemaining)
-	finalIncrSent = true
-
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusSuccess, result)
-	w.taskLog(task.TaskId, LevelInfo, "Completed: %s", result)
+	// 终态由 IncrSubTaskDone 的语义聚合统一落库，避免无条件 SUCCESS 覆盖 PARTIAL/FAILURE。
 	// 注意：taskExecuted 由 defer 递增，无需在此处理
 }
 
@@ -3114,25 +3372,88 @@ func (w *Worker) expectedTaskIncr(configStr string) int {
 }
 
 // incrSubTaskDone 递增子任务完成数（模块级别）
-// 每完成一个扫描模块就调用此方法，通知主任务进度更新
-// isCompleted: true 表示子任务全部阶段完成，此时才递增计数器
-// incrAmount: 递增数量（早退路径下需补齐 expectedTaskIncr - alreadySent，正常路径恒为 1）
-func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, phase string, isCompleted bool, incrAmount int) {
+// 每完成一个扫描模块就调用此方法，通知主任务进度更新。
+// 只有服务端确认已记录（包括幂等重试成功）时才返回 Recorded=true；
+// Finalized=false/FinalizationPending=true 表示阶段已落库但终态转换仍需重试。
+func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, phase string, isCompleted bool, incrAmount int, phaseResults ...PhaseResult) (ack phaseReportAck) {
 	defer func() {
 		if r := recover(); r != nil {
-			w.logger.Error("Increment subtask done panic recovered: %v, stack: %s", r, string(getStackTrace()))
+			if w.logger != nil {
+				w.logger.Error("Increment subtask done panic recovered: %v, stack: %s", r, string(getStackTrace()))
+			}
+			ack = phaseReportAck{}
 		}
 	}()
 
+	if task == nil {
+		return phaseReportAck{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
 
+	var phaseResult *PhaseResult
+	if len(phaseResults) > 0 {
+		phaseResult = &phaseResults[0]
+	}
+	if phaseResult == nil {
+		defaultResult := missingPhaseResult(phase)
+		phaseResult = &defaultResult
+	}
+	w.taskLogEvent(task.TaskId, LevelInfo,
+		fmt.Sprintf("Phase %s completed with status=%s", phaseResult.Phase, phaseResult.Status),
+		EventPhaseComplete, phaseResult.Phase, string(phaseResult.Status), phaseEventFields(*phaseResult))
+
+	const maxAttempts = 3
+	waitForRetry := func(attempt int) bool {
+		if attempt+1 >= maxAttempts {
+			return false
+		}
+		delay := time.Duration(1<<attempt) * 250 * time.Millisecond
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	}
+
+	finalizationPending := func(recorded bool, finalized bool, pending bool, summary *model.TaskScanSummary, allDone bool) bool {
+		if !recorded || !isCompleted || finalized {
+			return false
+		}
+		// New servers set the explicit flag. The summary-nil fallback keeps the
+		// retry behavior safe during rolling upgrades where the field is absent.
+		return pending || (allDone && summary == nil)
+	}
+
 	if w.schedClient != nil {
-		resp, err := w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, phase, incrAmount)
-		if err != nil {
-			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: %v", err)
-			return
+		var resp *IncrSubTaskDoneResponse
+		var err error
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			resp, err = w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, task.TaskId, phase, incrAmount, phaseResult)
+			if err == nil && resp != nil {
+				pending := finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone)
+				if pending && waitForRetry(attempt) {
+					continue
+				}
+				break
+			}
+			if err == nil {
+				err = fmt.Errorf("scheduler returned nil subtask response")
+			}
+			if !waitForRetry(attempt) {
+				break
+			}
+		}
+		if err != nil || resp == nil {
+			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done after retries: %v", err)
+			return phaseReportAck{}
 		}
 		// 刷新实时进度缓存
 		w.progressMu.Lock()
@@ -3143,33 +3464,88 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 		w.progressMu.Unlock()
 		if resp.AllDone {
 			w.taskLog(task.TaskId, LevelInfo, "All sub-tasks completed: %d/%d", resp.SubTaskDone, resp.SubTaskCount)
+			if resp.Finalized && resp.ScanSummary != nil {
+				w.taskLogEvent(task.TaskId, LevelInfo,
+					fmt.Sprintf("Task finalized: outcome=%s assets=%d vulnerabilities=%d", resp.ScanSummary.Outcome, resp.ScanSummary.Assets, resp.ScanSummary.Vulnerabilities),
+					EventTaskFinalized, "task", resp.ScanSummary.Outcome, taskFinalizedEventFields(resp.ScanSummary))
+			}
 		} else {
 			w.taskLog(task.TaskId, LevelDebug, "Sub-task progress: %d/%d (phase: %s)", resp.SubTaskDone, resp.SubTaskCount, phase)
 		}
-		return
+		return phaseReportAck{
+			Recorded:            true,
+			Finalized:           resp.Finalized,
+			FinalizationPending: finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone),
+		}
 	}
 
 	// 回退到 HTTP
 	if w.httpClient == nil {
-		return
+		w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: no scheduler or HTTP client")
+		return phaseReportAck{}
 	}
 
-	resp, err := w.httpClient.IncrSubTaskDone(ctx, &SubTaskDoneReq{
+	phaseSummary := phaseResult.TaskSummary(task.TaskId)
+	taskSummary := &model.TaskScanSummary{
+		VulnerabilityConclusion: phaseSummary.VulnerabilityConclusion,
+		Phases: map[string]model.TaskPhaseSummary{
+			model.TaskPhaseReportKey(task.TaskId, phaseSummary.Phase): phaseSummary,
+		},
+		PhaseCount:      incrAmount,
+		Assets:          phaseSummary.Assets,
+		Vulnerabilities: phaseSummary.Vulnerabilities,
+		WarningCodes:    append([]string(nil), phaseSummary.ReasonCodes...),
+	}
+	req := &SubTaskDoneReq{
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
 		Phase:       phase,
 		IsCompleted: isCompleted,
 		IncrAmount:  incrAmount,
-	})
-	if err != nil {
-		w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done: %v", err)
-		return
+		PhaseResult: &phaseSummary,
+		TaskSummary: taskSummary,
+	}
+	var resp *SubTaskDoneResp
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err = w.httpClient.IncrSubTaskDone(ctx, req)
+		if err == nil && resp != nil && resp.Success {
+			pending := finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone)
+			if pending && waitForRetry(attempt) {
+				continue
+			}
+			break
+		}
+		if err == nil {
+			if resp == nil {
+				err = fmt.Errorf("HTTP scheduler returned nil subtask response")
+			} else {
+				err = fmt.Errorf("HTTP scheduler rejected subtask report: code=%d msg=%s", resp.Code, resp.Msg)
+			}
+		}
+		if !waitForRetry(attempt) {
+			break
+		}
+	}
+	if err != nil || resp == nil || !resp.Success {
+		w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done after retries: %v", err)
+		return phaseReportAck{}
 	}
 
 	if resp.AllDone {
 		w.taskLog(task.TaskId, LevelInfo, "All sub-tasks completed: %d/%d", resp.SubTaskDone, resp.SubTaskCount)
+		if resp.Finalized && resp.ScanSummary != nil {
+			w.taskLogEvent(task.TaskId, LevelInfo,
+				fmt.Sprintf("Task finalized: outcome=%s assets=%d vulnerabilities=%d", resp.ScanSummary.Outcome, resp.ScanSummary.Assets, resp.ScanSummary.Vulnerabilities),
+				EventTaskFinalized, "task", resp.ScanSummary.Outcome, taskFinalizedEventFields(resp.ScanSummary))
+		}
 	} else {
 		w.taskLog(task.TaskId, LevelDebug, "Sub-task progress: %d/%d (phase: %s)", resp.SubTaskDone, resp.SubTaskCount, phase)
+	}
+	return phaseReportAck{
+		Recorded:            true,
+		Finalized:           resp.Finalized,
+		FinalizationPending: finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone),
 	}
 }
 

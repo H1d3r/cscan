@@ -22,6 +22,7 @@ const (
 	TaskStatusPending = "PENDING"
 	TaskStatusStarted = "STARTED"
 	TaskStatusSuccess = "SUCCESS"
+	TaskStatusPartial = "PARTIAL"
 	TaskStatusFailure = "FAILURE"
 	TaskStatusRevoked = "REVOKED"
 )
@@ -1188,14 +1189,15 @@ func (c *PortScanConfig) UnmarshalJSON(data []byte) error {
 
 // PortIdentifyConfig 端口识别配置（Nmap/Fingerprintx 服务识别）
 type PortIdentifyConfig struct {
-	Enable      bool   `json:"enable"`
-	Tool        string `json:"tool"`        // 识别工具: nmap, fingerprintx (默认 nmap)
-	Timeout     int    `json:"timeout"`     // 单个主机超时时间(秒)，默认30秒
-	Concurrency int    `json:"concurrency"` // 并发数，默认10 (仅 fingerprintx)
-	Args        string `json:"args"`        // Nmap额外参数，如 "-sV --version-intensity 5"
-	UDP         bool   `json:"udp"`         // 是否扫描UDP端口 (仅 fingerprintx)
-	FastMode    bool   `json:"fastMode"`    // 快速模式 (仅 fingerprintx)
-	ForceScan   bool   `json:"forceScan"`   // 强制扫描：无资产时直接使用目标
+	Enable        bool   `json:"enable"`
+	Tool          string `json:"tool"`          // 识别工具: nmap, fingerprintx (默认 nmap)
+	Timeout       int    `json:"timeout"`       // 单个主机超时时间(秒)，默认30秒
+	Concurrency   int    `json:"concurrency"`   // 并发数，默认10 (仅 fingerprintx)
+	Args          string `json:"args"`          // Nmap额外参数，如 "-sV --version-intensity 5"
+	UDP           bool   `json:"udp"`           // 是否扫描UDP端口 (仅 fingerprintx)
+	FastMode      bool   `json:"fastMode"`      // 快速模式 (仅 fingerprintx)
+	ForceScan     bool   `json:"forceScan"`     // 强制扫描：无资产时直接使用目标
+	ExcludeClosed bool   `json:"excludeClosed"` // 仅在 Nmap 明确确认 CLOSED 时从后续活跃资产中排除
 }
 
 type DomainScanConfig struct {

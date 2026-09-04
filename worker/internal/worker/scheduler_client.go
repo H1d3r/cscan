@@ -147,7 +147,7 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 	}
 
 	// 从 processing 集合移除（终态时）
-	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusFailure {
+	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusPartial || state == scheduler.TaskStatusFailure {
 		if err := c.rdb.SRem(ctx, "cscan:task:processing", taskID).Err(); err != nil {
 			logx.Errorf("[SchedulerClient] SRem processing failed: %v", err)
 			if firstErr == nil {
@@ -187,7 +187,7 @@ func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, 
 	}
 
 	// 终态：清理 execution info + taskInfo + 加入 completed 集合
-	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusFailure {
+	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusPartial || state == scheduler.TaskStatusFailure {
 		c.recoveryMgr.RemoveTaskExecution(taskID)
 
 		taskInfoKey := "cscan:task:info:" + taskID
@@ -276,22 +276,26 @@ func (c *SchedulerClient) KeepAliveWithResponse(ctx context.Context, cpuLoad, me
 
 // IncrSubTaskDoneResponse 子任务完成响应
 type IncrSubTaskDoneResponse struct {
-	SubTaskDone  int
-	SubTaskCount int
-	AllDone      bool
+	SubTaskDone         int
+	SubTaskCount        int
+	AllDone             bool
+	Recorded            bool
+	Finalized           bool
+	FinalizationPending bool
+	ScanSummary         *model.TaskScanSummary
 }
 
 // IncrSubTaskDone 递增子任务完成数
 // 原子递增 MongoDB MainTaskModel.IncrSubTaskDoneAtomic + 更新 progress / current_phase
 // 全部完成时 MarkTaskCompleted
-func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, moduleName string, incrAmount int) (*IncrSubTaskDoneResponse, error) {
+func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTaskID, moduleName string, incrAmount int, phaseResult *PhaseResult) (*IncrSubTaskDoneResponse, error) {
 	if mainTaskID == "" {
-		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true}, nil
+		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true}, nil
 	}
 
 	// 快速验证类任务（UUID 格式）跳过 MongoDB 操作
 	if !isValidObjectID(mainTaskID) {
-		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true}, nil
+		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true}, nil
 	}
 
 	taskModel := model.NewMainTaskModel(c.mongoDB)
@@ -299,16 +303,26 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, modul
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
-
-	task, incremented, err := taskModel.IncrSubTaskDoneAtomic(ctx, mainTaskID, incrAmount)
+	canonicalPhase := canonicalTaskPhase(moduleName)
+	if phaseResult == nil {
+		defaultResult := missingPhaseResult(moduleName)
+		phaseResult = &defaultResult
+	} else if phaseResult.Phase == "" {
+		phaseResult.Phase = canonicalPhase
+	}
+	phaseSummary := phaseResult.TaskSummary(subTaskID)
+	phaseSummary.Weight = incrAmount
+	reportKey := model.TaskPhaseReportKey(subTaskID, canonicalPhase)
+	task, recorded, err := taskModel.RecordPhaseSummaryAtomic(ctx, mainTaskID, reportKey, phaseSummary, incrAmount)
 	if err != nil {
-		return nil, fmt.Errorf("IncrSubTaskDoneAtomic: %w", err)
+		return nil, fmt.Errorf("RecordPhaseSummaryAtomic: %w", err)
 	}
 
-	if !incremented {
-		logx.Infof("[SchedulerClient] IncrSubTaskDone: already at limit, mainTaskId=%s, done=%d, total=%d",
-			mainTaskID, task.SubTaskDone, task.SubTaskCount)
+	if phaseSummary.Weight != incrAmount {
+		phaseSummary.Weight = incrAmount
 	}
+	logx.Debugf("[SchedulerClient] phase report acknowledged, mainTaskId=%s subTaskId=%s phase=%s",
+		mainTaskID, subTaskID, canonicalPhase)
 
 	allDone := task.SubTaskDone >= task.SubTaskCount
 
@@ -328,26 +342,38 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, modul
 		logx.Errorf("[SchedulerClient] UpdateTaskProgress failed: %v", err)
 	}
 
-	// 全部完成时标记完成
+	// Completion count only opens the finalization gate; phase summaries decide outcome.
+	var finalSummary *model.TaskScanSummary
+	finalized := false
+	finalizationPending := false
 	if allDone {
-		updated, err := taskModel.MarkTaskCompleted(ctx, mainTaskID)
-		if err != nil {
-			logx.Errorf("[SchedulerClient] MarkTaskCompleted failed: %v", err)
-		} else if updated {
-			logx.Infof("[SchedulerClient] task marked as completed, mainTaskId=%s", mainTaskID)
-			// 触发任务完成通知（幂等，同一任务只通知一次）
-			if c.notifySvc != nil {
-				if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, model.TaskStatusSuccess); nerr != nil {
-					logx.Errorf("[SchedulerClient] NotifyTaskCompleted failed: %v", nerr)
+		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummary(ctx, mainTaskID)
+		if finalizeErr != nil {
+			finalizationPending = true
+			logx.Errorf("[SchedulerClient] semantic finalization failed; phase report remains acknowledged and finalization is retryable: %v", finalizeErr)
+		} else {
+			finalSummary = summary
+			terminal := model.IsTerminalTaskStatus(task.Status)
+			finalized = updated || terminal
+			if !updated && !terminal {
+				finalizationPending = true
+				logx.Infof("[SchedulerClient] semantic finalization is still pending, mainTaskId=%s", mainTaskID)
+			}
+			if updated {
+				logx.Infof("[SchedulerClient] task finalized, mainTaskId=%s outcome=%s", mainTaskID, summary.Outcome)
+				// The atomic terminal transition is the exactly-once notification gate.
+				if c.notifySvc != nil {
+					if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, summary.Outcome); nerr != nil {
+						logx.Errorf("[SchedulerClient] NotifyTaskCompleted failed: %v", nerr)
+					}
 				}
 			}
 		}
 	}
 
 	return &IncrSubTaskDoneResponse{
-		SubTaskDone:  task.SubTaskDone,
-		SubTaskCount: task.SubTaskCount,
-		AllDone:      allDone,
+		SubTaskDone: task.SubTaskDone, SubTaskCount: task.SubTaskCount, AllDone: allDone,
+		Recorded: recorded, Finalized: finalized, FinalizationPending: finalizationPending, ScanSummary: finalSummary,
 	}, nil
 }
 
@@ -447,7 +473,11 @@ func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskIn
 	update := bson.M{}
 
 	switch state {
-	case model.TaskStatusSuccess, model.TaskStatusFailure:
+	case model.TaskStatusSuccess:
+		// Sub-task SUCCESS only closes executor/Redis bookkeeping. The main task
+		// is finalized exclusively from persisted phase summaries.
+		return
+	case model.TaskStatusFailure:
 		subTaskCount := 1
 		if count, ok := taskInfo["subTaskCount"].(float64); ok {
 			subTaskCount = int(count)
@@ -455,23 +485,8 @@ func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskIn
 		if subTaskCount <= 1 {
 			update["status"] = state
 			update["end_time"] = now
-			// 单子任务终态触发通知（多子任务由 IncrSubTaskDone 统一处理）
-			// 幂等：cscan:task:notified:{id} SETNX 防止 IncrSubTaskDone 路径重复通知
-			if c.notifySvc != nil {
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							logx.Errorf("[SchedulerClient] notify goroutine panic recovered: %v", r)
-						}
-					}()
-					notifyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					if err := c.notifySvc.NotifyTaskCompleted(notifyCtx, mainTaskId, state); err != nil {
-						logx.Errorf("[SchedulerClient] NotifyTaskCompleted (%s) failed: %v", state, err)
-					}
-				}()
-			}
 		}
+
 	case model.TaskStatusStarted:
 		// 已在 updateMainTaskStatus 处理
 		return

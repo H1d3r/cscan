@@ -197,6 +197,7 @@ func (l *MainTaskListLogic) MainTaskList(req *types.MainTaskListReq) (resp *type
 			EndTime:      endTime,
 			SubTaskCount: t.SubTaskCount,
 			SubTaskDone:  subTaskDone,
+			ScanSummary:  t.ScanSummary,
 		})
 	}
 
@@ -315,6 +316,7 @@ func (l *MainTaskDetailLogic) MainTaskDetail(req *types.MainTaskDetailReq) (*typ
 			EndTime:      endTime,
 			SubTaskCount: t.SubTaskCount,
 			SubTaskDone:  subTaskDone,
+			ScanSummary:  t.ScanSummary,
 		},
 	}, nil
 }
@@ -1222,8 +1224,8 @@ func (l *TaskStatLogic) TaskStat() (resp *types.TaskStatResp, err error) {
 		defer resultCursor.Close(l.ctx)
 		for resultCursor.Next(l.ctx) {
 			var r struct {
-				ID     string `bson:"_id"`
-				Count  int64  `bson:"count"`
+				ID     string    `bson:"_id"`
+				Count  int64     `bson:"count"`
 				Latest time.Time `bson:"latest"`
 			}
 			if err := resultCursor.Decode(&r); err != nil {

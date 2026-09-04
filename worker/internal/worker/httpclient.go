@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"cscan/internal/model"
 	"cscan/internal/scanner"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -84,29 +85,31 @@ type IPV6Info struct {
 
 // AssetDocument 资产文档
 type AssetDocument struct {
-	Authority  string     `json:"authority"`
-	Host       string     `json:"host"`
-	Port       int32      `json:"port"`
-	Category   string     `json:"category"`
-	Service    string     `json:"service"`
-	Server     string     `json:"server"`
-	Banner     string     `json:"banner"`
-	Title      string     `json:"title"`
-	App        []string   `json:"app"`
-	HttpStatus string     `json:"httpStatus"`
-	HttpHeader string     `json:"httpHeader"`
-	HttpBody   string     `json:"httpBody"`
-	Cert       string     `json:"cert"`
-	IconHash   string     `json:"iconHash"`
-	IsCdn      bool       `json:"isCdn"`
-	Cname      string     `json:"cname"`
-	IsCloud    bool       `json:"isCloud"`
-	Ipv4       []IPV4Info `json:"ipv4"`
-	Ipv6       []IPV6Info `json:"ipv6"`
-	Screenshot string     `json:"screenshot"`
-	IsHttp     bool       `json:"isHttp"`
-	Source     string     `json:"source"`
-	IconData   []byte     `json:"iconData"`
+	Authority                    string                      `json:"authority"`
+	Host                         string                      `json:"host"`
+	Port                         int32                       `json:"port"`
+	Category                     string                      `json:"category"`
+	Service                      string                      `json:"service"`
+	Server                       string                      `json:"server"`
+	Banner                       string                      `json:"banner"`
+	Title                        string                      `json:"title"`
+	App                          []string                    `json:"app"`
+	FingerprintFindings          scanner.FingerprintFindings `json:"fingerprintFindings,omitempty"`
+	FingerprintFindingsCollected bool                        `json:"fingerprintFindingsCollected,omitempty"`
+	HttpStatus                   string                      `json:"httpStatus"`
+	HttpHeader                   string                      `json:"httpHeader"`
+	HttpBody                     string                      `json:"httpBody"`
+	Cert                         string                      `json:"cert"`
+	IconHash                     string                      `json:"iconHash"`
+	IsCdn                        bool                        `json:"isCdn"`
+	Cname                        string                      `json:"cname"`
+	IsCloud                      bool                        `json:"isCloud"`
+	Ipv4                         []IPV4Info                  `json:"ipv4"`
+	Ipv6                         []IPV6Info                  `json:"ipv6"`
+	Screenshot                   string                      `json:"screenshot"`
+	IsHttp                       bool                        `json:"isHttp"`
+	Source                       string                      `json:"source"`
+	IconData                     []byte                      `json:"iconData"`
 }
 
 // TaskResultReq 资产结果上报请求
@@ -202,21 +205,27 @@ type HeartbeatResp struct {
 
 // SubTaskDoneReq 子任务完成请求
 type SubTaskDoneReq struct {
-	TaskId      string `json:"taskId"`
-	MainTaskId  string `json:"mainTaskId"`
-	Phase       string `json:"phase"`
-	IsCompleted bool   `json:"isCompleted"`
-	IncrAmount  int    `json:"incrAmount"`
+	TaskId      string                  `json:"taskId"`
+	MainTaskId  string                  `json:"mainTaskId"`
+	Phase       string                  `json:"phase"`
+	IsCompleted bool                    `json:"isCompleted"`
+	IncrAmount  int                     `json:"incrAmount"`
+	PhaseResult *model.TaskPhaseSummary `json:"phaseResult,omitempty"`
+	TaskSummary *model.TaskScanSummary  `json:"taskSummary,omitempty"`
 }
 
 // SubTaskDoneResp 子任务完成响应
 type SubTaskDoneResp struct {
-	Code         int    `json:"code"`
-	Msg          string `json:"msg"`
-	Success      bool   `json:"success"`
-	SubTaskDone  int32  `json:"subTaskDone"`
-	SubTaskCount int32  `json:"subTaskCount"`
-	AllDone      bool   `json:"allDone"`
+	Code                int                    `json:"code"`
+	Msg                 string                 `json:"msg"`
+	Success             bool                   `json:"success"`
+	SubTaskDone         int32                  `json:"subTaskDone"`
+	SubTaskCount        int32                  `json:"subTaskCount"`
+	AllDone             bool                   `json:"allDone"`
+	Recorded            bool                   `json:"recorded,omitempty"`
+	Finalized           bool                   `json:"finalized,omitempty"`
+	FinalizationPending bool                   `json:"finalizationPending,omitempty"`
+	ScanSummary         *model.TaskScanSummary `json:"scanSummary,omitempty"`
 }
 
 // ==================== HTTP Client Methods ====================

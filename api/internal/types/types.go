@@ -2,6 +2,8 @@ package types
 
 import (
 	"time"
+
+	"cscan/internal/model"
 )
 
 // ==================== 通用类型 ====================
@@ -793,25 +795,26 @@ type IPBatchDeleteReq struct {
 
 // ==================== 任务管理 ====================
 type MainTask struct {
-	Id           string   `json:"id"`
-	TaskId       string   `json:"taskId"` // UUID，用于日志查询
-	Name         string   `json:"name"`
-	Target       string   `json:"target"`
-	Config       string   `json:"config"` // 任务配置JSON
-	ProfileId    string   `json:"profileId"`
-	ProfileName  string   `json:"profileName"`
-	Tags         []string `json:"tags"` // 任务标签
-	Status       string   `json:"status"`
-	CurrentPhase string   `json:"currentPhase"` // 当前执行阶段
-	Progress     int      `json:"progress"`
-	Result       string   `json:"result"`
-	IsCron       bool     `json:"isCron"`
-	CronRule     string   `json:"cronRule"`
-	CreateTime   string   `json:"createTime"`
-	StartTime    string   `json:"startTime"`    // 开始时间
-	EndTime      string   `json:"endTime"`      // 结束时间
-	SubTaskCount int      `json:"subTaskCount"` // 子任务总数
-	SubTaskDone  int      `json:"subTaskDone"`  // 已完成子任务数
+	Id           string                 `json:"id"`
+	TaskId       string                 `json:"taskId"` // UUID，用于日志查询
+	Name         string                 `json:"name"`
+	Target       string                 `json:"target"`
+	Config       string                 `json:"config"` // 任务配置JSON
+	ProfileId    string                 `json:"profileId"`
+	ProfileName  string                 `json:"profileName"`
+	Tags         []string               `json:"tags"` // 任务标签
+	Status       string                 `json:"status"`
+	CurrentPhase string                 `json:"currentPhase"` // 当前执行阶段
+	Progress     int                    `json:"progress"`
+	Result       string                 `json:"result"`
+	IsCron       bool                   `json:"isCron"`
+	CronRule     string                 `json:"cronRule"`
+	CreateTime   string                 `json:"createTime"`
+	StartTime    string                 `json:"startTime"`    // 开始时间
+	EndTime      string                 `json:"endTime"`      // 结束时间
+	SubTaskCount int                    `json:"subTaskCount"` // 子任务总数
+	SubTaskDone  int                    `json:"subTaskDone"`  // 已完成子任务数
+	ScanSummary  *model.TaskScanSummary `json:"scanSummary,omitempty"`
 }
 
 type MainTaskListReq struct {
@@ -1184,22 +1187,22 @@ type TaskStatResp struct {
 
 // DashboardSummaryResp Dashboard 统一汇总响应
 type DashboardSummaryResp struct {
-	Code int `json:"code"`
+	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 
 	// 资产概览
-	AssetTotal    int `json:"assetTotal"`
-	AssetNew      int `json:"assetNew"`
-	PortCount     int `json:"portCount"`
-	IPCount       int `json:"ipCount"`
-	DomainCount   int `json:"domainCount"`
-	SiteCount     int `json:"siteCount"`
-	DirScans      int `json:"dirScans"`
-	Groups        int `json:"groups"`
-	VulnTotal     int `json:"vulnTotal"`
-	VulnOpen      int `json:"vulnOpen"`
-	VulnFixed     int `json:"vulnFixed"`
-	VulnIgnored   int `json:"vulnIgnored"`
+	AssetTotal  int `json:"assetTotal"`
+	AssetNew    int `json:"assetNew"`
+	PortCount   int `json:"portCount"`
+	IPCount     int `json:"ipCount"`
+	DomainCount int `json:"domainCount"`
+	SiteCount   int `json:"siteCount"`
+	DirScans    int `json:"dirScans"`
+	Groups      int `json:"groups"`
+	VulnTotal   int `json:"vulnTotal"`
+	VulnOpen    int `json:"vulnOpen"`
+	VulnFixed   int `json:"vulnFixed"`
+	VulnIgnored int `json:"vulnIgnored"`
 
 	// 漏洞分级
 	VulnOpenCritical int `json:"vulnOpenCritical"`
@@ -1499,7 +1502,7 @@ type CustomPocListReq struct {
 	Tag        string `json:"tag,optional"`        // 按标签筛选
 	Enabled    *bool  `json:"enabled,optional"`    // 按状态筛选
 	// 新增字段 - 仿默认模板库筛选
-	Keyword    string   `json:"keyword,optional"`   // 全字段模糊搜索
+	Keyword    string   `json:"keyword,optional"`    // 全字段模糊搜索
 	Severities []string `json:"severities,optional"` // 严重级别多选
 	Protocols  []string `json:"protocols,optional"`  // 协议多选
 	Products   []string `json:"products,optional"`   // 产品多选
@@ -1564,7 +1567,7 @@ type CustomPocClearAllReq struct {
 	Tag        string `json:"tag,optional"`        // 按标签筛选
 	Enabled    *bool  `json:"enabled,optional"`    // 按状态筛选
 	// 新增字段 - 仿默认模板库筛选
-	Keyword    string   `json:"keyword,optional"`   // 全字段模糊搜索
+	Keyword    string   `json:"keyword,optional"`    // 全字段模糊搜索
 	Severities []string `json:"severities,optional"` // 严重级别多选
 	Protocols  []string `json:"protocols,optional"`  // 协议多选
 	Products   []string `json:"products,optional"`   // 产品多选
@@ -1573,12 +1576,12 @@ type CustomPocClearAllReq struct {
 
 // CustomPocCategoriesReq 自定义POC筛选条件（用于计算各筛选维度的数量统计）
 type CustomPocCategoriesReq struct {
-	Name       string `json:"name,optional"`
-	TemplateId string `json:"templateId,optional"`
-	Severity   string `json:"severity,optional"`
-	Tag        string `json:"tag,optional"`
-	Enabled    *bool  `json:"enabled,optional"`
-	Keyword    string `json:"keyword,optional"`
+	Name       string   `json:"name,optional"`
+	TemplateId string   `json:"templateId,optional"`
+	Severity   string   `json:"severity,optional"`
+	Tag        string   `json:"tag,optional"`
+	Enabled    *bool    `json:"enabled,optional"`
+	Keyword    string   `json:"keyword,optional"`
 	Severities []string `json:"severities,optional"`
 	Protocols  []string `json:"protocols,optional"`
 	Products   []string `json:"products,optional"`
@@ -1651,17 +1654,17 @@ type NucleiTemplateListReq struct {
 }
 
 type NucleiTemplate struct {
-	Id          string   `json:"id"`          // 模板ID
-	Name        string   `json:"name"`        // 模板名称
-	Author      string   `json:"author"`      // 作者
-	Severity    string   `json:"severity"`    // 严重级别
-	Description string   `json:"description"` // 描述
-	Tags        []string `json:"tags"`        // 标签
-	Category    string   `json:"category"`    // 分类(目录名)
-	Protocol    string   `json:"protocol"`    // 请求协议: http/dns/network/ssl/file/headless等
-	Vendor      string   `json:"vendor,omitempty"`   // 厂商
-	Product     string   `json:"product,omitempty"`  // 产品
-	FilePath    string   `json:"filePath"`    // 文件路径
+	Id          string   `json:"id"`                // 模板ID
+	Name        string   `json:"name"`              // 模板名称
+	Author      string   `json:"author"`            // 作者
+	Severity    string   `json:"severity"`          // 严重级别
+	Description string   `json:"description"`       // 描述
+	Tags        []string `json:"tags"`              // 标签
+	Category    string   `json:"category"`          // 分类(目录名)
+	Protocol    string   `json:"protocol"`          // 请求协议: http/dns/network/ssl/file/headless等
+	Vendor      string   `json:"vendor,omitempty"`  // 厂商
+	Product     string   `json:"product,omitempty"` // 产品
+	FilePath    string   `json:"filePath"`          // 文件路径
 	// 新增字段 - 漏洞知识库
 	CvssScore   float64  `json:"cvssScore,omitempty"`   // CVSS评分
 	CvssMetrics string   `json:"cvssMetrics,omitempty"` // CVSS向量
@@ -1686,28 +1689,28 @@ type FacetItem struct {
 
 // NucleiTemplateCategoriesReq 模板库筛选条件（用于计算各筛选维度的数量统计）
 type NucleiTemplateCategoriesReq struct {
-	Category    string   `json:"category,optional"`
-	Severity    string   `json:"severity,optional"`
-	Tag         string   `json:"tag,optional"`
-	Keyword     string   `json:"keyword,optional"`
-	MinCvssScore float64 `json:"minCvssScore,optional"`
-	CveId       string   `json:"cveId,optional"`
-	Severities  []string `json:"severities,optional"`
-	Protocols   []string `json:"protocols,optional"`
-	Products    []string `json:"products,optional"`
-	HasCve      *bool    `json:"hasCve,optional"`
+	Category     string   `json:"category,optional"`
+	Severity     string   `json:"severity,optional"`
+	Tag          string   `json:"tag,optional"`
+	Keyword      string   `json:"keyword,optional"`
+	MinCvssScore float64  `json:"minCvssScore,optional"`
+	CveId        string   `json:"cveId,optional"`
+	Severities   []string `json:"severities,optional"`
+	Protocols    []string `json:"protocols,optional"`
+	Products     []string `json:"products,optional"`
+	HasCve       *bool    `json:"hasCve,optional"`
 }
 
 type NucleiTemplateCategoriesResp struct {
 	Code       int            `json:"code"`
 	Msg        string         `json:"msg"`
-	Categories []FacetItem    `json:"categories"`  // 分类列表(带数量)
-	Severities []FacetItem    `json:"severities"`  // 严重级别列表(带数量)
-	Protocols  []FacetItem    `json:"protocols"`   // 协议列表(带数量)
-	Products   []FacetItem    `json:"products"`    // 产品列表(带数量)
-	Tags       []FacetItem    `json:"tags"`        // 热门标签(带数量)
-	CveStats   map[string]int `json:"cveStats"`    // CVE统计: {"true": n, "false": m}
-	Stats      map[string]int `json:"stats"`       // 统计信息(total)
+	Categories []FacetItem    `json:"categories"` // 分类列表(带数量)
+	Severities []FacetItem    `json:"severities"` // 严重级别列表(带数量)
+	Protocols  []FacetItem    `json:"protocols"`  // 协议列表(带数量)
+	Products   []FacetItem    `json:"products"`   // 产品列表(带数量)
+	Tags       []FacetItem    `json:"tags"`       // 热门标签(带数量)
+	CveStats   map[string]int `json:"cveStats"`   // CVE统计: {"true": n, "false": m}
+	Stats      map[string]int `json:"stats"`      // 统计信息(total)
 }
 
 type NucleiTemplateUpdateEnabledReq struct {
@@ -1746,18 +1749,18 @@ type NucleiTemplateSyncResp struct {
 }
 
 type NucleiTemplateWithContent struct {
-	Id          string   `json:"id"`          // 模板ID
-	Name        string   `json:"name"`        // 模板名称
-	Author      string   `json:"author"`      // 作者
-	Severity    string   `json:"severity"`    // 严重级别
-	Description string   `json:"description"` // 描述
-	Tags        []string `json:"tags"`        // 标签
-	Category    string   `json:"category"`    // 分类(目录名)
-	Protocol    string   `json:"protocol"`    // 请求协议
-	Vendor      string   `json:"vendor,omitempty"`   // 厂商
-	Product     string   `json:"product,omitempty"`  // 产品
-	FilePath    string   `json:"filePath"`    // 文件路径
-	Content     string   `json:"content"`     // YAML内容
+	Id          string   `json:"id"`                // 模板ID
+	Name        string   `json:"name"`              // 模板名称
+	Author      string   `json:"author"`            // 作者
+	Severity    string   `json:"severity"`          // 严重级别
+	Description string   `json:"description"`       // 描述
+	Tags        []string `json:"tags"`              // 标签
+	Category    string   `json:"category"`          // 分类(目录名)
+	Protocol    string   `json:"protocol"`          // 请求协议
+	Vendor      string   `json:"vendor,omitempty"`  // 厂商
+	Product     string   `json:"product,omitempty"` // 产品
+	FilePath    string   `json:"filePath"`          // 文件路径
+	Content     string   `json:"content"`           // YAML内容
 	// 新增字段 - 漏洞知识库
 	CvssScore   float64  `json:"cvssScore,omitempty"`   // CVSS评分
 	CvssMetrics string   `json:"cvssMetrics,omitempty"` // CVSS向量
@@ -4072,19 +4075,19 @@ type AssetTargetListReq struct {
 }
 
 type AssetTargetListItem struct {
-	Id                  string   `json:"id"`
-	TargetType          string   `json:"targetType"`
-	TargetValue         string   `json:"targetValue"`
-	Labels              []string `json:"labels"`
-	Memo                string   `json:"memo"`
-	ColorTag            string   `json:"colorTag"`
-	ScanStatus          string   `json:"scanStatus,omitempty"`
-	Source              string   `json:"source,omitempty"`
-	InternalNetworkId   string   `json:"internalNetworkId,omitempty"`
-	TotalAssetServices  int      `json:"totalAssetServices,omitempty"`
-	LastScanTime        int64    `json:"lastScanTime"` // unix ms, 0 表示未知
-	FirstSeen           int64    `json:"firstSeen"`
-	TaskCount           int      `json:"taskCount"`
+	Id                 string   `json:"id"`
+	TargetType         string   `json:"targetType"`
+	TargetValue        string   `json:"targetValue"`
+	Labels             []string `json:"labels"`
+	Memo               string   `json:"memo"`
+	ColorTag           string   `json:"colorTag"`
+	ScanStatus         string   `json:"scanStatus,omitempty"`
+	Source             string   `json:"source,omitempty"`
+	InternalNetworkId  string   `json:"internalNetworkId,omitempty"`
+	TotalAssetServices int      `json:"totalAssetServices,omitempty"`
+	LastScanTime       int64    `json:"lastScanTime"` // unix ms, 0 表示未知
+	FirstSeen          int64    `json:"firstSeen"`
+	TaskCount          int      `json:"taskCount"`
 
 	// Phase 4 burble：list 行内联 exposure/risk 计数（来自 meta denormalize 字段，可能为 0 表示未初始化）
 	ExposureSubdomains  int `json:"exposureSubdomains,omitempty"`
@@ -4246,9 +4249,9 @@ type AssetTargetAssetItem struct {
 
 // AssetTargetAssetsResp 目标资产列表响应
 type AssetTargetAssetsResp struct {
-	Code int                     `json:"code"`
-	Msg  string                  `json:"msg"`
-	Data AssetTargetAssetsData   `json:"data"`
+	Code int                   `json:"code"`
+	Msg  string                `json:"msg"`
+	Data AssetTargetAssetsData `json:"data"`
 }
 
 // AssetMediaReq 按资产 ID 批量获取截图/favicon 媒体字段（列表页懒加载用）
@@ -4273,7 +4276,7 @@ type AssetMediaResp struct {
 // AssetTargetGroupsReq 目标资产按维度聚合（Hosts/Ports/IP/Technologies/StatusCode 子 Tab）
 type AssetTargetGroupsReq struct {
 	TargetId     string   `json:"targetId"`
-	GroupBy      string   `json:"groupBy"`              // host|port|ip|app|status
+	GroupBy      string   `json:"groupBy"` // host|port|ip|app|status
 	Query        string   `json:"query,optional"`
 	Ports        []int    `json:"ports,optional"`
 	StatusCodes  []string `json:"statusCodes,optional"`
@@ -4304,21 +4307,21 @@ type AssetTargetCertsReq struct {
 
 // AssetTargetCertItem 证书行（TLS Tab + Services 列证书徽章）
 type AssetTargetCertItem struct {
-	Id          string   `json:"id"`
-	Host        string   `json:"host"`
-	Port        int      `json:"port"`
-	Authority   string   `json:"authority"`
-	SubjectCN   string   `json:"subjectCn"`
-	SubjectDN   string   `json:"subjectDn"`
-	IssuerOrg   string   `json:"issuerOrg"`
-	IssuerDN    string   `json:"issuerDn"`
-	SigAlg      string   `json:"sigAlg"`
-	NotBefore   int64    `json:"notBefore"`
-	NotAfter    int64    `json:"notAfter"`
-	SANs        []string `json:"sans"`
-	Status      string   `json:"status"` // valid|expiring|expired
-	SelfSigned  bool     `json:"selfSigned"`
-	CreateTime  int64    `json:"createTime"`
+	Id         string   `json:"id"`
+	Host       string   `json:"host"`
+	Port       int      `json:"port"`
+	Authority  string   `json:"authority"`
+	SubjectCN  string   `json:"subjectCn"`
+	SubjectDN  string   `json:"subjectDn"`
+	IssuerOrg  string   `json:"issuerOrg"`
+	IssuerDN   string   `json:"issuerDn"`
+	SigAlg     string   `json:"sigAlg"`
+	NotBefore  int64    `json:"notBefore"`
+	NotAfter   int64    `json:"notAfter"`
+	SANs       []string `json:"sans"`
+	Status     string   `json:"status"` // valid|expiring|expired
+	SelfSigned bool     `json:"selfSigned"`
+	CreateTime int64    `json:"createTime"`
 }
 
 type AssetTargetCertsResp struct {

@@ -3,8 +3,8 @@ package worker
 import (
 	"fmt"
 
-	"go.mongodb.org/mongo-driver/mongo"
 	"github.com/zeromicro/go-zero/core/logx"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // 日志级别常量
@@ -173,6 +173,15 @@ func (l *TaskLoggerWS) Warn(format string, args ...interface{}) {
 
 func (l *TaskLoggerWS) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
+}
+
+// Event preserves the normal console/text message while attaching optional
+// structured fields to the MongoDB document.
+func (l *TaskLoggerWS) Event(level, msg, event, phase, outcome string, fields map[string]interface{}) {
+	logConsole(level, l.taskId, msg)
+	if globalMongoLogger != nil {
+		globalMongoLogger.WriteEvent(level, l.taskId, msg, event, phase, outcome, fields)
+	}
 }
 
 // ==================== 全局 MongoLogger 实例 ====================
