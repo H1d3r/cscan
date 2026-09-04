@@ -31,7 +31,9 @@ type PortScanOptions struct {
 	Tool              string `json:"tool"` // tcp, masscan, nmap, naabu
 	Ports             string `json:"ports"`
 	Rate              int    `json:"rate"`              // 每秒发送包数
-	Timeout           int    `json:"timeout"`           // 端口扫描超时时间(秒)
+	Timeout           int    `json:"timeout"`           // TCP/Masscan 工具自身超时（秒）；Naabu 不使用该字段
+	TargetTimeout     int    `json:"targetTimeout"`     // 单个目标完整扫描上限（秒）
+	ProbeTimeoutMs    int    `json:"probeTimeoutMs"`    // Naabu 单次端口探测等待时间（毫秒）
 	Concurrent        int    `json:"concurrent"`        // 并发数
 	PortThreshold     int    `json:"portThreshold"`     // 开放端口数量阈值
 	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT
@@ -42,7 +44,6 @@ type PortScanOptions struct {
 	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)
 	Workers           int    `json:"workers"`           // Naabu 内部工作线程
 	Verify            bool   `json:"verify"`            // TCP 验证
-	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），当>0时按目标数分摊为单目标超时
 }
 
 // Validate 验证 PortScanOptions 配置是否有效
@@ -56,6 +57,12 @@ func (o *PortScanOptions) Validate() error {
 	}
 	if o.Timeout < 0 {
 		return fmt.Errorf("timeout must be non-negative, got %d", o.Timeout)
+	}
+	if o.TargetTimeout < 0 {
+		return fmt.Errorf("targetTimeout must be non-negative, got %d", o.TargetTimeout)
+	}
+	if o.ProbeTimeoutMs < 0 {
+		return fmt.Errorf("probeTimeoutMs must be non-negative, got %d", o.ProbeTimeoutMs)
 	}
 	if o.Concurrent < 0 {
 		return fmt.Errorf("concurrent must be non-negative, got %d", o.Concurrent)
@@ -158,7 +165,7 @@ func (s *PortScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 
 	return &ScanResult{
 		MainTaskId: config.MainTaskId,
-		Assets:      assets,
+		Assets:     assets,
 	}, nil
 }
 

@@ -25,6 +25,14 @@ var ErrPortThresholdExceeded = fmt.Errorf("port threshold exceeded")
 
 var ipLocator = geolocation.NewIPLocator()
 
+const (
+	// DefaultPortScanTargetTimeoutSeconds 是单个目标完整端口扫描的默认硬上限。
+	DefaultPortScanTargetTimeoutSeconds = 60
+	// DefaultNaabuProbeTimeoutMilliseconds 是 naabu 单次端口探测的默认等待时间。
+	DefaultNaabuProbeTimeoutMilliseconds = 1000
+	maxNaabuProcessConcurrency           = 5
+)
+
 // naabuSem 已移除：全局并发限制统一在 CmdExecutor.Execute/StreamLines 中实现，
 // 覆盖所有扫描模块（naabu/nmap/nuclei/httpx/ffuf/feroxbuster/subfinder/dnsx/fingerprintx）。
 
@@ -45,11 +53,48 @@ func NewNaabuScanner() *NaabuScanner {
 	}
 }
 
+// EffectiveNaabuProcessConcurrency 返回单个子任务实际并行启动的 naabu 进程数。
+func EffectiveNaabuProcessConcurrency(workers, targetCount int) int {
+	if targetCount <= 0 {
+		return 0
+	}
+	concurrency := workers
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > maxNaabuProcessConcurrency {
+		concurrency = maxNaabuProcessConcurrency
+	}
+	if concurrency > targetCount {
+		concurrency = targetCount
+	}
+	return concurrency
+}
+
+// CountNaabuProcessTargets 返回 Naabu 实际会启动的目标进程数。
+// ParseTargetsForPortScan 会展开 CIDR/IP range；这里再按 host 去重，与 runNaabuCLI 保持一致。
+func CountNaabuProcessTargets(target string) int {
+	parsed := ParseTargetsForPortScan(target)
+	seen := make(map[string]struct{}, len(parsed.WithoutPort)+len(parsed.WithPort))
+	for _, host := range parsed.WithoutPort {
+		if host != "" {
+			seen[host] = struct{}{}
+		}
+	}
+	for _, targetWithPort := range parsed.WithPort {
+		if targetWithPort != nil && targetWithPort.Host != "" {
+			seen[targetWithPort.Host] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
 // NaabuOptions Naabu扫描选项
 type NaabuOptions struct {
 	Ports             string `json:"ports"`
 	Rate              int    `json:"rate"`
-	Timeout           int    `json:"timeout"`
+	TargetTimeout     int    `json:"targetTimeout"`  // 单个目标完整扫描上限（秒）
+	ProbeTimeoutMs    int    `json:"probeTimeoutMs"` // 单次端口探测等待时间（毫秒），传给 naabu -timeout
 	ScanType          string `json:"scanType"`
 	PortThreshold     int    `json:"portThreshold"`
 	SkipHostDiscovery bool   `json:"skipHostDiscovery"`
@@ -59,7 +104,6 @@ type NaabuOptions struct {
 	WarmUpTime        int    `json:"warmUpTime"`
 	Workers           int    `json:"workers"`
 	Verify            bool   `json:"verify"`
-	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），当>0时按目标数分摊为单目标超时
 }
 
 // Validate 验证配置
@@ -67,11 +111,23 @@ func (o *NaabuOptions) Validate() error {
 	if o.Rate < 0 {
 		return fmt.Errorf("rate must be non-negative, got %d", o.Rate)
 	}
-	if o.Timeout < 0 {
-		return fmt.Errorf("timeout must be non-negative, got %d", o.Timeout)
+	if o.TargetTimeout < 0 {
+		return fmt.Errorf("targetTimeout must be non-negative, got %d", o.TargetTimeout)
+	}
+	if o.ProbeTimeoutMs < 0 {
+		return fmt.Errorf("probeTimeoutMs must be non-negative, got %d", o.ProbeTimeoutMs)
 	}
 	if o.PortThreshold < 0 {
 		return fmt.Errorf("portThreshold must be non-negative, got %d", o.PortThreshold)
+	}
+	if o.Retries < 0 {
+		return fmt.Errorf("retries must be non-negative, got %d", o.Retries)
+	}
+	if o.WarmUpTime < 0 {
+		return fmt.Errorf("warmUpTime must be non-negative, got %d", o.WarmUpTime)
+	}
+	if o.Workers < 0 {
+		return fmt.Errorf("workers must be non-negative, got %d", o.Workers)
 	}
 	if o.ScanType != "" && o.ScanType != "s" && o.ScanType != "c" {
 		return fmt.Errorf("scanType must be 's' or 'c', got %s", o.ScanType)
@@ -99,9 +155,7 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			return
 		}
 		switch level {
-		case "ERROR":
-			logx.Errorf(format, args...)
-		case "WARN":
+		case "ERROR", "WARN":
 			logx.Errorf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
@@ -111,15 +165,14 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	}
 
 	opts := &NaabuOptions{
-		Ports:         "80,443,8080",
-		Rate:          3000,
-		Timeout:       120,
-		ScanType:      "c",
-		PortThreshold: 0,
-		Retries:       2,
-		WarmUpTime:    1,
-		// 单目标 naabu 内部并发探测线程数。提升至 50 可显著加快单 host 的全端口探测吞吐；
-		// 可经 PortScanOptions.Workers（或前端扫描配置）覆盖，带宽受限/低资源主机应适当下调以避免丢包与 IDS 限流。
+		Ports:             "80,443,8080",
+		Rate:              3000,
+		TargetTimeout:     DefaultPortScanTargetTimeoutSeconds,
+		ProbeTimeoutMs:    DefaultNaabuProbeTimeoutMilliseconds,
+		ScanType:          "c",
+		PortThreshold:     0,
+		Retries:           2,
+		WarmUpTime:        1,
 		Workers:           50,
 		Verify:            false,
 		SkipHostDiscovery: true, // 默认跳过 ICMP 主机发现（域名/CDN 目标 ICMP 几乎总被丢弃）
@@ -132,13 +185,19 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			if v.Ports != "" {
 				opts.Ports = v.Ports
 			}
-			if v.Rate > 0 {
+			if v.Rate != 0 {
 				opts.Rate = v.Rate
 			}
-			if v.Timeout > 0 {
-				opts.Timeout = v.Timeout
+			if v.TargetTimeout != 0 {
+				opts.TargetTimeout = v.TargetTimeout
+			} else if v.Timeout != 0 {
+				// 兼容直接构造的旧 PortScanOptions；旧 timeout 只作为目标扫描上限。
+				opts.TargetTimeout = v.Timeout
 			}
-			if v.PortThreshold > 0 {
+			if v.ProbeTimeoutMs != 0 {
+				opts.ProbeTimeoutMs = v.ProbeTimeoutMs
+			}
+			if v.PortThreshold != 0 {
 				opts.PortThreshold = v.PortThreshold
 			}
 			if v.ScanType != "" {
@@ -147,71 +206,98 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			opts.SkipHostDiscovery = v.SkipHostDiscovery
 			opts.ExcludeCDN = v.ExcludeCDN
 			opts.ExcludeHosts = v.ExcludeHosts
-			if v.Retries > 0 {
-				opts.Retries = v.Retries
-			}
-			if v.WarmUpTime >= 0 {
-				opts.WarmUpTime = v.WarmUpTime
-			}
-			if v.Workers > 0 {
+			opts.Retries = v.Retries
+			opts.WarmUpTime = v.WarmUpTime
+			if v.Workers != 0 {
 				opts.Workers = v.Workers
 			}
 			opts.Verify = v.Verify
-			if v.AggregatedTimeout > 0 {
-				opts.AggregatedTimeout = v.AggregatedTimeout
-			}
 		default:
 			if data, err := json.Marshal(config.Options); err == nil {
 				var portConfig struct {
 					Ports             string `json:"ports"`
 					Rate              int    `json:"rate"`
-					Timeout           int    `json:"timeout"`
+					TargetTimeout     int    `json:"targetTimeout"`
+					ProbeTimeoutMs    int    `json:"probeTimeoutMs"`
+					LegacyTimeout     int    `json:"timeout"`
 					PortThreshold     int    `json:"portThreshold"`
 					ScanType          string `json:"scanType"`
-					SkipHostDiscovery bool   `json:"skipHostDiscovery"`
-					ExcludeCDN        bool   `json:"excludeCDN"`
+					SkipHostDiscovery *bool  `json:"skipHostDiscovery"`
+					ExcludeCDN        *bool  `json:"excludeCDN"`
 					ExcludeHosts      string `json:"excludeHosts"`
-					Retries           int    `json:"retries"`
-					WarmUpTime        int    `json:"warmUpTime"`
+					Retries           *int   `json:"retries"`
+					WarmUpTime        *int   `json:"warmUpTime"`
 					Workers           int    `json:"workers"`
-					Verify            bool   `json:"verify"`
-					AggregatedTimeout int    `json:"aggregatedTimeout"`
+					Verify            *bool  `json:"verify"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
 					if portConfig.Ports != "" {
 						opts.Ports = portConfig.Ports
 					}
-					if portConfig.Rate > 0 {
+					if portConfig.Rate != 0 {
 						opts.Rate = portConfig.Rate
 					}
-					if portConfig.Timeout > 0 {
-						opts.Timeout = portConfig.Timeout
+					if portConfig.TargetTimeout != 0 {
+						opts.TargetTimeout = portConfig.TargetTimeout
+					} else if portConfig.LegacyTimeout != 0 {
+						opts.TargetTimeout = portConfig.LegacyTimeout
 					}
-					if portConfig.PortThreshold > 0 {
+					if portConfig.ProbeTimeoutMs != 0 {
+						opts.ProbeTimeoutMs = portConfig.ProbeTimeoutMs
+					}
+					if portConfig.PortThreshold != 0 {
 						opts.PortThreshold = portConfig.PortThreshold
 					}
 					if portConfig.ScanType != "" {
 						opts.ScanType = portConfig.ScanType
 					}
-					if portConfig.Retries > 0 {
-						opts.Retries = portConfig.Retries
+					if portConfig.SkipHostDiscovery != nil {
+						opts.SkipHostDiscovery = *portConfig.SkipHostDiscovery
 					}
-					if portConfig.WarmUpTime >= 0 {
-						opts.WarmUpTime = portConfig.WarmUpTime
+					if portConfig.ExcludeCDN != nil {
+						opts.ExcludeCDN = *portConfig.ExcludeCDN
 					}
-					if portConfig.Workers > 0 {
+					opts.ExcludeHosts = portConfig.ExcludeHosts
+					if portConfig.Retries != nil {
+						opts.Retries = *portConfig.Retries
+					}
+					if portConfig.WarmUpTime != nil {
+						opts.WarmUpTime = *portConfig.WarmUpTime
+					}
+					if portConfig.Workers != 0 {
 						opts.Workers = portConfig.Workers
 					}
-					opts.SkipHostDiscovery = portConfig.SkipHostDiscovery
-					opts.ExcludeCDN = portConfig.ExcludeCDN
-					opts.ExcludeHosts = portConfig.ExcludeHosts
-					opts.Verify = portConfig.Verify
-					if portConfig.AggregatedTimeout > 0 {
-						opts.AggregatedTimeout = portConfig.AggregatedTimeout
+					if portConfig.Verify != nil {
+						opts.Verify = *portConfig.Verify
 					}
 				}
 			}
 		}
+	}
+
+	if opts.Ports == "" {
+		opts.Ports = "80,443,8080"
+	}
+	if opts.Rate == 0 {
+		opts.Rate = 3000
+	}
+	if opts.TargetTimeout == 0 {
+		opts.TargetTimeout = DefaultPortScanTargetTimeoutSeconds
+	}
+	if opts.ProbeTimeoutMs == 0 {
+		opts.ProbeTimeoutMs = DefaultNaabuProbeTimeoutMilliseconds
+	}
+	if opts.ScanType == "" {
+		opts.ScanType = "c"
+	}
+	if opts.Workers == 0 {
+		opts.Workers = config.WorkerConcurrency
+		if opts.Workers <= 0 {
+			opts.Workers = 50
+		}
+	}
+	if err := opts.Validate(); err != nil {
+		return nil, err
 	}
 
 	targetParseResult := ParseTargetsForPortScan(config.Target)
@@ -255,29 +341,8 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return &ScanResult{MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	// 确保 Worker Pool 大小继承 worker 自适应值
-	if opts.Workers <= 0 {
-		opts.Workers = config.WorkerConcurrency
-	}
-
-	// Phase 2：聚合超时透传
-	// 当上层传入 AggregatedTimeout 时，按目标数均摊为单目标超时，
-	// 使 naabu 实际执行语义与 worker 日志中的 timeout=2940s 对齐。
-	aggregatedTimeout := opts.AggregatedTimeout
-	if aggregatedTimeout > 0 && len(cleanTargets) > 0 {
-		perTarget := aggregatedTimeout / len(cleanTargets)
-		if perTarget < 1 {
-			perTarget = 1
-		}
-		if opts.Timeout < 1 {
-			opts.Timeout = 1
-		}
-		if perTarget > opts.Timeout {
-			opts.Timeout = perTarget
-		}
-		logFn("INFO", "Naabu(CLI): aggregatedTimeout=%ds targets=%d => perTargetTimeout=%ds",
-			aggregatedTimeout, len(cleanTargets), opts.Timeout)
-	}
+	logFn("INFO", "Naabu(CLI): targetTimeout=%ds probeTimeout=%dms targets=%d",
+		opts.TargetTimeout, opts.ProbeTimeoutMs, len(cleanTargets))
 
 	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts, logFn)
 	if thresholdExceeded {
@@ -327,16 +392,7 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 	}
 
 	totalTargets := len(cleanTargets)
-	concurrency := opts.Workers
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	if concurrency > 5 {
-		concurrency = 5
-	}
-	if concurrency > totalTargets {
-		concurrency = totalTargets
-	}
+	concurrency := EffectiveNaabuProcessConcurrency(opts.Workers, totalTargets)
 
 	type targetResult struct {
 		target            string
@@ -350,7 +406,6 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 	resultChan := make(chan targetResult, totalTargets)
 	var scanWg sync.WaitGroup
 
-	// 启动并发 Worker
 	for i := 0; i < concurrency; i++ {
 		scanWg.Add(1)
 		go func() {
@@ -372,7 +427,6 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 		}()
 	}
 
-	// 分发目标
 dispatch:
 	for _, target := range cleanTargets {
 		select {
@@ -383,17 +437,19 @@ dispatch:
 	}
 	close(targetChan)
 
-	// 等待所有 Worker 完成
 	go func() {
 		scanWg.Wait()
 		close(resultChan)
 	}()
 
-	// 收集结果
 	completed := 0
 	for res := range resultChan {
 		if res.err != nil {
 			logFn("WARN", "Naabu(CLI): worker error: %v", res.err)
+			continue
+		}
+		if ctx.Err() == context.Canceled {
+			// 主动停止任务时不再触发完成/进度回调，避免取消后的部分结果异步入库。
 			continue
 		}
 		if res.thresholdExceeded {
@@ -414,15 +470,17 @@ dispatch:
 	return allAssets, anyThresholdExceeded
 }
 
-func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
-	// 全局并发限制由 CmdExecutor.Execute 统一控制
+func (o *NaabuOptions) targetTimeoutDuration() time.Duration {
+	return time.Duration(o.TargetTimeout) * time.Second
+}
 
+func buildNaabuArgs(target, portsStr, outputPath string, opts *NaabuOptions) []string {
 	args := []string{
 		"-host", target,
 		"-json",
 		"-silent",
 		"-rate", strconv.Itoa(opts.Rate),
-		"-timeout", strconv.Itoa(opts.Timeout),
+		"-timeout", strconv.Itoa(opts.ProbeTimeoutMs),
 		"-retries", strconv.Itoa(opts.Retries),
 		"-warm-up-time", strconv.Itoa(opts.WarmUpTime),
 		"-c", strconv.Itoa(opts.Workers),
@@ -436,11 +494,10 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	if opts.Ports == "top1000" {
 		args = append(args, "-tp", "1000")
 	}
-	if opts.ScanType == "s" {
-		args = append(args, "-s")
+	if opts.ScanType != "" {
+		// Naabu uses -s for scan type and -c for internal worker concurrency.
+		args = append(args, "-s", opts.ScanType)
 	}
-	// connect scan is the default in naabu; do not add another -c because
-	// -c is already used for worker concurrency above.
 	if opts.SkipHostDiscovery {
 		args = append(args, "-Pn")
 	}
@@ -456,8 +513,15 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	if opts.PortThreshold > 0 {
 		args = append(args, "-port-threshold", strconv.Itoa(opts.PortThreshold))
 	}
+	return append(args, "-o", outputPath)
+}
 
-	// 输出到临时文件
+func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
+	// 单目标 Context 是 Web targetTimeout 的真正执行边界；等待全局进程槽也计入该预算。
+	targetTimeout := opts.targetTimeoutDuration()
+	targetCtx, targetCancel := context.WithTimeout(ctx, targetTimeout)
+	defer targetCancel()
+
 	tmpFile, err := os.CreateTemp("", "naabu-*.json")
 	if err != nil {
 		return nil, false
@@ -466,41 +530,36 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	args = append(args, "-o", tmpPath)
+	args := buildNaabuArgs(target, portsStr, tmpPath, opts)
 
-	// 单目标进程超时 = 单目标超时 × (1 + 重试次数)，确保重试不会被提前杀进程
-	perTargetProcessTimeout := time.Duration(opts.Timeout+opts.Retries*opts.Timeout) * time.Second
-	logFn("INFO", "Naabu CLI: perTargetTimeout=%v (single=%ds, retries=%d) for target %s",
-		perTargetProcessTimeout, opts.Timeout, opts.Retries, target)
+	logFn("INFO", "[Naabu] CLI: target=%s targetTimeout=%s probeTimeout=%dms retries=%d args=%s",
+		target, targetTimeout, opts.ProbeTimeoutMs, opts.Retries, strings.Join(args, " "))
 
-	// 额外 30s 缓冲用于进程启动/退出/IO，避免正常完成时被误杀
-	processTimeout := perTargetProcessTimeout + 30*time.Second
-	logFn("INFO", "Naabu CLI: ProcessTimeout=%v (perTarget + 30s buffer)", processTimeout)
-
-	logFn("INFO", "[Naabu] CLI: target=%s args=%s", target, strings.Join(args, " "))
-
-	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: processTimeout,
+	res, execErr := s.executor.Execute(targetCtx, args, ExecuteOpts{
+		Timeout: targetTimeout,
 		LogFn:   logFn,
 	})
-	if err != nil {
-		logFn("ERROR", "Naabu(CLI): %s execution failed: %v, stderr=%q", target, err, strings.TrimSpace(res.Stderr))
+	// 主动取消表示任务已停止，不应把临时文件中残留的部分结果继续回调给
+	// Worker；阶段 deadline 则仍按既有设计保留可解析的部分结果。
+	if targetCtx.Err() == context.Canceled {
 		return nil, false
 	}
-	s.executor.LogResult("Naabu(CLI): "+target, res, err)
+	if execErr != nil {
+		if targetCtx.Err() == context.DeadlineExceeded {
+			logFn("WARN", "Naabu(CLI): target %s reached targetTimeout=%s; attempting to parse partial output", target, targetTimeout)
+		} else {
+			logFn("WARN", "Naabu(CLI): %s execution ended early: %v, stderr=%q", target, execErr, strings.TrimSpace(res.Stderr))
+		}
+	}
+	s.executor.LogResult("Naabu(CLI): "+target, res, execErr)
 
-	// 读取 JSON 输出文件（进程异常退出时仍尝试读取部分结果）
+	// 进程超时或异常退出时仍读取临时文件，尽可能保留已发现的端口。
 	content, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
 		logFn("WARN", "[WARN] Naabu(CLI): failed to read output file: %v", readErr)
-		if res.ExitCode == 0 {
-			return nil, false
-		}
-		logFn("WARN", "[WARN] Naabu(CLI): %s exit code %d and failed to read output, returning empty result", target, res.ExitCode)
 		return nil, false
 	}
 
-	// 兼容处理：部分 Naabu 版本在 -json 模式下仍将结果写 stdout，即使指定了 -o
 	var parseSource io.Reader
 	if len(content) > 0 {
 		parseSource = strings.NewReader(string(content))
@@ -512,9 +571,8 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		return nil, false
 	}
 
-	// 进程异常退出但输出了部分结果，继续解析
-	if res.ExitCode != 0 {
-		logFn("WARN", "[WARN] Naabu(CLI): %s exit code %d, parsing partial output (%d bytes)", target, res.ExitCode, len(content))
+	if execErr != nil || res.ExitCode != 0 {
+		logFn("WARN", "[WARN] Naabu(CLI): %s ended with exit code %d; parsing partial output (%d bytes)", target, res.ExitCode, len(content))
 	}
 
 	var assets []*Asset

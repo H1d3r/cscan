@@ -245,7 +245,7 @@ func getDefaultTemplates() []model.ScanTemplate {
 		"portscan": map[string]interface{}{
 			"enable": true, "tool": "naabu", "rate": 3000,
 			"ports": "top100",
-			"portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false,
+			"portThreshold": 100, "scanType": "s", "targetTimeout": 60, "probeTimeoutMs": 1000, "skipHostDiscovery": false,
 			"excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2,
 			"warmUpTime": 1, "verify": false,
 		},
@@ -294,7 +294,7 @@ func getDefaultTemplates() []model.ScanTemplate {
 		"portscan": map[string]interface{}{
 			"enable": true, "tool": "naabu", "rate": 3000,
 			"ports": "top100",
-			"portThreshold": 100, "scanType": "s", "timeout": 60, "skipHostDiscovery": false,
+			"portThreshold": 100, "scanType": "s", "targetTimeout": 60, "probeTimeoutMs": 1000, "skipHostDiscovery": false,
 			"excludeCDN": false, "excludeHosts": "", "workers": 50, "retries": 2,
 			"warmUpTime": 1, "verify": false,
 		},

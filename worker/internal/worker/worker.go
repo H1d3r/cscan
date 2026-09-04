@@ -2037,28 +2037,48 @@ domainScanDone:
 			target = strings.Join(resolvable, "\n")
 		}
 
-		// Naabu 内部 worker pool 用于并行启动多个 naabu 进程（每目标一个进程）。
-		// 此值不应等于 Worker 子任务并发数，否则 N 个子任务各开 N 个进程 = N² 进程爆炸。
-		// 全局信号量（naabuSem）已兜底限制总进程数 ≤ 5，此处仅控制单子任务内的并行度。
+		// Naabu 每个目标启动一个独立进程，单子任务内最多并行 5 个进程；
+		// Workers 同时作为 naabu -c 的内部线程数，但不会突破进程级全局信号量。
 		if config.PortScan.Workers <= 0 {
 			config.PortScan.Workers = 2
 		}
 
-		// 端口扫描在 naabu/masscan 内部按目标串行执行（见 scanner/naabu.go runNaabuWithLogger）
-		// 故总超时 = 用户单目标超时 × 目标数；并基于端口数/速率/重试估算下限，避免大端口范围低速率被截断
-		singleTimeout := config.PortScan.Timeout
-		if singleTimeout <= 0 {
-			singleTimeout = 5
+		// 根据配置选择端口发现工具（默认使用 Naabu）。
+		portDiscoveryTool := "naabu"
+		if config.PortScan.Tool != "" {
+			portDiscoveryTool = config.PortScan.Tool
 		}
-		// 粗略估算目标数（按换行分割）
-		portTargetCount := len(strings.Split(strings.TrimSpace(target), "\n"))
+
+		// Web 的 targetTimeout 是单个目标完整扫描的硬上限；probeTimeoutMs 仅控制
+		// Naabu 单次探测等待时间。二者不得互相推导或覆盖。
+		targetTimeout := config.PortScan.TargetTimeout
+		if targetTimeout <= 0 {
+			targetTimeout = scanner.DefaultPortScanTargetTimeoutSeconds
+		}
+		probeTimeoutMs := config.PortScan.ProbeTimeoutMs
+		if probeTimeoutMs <= 0 {
+			probeTimeoutMs = scanner.DefaultNaabuProbeTimeoutMilliseconds
+		}
+		config.PortScan.TargetTimeout = targetTimeout
+		config.PortScan.ProbeTimeoutMs = probeTimeoutMs
+
+		portTargetCount := len(targets)
+		if portDiscoveryTool == "naabu" {
+			// 与 Naabu 的真实执行模型保持一致：CIDR/IP range 会先展开，再按 host 去重。
+			portTargetCount = scanner.CountNaabuProcessTargets(target)
+		}
 		if portTargetCount <= 0 {
 			portTargetCount = 1
 		}
+		processConcurrency := 1
+		if portDiscoveryTool == "naabu" {
+			processConcurrency = scanner.EffectiveNaabuProcessConcurrency(config.PortScan.Workers, portTargetCount)
+		}
+		waves := (portTargetCount + processConcurrency - 1) / processConcurrency
+		const phaseBufferSeconds = 30
+		portScanTimeout := targetTimeout*waves + phaseBufferSeconds
 
-		portScanTimeout := singleTimeout * portTargetCount
-
-		// 估算最小耗时：每目标 ports*(1+retries)*1.5/rate 秒（1.5 为安全系数）
+		// 估算值仅用于提示配置可能过紧，绝不再偷偷提高用户设置的单目标上限。
 		portCount := scanner.EstimatePortCount(config.PortScan.Ports)
 		rate := config.PortScan.Rate
 		if rate <= 0 {
@@ -2068,27 +2088,21 @@ domainScanDone:
 		if retries < 0 {
 			retries = 0
 		}
-		estimatedPerTarget := portCount * (1 + retries) * 3 / (rate * 2)
-		if estimatedPerTarget < 60 {
-			estimatedPerTarget = 60
+		estimateDenominator := rate * 2
+		estimatedPerTarget := (portCount*(1+retries)*3 + estimateDenominator - 1) / estimateDenominator
+		if estimatedPerTarget < 1 {
+			estimatedPerTarget = 1
 		}
-		minTotal := estimatedPerTarget * portTargetCount
-		if portScanTimeout < minTotal {
-			portScanTimeout = minTotal
+		if estimatedPerTarget > targetTimeout {
+			w.taskLog(task.TaskId, LevelWarn,
+				"Port scan: targetTimeout=%ds may be insufficient for estimated runtime=%ds (ports=%d, rate=%d, retries=%d)",
+				targetTimeout, estimatedPerTarget, portCount, rate, retries)
 		}
 
-		w.taskLog(task.TaskId, LevelInfo, "Port scan: timeout=%ds (single=%ds, targets=%d, ports=%d, rate=%d, estimatedPerTarget=%ds)",
-			portScanTimeout, singleTimeout, portTargetCount, portCount, rate, estimatedPerTarget)
+		w.taskLog(task.TaskId, LevelInfo,
+			"Port scan budget: targetTimeout=%ds, probeTimeout=%dms, phaseTimeout=%ds, targets=%d, processConcurrency=%d, waves=%d",
+			targetTimeout, probeTimeoutMs, portScanTimeout, portTargetCount, processConcurrency, waves)
 		portCtx, portCancel := context.WithTimeout(ctx, time.Duration(portScanTimeout)*time.Second)
-
-		// 将聚合超时透传至 naabu scanner，使其按目标数均摊单目标超时
-		config.PortScan.AggregatedTimeout = portScanTimeout
-
-		// 根据配置选择端口发现工具（默认使用Naabu)
-		portDiscoveryTool := "naabu"
-		if config.PortScan != nil && config.PortScan.Tool != "" {
-			portDiscoveryTool = config.PortScan.Tool
-		}
 
 		var openPorts []*scanner.Asset
 
@@ -2135,7 +2149,60 @@ domainScanDone:
 					w.taskLog(task.TaskId, LevelInfo, "DNS resolution failed for %d hosts, will skip in subsequent phases", len(masscanResult.DNSFailedHosts))
 				}
 			}
-		default: // naabu
+		case "tcp":
+			w.taskLog(task.TaskId, LevelInfo, "Port scan: TCP")
+			tcpOptions := &scanner.PortScanOptions{
+				Tool:              "tcp",
+				Ports:             config.PortScan.Ports,
+				Rate:              config.PortScan.Rate,
+				Timeout:           targetTimeout,
+				TargetTimeout:     targetTimeout,
+				ProbeTimeoutMs:    probeTimeoutMs,
+				Concurrent:        config.PortScan.Workers,
+				PortThreshold:     config.PortScan.PortThreshold,
+				ScanType:          config.PortScan.ScanType,
+				SkipHostDiscovery: config.PortScan.SkipHostDiscovery,
+				ExcludeCDN:        config.PortScan.ExcludeCDN,
+				ExcludeHosts:      config.PortScan.ExcludeHosts,
+				Retries:           config.PortScan.Retries,
+				WarmUpTime:        config.PortScan.WarmUpTime,
+				Workers:           config.PortScan.Workers,
+				Verify:            config.PortScan.Verify,
+			}
+			if tcpOptions.Ports == "" {
+				tcpOptions.Ports = "21,22,23,25,80,443,3306,3389,6379,8080"
+			}
+			tcpScanner := w.scanners["portscan"]
+			tcpResult, err := tcpScanner.Scan(portCtx, &scanner.ScanConfig{
+				Target:     target,
+				Options:    tcpOptions,
+				TaskLogger: taskLogger,
+				OnProgress: onProgress,
+			})
+			if portCtx.Err() == context.DeadlineExceeded {
+				w.taskLog(task.TaskId, LevelWarn, "Port scan timeout, continuing with partial results")
+			} else if ctx.Err() != nil {
+				portCancel()
+				w.logTaskAbort(task, config, completedPhases, fmt.Sprintf("Port scan aborted, task canceled (context error: %v)", ctx.Err()))
+				return
+			}
+			if err != nil {
+				w.taskLog(task.TaskId, LevelError, "TCP scan error: %v", err)
+			}
+			if tcpResult != nil {
+				if len(tcpResult.Assets) > 0 {
+					openPorts = tcpResult.Assets
+					w.taskLog(task.TaskId, LevelInfo, "Found %d open ports", len(openPorts))
+				}
+				if len(tcpResult.SkippedHosts) > 0 {
+					skippedHosts = append(skippedHosts, tcpResult.SkippedHosts...)
+				}
+				if len(tcpResult.DNSFailedHosts) > 0 {
+					skippedHosts = append(skippedHosts, tcpResult.DNSFailedHosts...)
+					w.taskLog(task.TaskId, LevelInfo, "DNS resolution failed for %d hosts, will skip in subsequent phases", len(tcpResult.DNSFailedHosts))
+				}
+			}
+		case "naabu":
 			w.taskLog(task.TaskId, LevelInfo, "Port scan: Naabu")
 			naabuScanner := w.scanners["naabu"]
 			naabuResult, err := naabuScanner.Scan(portCtx, &scanner.ScanConfig{
@@ -2188,6 +2255,11 @@ domainScanDone:
 					w.taskLog(task.TaskId, LevelInfo, "DNS resolution failed for %d hosts, will skip in subsequent phases", len(naabuResult.DNSFailedHosts))
 				}
 			}
+		default:
+			w.taskLog(task.TaskId, LevelError, "Unsupported port scan tool: %s", portDiscoveryTool)
+			portCancel()
+			w.logTaskAbort(task, config, completedPhases, fmt.Sprintf("Unsupported port scan tool: %s", portDiscoveryTool))
+			return
 		}
 
 		// 检查是否被停止

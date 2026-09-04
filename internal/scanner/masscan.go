@@ -87,6 +87,8 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 		Timeout:       3,
 		PortThreshold: 0, // 默认不限制
 	}
+	fallbackConcurrent := 1
+	var fallbackOptions *PortScanOptions
 
 	// 尝试从不同类型的Options中提取配置
 	if config.Options != nil {
@@ -94,6 +96,9 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 		case *MasscanOptions:
 			opts = v
 		case *PortScanOptions:
+			fallback := *v
+			fallback.Tool = "tcp"
+			fallbackOptions = &fallback
 			if v.Ports != "" {
 				opts.Ports = v.Ports
 			}
@@ -103,19 +108,31 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 			if v.Timeout > 0 {
 				opts.Timeout = v.Timeout
 			}
+			if v.TargetTimeout > 0 && v.Timeout <= 0 {
+				opts.Timeout = v.TargetTimeout
+			}
+			if v.Concurrent > 0 {
+				fallbackConcurrent = v.Concurrent
+			}
 			if v.PortThreshold > 0 {
 				opts.PortThreshold = v.PortThreshold
 			}
+			opts.SkipHostDiscovery = v.SkipHostDiscovery
+			opts.ExcludeHosts = v.ExcludeHosts
 		default:
-			// 尝试通过JSON转换
+			// 尝试通过JSON转换。scheduler.PortScanConfig 已将旧 timeout
+			// 归一化为 targetTimeout，因此这里必须同时兼容两个字段。
 			if data, err := json.Marshal(config.Options); err == nil {
 				var portConfig struct {
 					Ports             string `json:"ports"`
 					Rate              int    `json:"rate"`
-					Timeout           int    `json:"timeout"`
+					Timeout           *int   `json:"timeout"`
+					TargetTimeout     int    `json:"targetTimeout"`
 					PortThreshold     int    `json:"portThreshold"`
 					SkipHostDiscovery bool   `json:"skipHostDiscovery"`
 					ExcludeHosts      string `json:"excludeHosts"`
+					Workers           int    `json:"workers"`
+					Concurrent        int    `json:"concurrent"`
 				}
 				if err := json.Unmarshal(data, &portConfig); err == nil {
 					if portConfig.Ports != "" {
@@ -124,14 +141,21 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 					if portConfig.Rate > 0 {
 						opts.Rate = portConfig.Rate
 					}
-					if portConfig.Timeout > 0 {
-						opts.Timeout = portConfig.Timeout
+					if portConfig.Timeout != nil && *portConfig.Timeout > 0 {
+						opts.Timeout = *portConfig.Timeout
+					} else if portConfig.TargetTimeout > 0 {
+						opts.Timeout = portConfig.TargetTimeout
 					}
 					if portConfig.PortThreshold > 0 {
 						opts.PortThreshold = portConfig.PortThreshold
 					}
 					opts.SkipHostDiscovery = portConfig.SkipHostDiscovery
 					opts.ExcludeHosts = portConfig.ExcludeHosts
+					if portConfig.Concurrent > 0 {
+						fallbackConcurrent = portConfig.Concurrent
+					} else if portConfig.Workers > 0 {
+						fallbackConcurrent = portConfig.Workers
+					}
 				}
 			}
 		}
@@ -165,9 +189,27 @@ func (s *MasscanScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanRes
 	// 检查masscan是否安装
 	if !checkMasscanInstalled() {
 		logFn("ERROR", "masscan not installed, falling back to tcp scan")
-		// 回退到TCP扫描
+		// 回退到 TCP 扫描时必须把已解析的 Masscan 配置显式转换为
+		// PortScanOptions；PortScanner 不识别 MasscanOptions 或 scheduler 配置。
+		if fallbackOptions == nil {
+			fallbackOptions = &PortScanOptions{Tool: "tcp"}
+		}
+		// 使用 Masscan 解析后的有效值覆盖 fallback，确保 scheduler 配置、
+		// 旧 PortScanOptions 和默认值在 TCP 路径上保持一致。
+		fallbackOptions.Tool = "tcp"
+		fallbackOptions.Ports = opts.Ports
+		fallbackOptions.Rate = opts.Rate
+		fallbackOptions.Timeout = opts.Timeout
+		fallbackOptions.PortThreshold = opts.PortThreshold
+		fallbackOptions.SkipHostDiscovery = opts.SkipHostDiscovery
+		fallbackOptions.ExcludeHosts = opts.ExcludeHosts
+		if fallbackOptions.Concurrent <= 0 {
+			fallbackOptions.Concurrent = fallbackConcurrent
+		}
+		fallbackConfig := *config
+		fallbackConfig.Options = fallbackOptions
 		tcpScanner := NewPortScanner()
-		return tcpScanner.Scan(ctx, config)
+		return tcpScanner.Scan(ctx, &fallbackConfig)
 	}
 
 	// 解析目标

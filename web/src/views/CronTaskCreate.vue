@@ -360,8 +360,17 @@
                   </el-form-item>
                 </el-col>
                 <el-col :span="12">
-                  <el-form-item :label="$t('task.timeoutSeconds')">
-                    <el-input-number v-model="form.portscanTimeout" :min="5" :max="1200" style="width:100%" />
+                  <el-form-item :label="$t('task.portscanTargetTimeout')">
+                    <el-input-number v-model="form.portscanTargetTimeout" :min="5" :max="1200" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.portscanTargetTimeoutHint') }}</span>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
+                <el-col :span="12">
+                  <el-form-item :label="$t('task.naabuProbeTimeoutMs')">
+                    <el-input-number v-model="form.portscanProbeTimeoutMs" :min="50" :max="10000" :step="50" style="width:100%" />
+                    <span class="form-hint">{{ $t('task.naabuProbeTimeoutHint') }}</span>
                   </el-form-item>
                 </el-col>
               </el-row>
@@ -1210,7 +1219,8 @@ function getDefaultForm() {
     ports: 'top100',
     portThreshold: 100,
     scanType: 'c',
-    portscanTimeout: 60,
+    portscanTargetTimeout: 60,
+    portscanProbeTimeoutMs: 1000,
     skipHostDiscovery: false,
     excludeCDN: false,
     excludeHosts: '',
@@ -1893,7 +1903,8 @@ function buildConfig() {
       ports: form.ports,
       portThreshold: form.portThreshold,
       scanType: form.scanType,
-      timeout: form.portscanTimeout,
+      targetTimeout: form.portscanTargetTimeout,
+      probeTimeoutMs: form.portscanProbeTimeoutMs,
       skipHostDiscovery: form.skipHostDiscovery,
       excludeCDN: form.excludeCDN,
       excludeHosts: form.excludeHosts,
@@ -2030,7 +2041,8 @@ function applyConfig(config) {
     form.ports = config.portscan.ports ?? 'top100'
     form.portThreshold = config.portscan.portThreshold ?? 100
     form.scanType = config.portscan.scanType ?? 'c'
-    form.portscanTimeout = config.portscan.timeout ?? 60
+    form.portscanTargetTimeout = config.portscan.targetTimeout ?? config.portscan.timeout ?? 60
+    form.portscanProbeTimeoutMs = config.portscan.probeTimeoutMs ?? 1000
     form.skipHostDiscovery = config.portscan.skipHostDiscovery ?? false
     form.excludeCDN = config.portscan.excludeCDN ?? false
     form.excludeHosts = config.portscan.excludeHosts ?? ''

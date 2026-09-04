@@ -1119,12 +1119,20 @@ type DirScanConfig struct {
 	RecursionDepth  int    `json:"recursionDepth"`  // 递归深度
 }
 
+const (
+	defaultPortScanTargetTimeoutSeconds  = 60
+	defaultNaabuProbeTimeoutMilliseconds = 1000
+	defaultNaabuRetries                  = 2
+)
+
 type PortScanConfig struct {
 	Enable            bool   `json:"enable"`
 	Tool              string `json:"tool"` // tcp, masscan, naabu
 	Ports             string `json:"ports"`
 	Rate              int    `json:"rate"`              // 每秒发送包数，默认3000，建议3000-7000
-	Timeout           int    `json:"timeout"`           // 端口扫描超时时间(秒)，默认5秒
+	TargetTimeout     int    `json:"targetTimeout"`     // 单个目标完整端口扫描上限（秒），默认60
+	ProbeTimeoutMs    int    `json:"probeTimeoutMs"`    // Naabu 单次端口探测等待时间（毫秒），默认1000
+	LegacyTimeout     int    `json:"-"`                 // 已废弃：仅由 UnmarshalJSON 读取旧版 timeout
 	PortThreshold     int    `json:"portThreshold"`     // 开放端口数量阈值，超过则过滤该主机
 	ScanType          string `json:"scanType"`          // s=SYN, c=CONNECT，默认 c
 	SkipHostDiscovery bool   `json:"skipHostDiscovery"` // 跳过主机发现 (-Pn)
@@ -1134,7 +1142,48 @@ type PortScanConfig struct {
 	WarmUpTime        int    `json:"warmUpTime"`        // 扫描阶段间等待时间(秒)，默认1，建议0-1
 	Workers           int    `json:"workers"`           // Naabu内部工作线程，默认50，建议50-100
 	Verify            bool   `json:"verify"`            // TCP验证，默认false（禁用以提速）
-	AggregatedTimeout int    `json:"aggregatedTimeout"` // 聚合超时（秒），Worker自动设置，前端无需填写
+}
+
+// UnmarshalJSON 兼容旧版 portscan.timeout，并将两个不同维度的超时归一化。
+func (c *PortScanConfig) UnmarshalJSON(data []byte) error {
+	type plain PortScanConfig
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	// 兼容字段不参与正常序列化；指针用于区分 retries 缺失与显式 0。
+	var compatibility struct {
+		LegacyTimeout int  `json:"timeout"`
+		Retries       *int `json:"retries"`
+	}
+	if err := json.Unmarshal(data, &compatibility); err != nil {
+		return err
+	}
+
+	if decoded.TargetTimeout == 0 {
+		decoded.TargetTimeout = compatibility.LegacyTimeout
+	}
+	if decoded.TargetTimeout == 0 {
+		decoded.TargetTimeout = defaultPortScanTargetTimeoutSeconds
+	}
+	if decoded.TargetTimeout < 0 {
+		return fmt.Errorf("portscan.targetTimeout must be non-negative, got %d", decoded.TargetTimeout)
+	}
+	if decoded.ProbeTimeoutMs == 0 {
+		decoded.ProbeTimeoutMs = defaultNaabuProbeTimeoutMilliseconds
+	}
+	if decoded.ProbeTimeoutMs < 0 {
+		return fmt.Errorf("portscan.probeTimeoutMs must be non-negative, got %d", decoded.ProbeTimeoutMs)
+	}
+	if compatibility.Retries == nil {
+		decoded.Retries = defaultNaabuRetries
+	}
+
+	// 后续序列化只输出新字段，避免继续传播语义含糊的 timeout。
+	decoded.LegacyTimeout = 0
+	*c = PortScanConfig(decoded)
+	return nil
 }
 
 // PortIdentifyConfig 端口识别配置（Nmap/Fingerprintx 服务识别）
