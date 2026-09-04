@@ -121,15 +121,17 @@
                 :disabled="isReadonlyRole"
                 @change="toggleGroup(group, $event)"
               >{{ group.label }}</el-checkbox>
-              <div class="menu-perm-items">
+              <el-checkbox-group
+                v-model="roleForm.menuPaths"
+                class="menu-perm-items"
+                :disabled="isReadonlyRole"
+              >
                 <el-checkbox
                   v-for="child in group.children"
                   :key="child.path"
-                  v-model="roleForm.menuPaths"
                   :value="child.path"
-                  :disabled="isReadonlyRole"
                 >{{ child.label }}</el-checkbox>
-              </div>
+              </el-checkbox-group>
             </div>
           </div>
         </el-form-item>

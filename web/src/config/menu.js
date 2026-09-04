@@ -84,13 +84,25 @@ export function buildMenuGroups(t, allowedPaths) {
   }
 
   // 详情/表单等非菜单路由（如 /task/create）也需要授权，否则列表页可见但无法进入详情
+  const extraLabelKeys = {
+    '/task/create': 'menu.TaskCreate',
+    '/task/edit/:id': 'menu.TaskEdit',
+    '/task/detail': 'menu.TaskDetail',
+    '/task/template': 'menu.ScanTemplate',
+    '/report': 'menu.Report',
+    '/cron-task/create': 'menu.CronTaskCreate',
+    '/cron-task/edit/:id': 'menu.CronTaskEdit'
+  }
   const grouped = new Set(groups.flatMap(g => g.children.map(c => c.path)))
   const extras = (allowedPaths || []).filter(p => !grouped.has(p))
   if (extras.length > 0) {
     groups.push({
       key: 'extra',
       label: t('roleManagement.subPageMenus'),
-      children: extras.map(path => ({ path, label: path }))
+      children: extras.map(path => ({
+        path,
+        label: extraLabelKeys[path] ? t(extraLabelKeys[path]) : path
+      }))
     })
   }
 
