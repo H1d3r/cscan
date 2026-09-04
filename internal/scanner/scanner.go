@@ -21,6 +21,19 @@ type Scanner interface {
 	Scan(ctx context.Context, config *ScanConfig) (*ScanResult, error)
 }
 
+// ScanEventLogger receives bounded structured execution facts in addition to the
+// existing human-readable TaskLogger stream. Callers that do not need
+// structured events may leave it nil.
+type ScanEventLogger func(event, phase, outcome string, fields map[string]interface{})
+
+const (
+	EventNaabuParseComplete  = "naabu_parse_complete"
+	EventNmapPortResult      = "nmap_port_result"
+	EventSchemeProbeComplete = "scheme_probe_complete"
+	EventHTTPXPhaseComplete  = "httpx_phase_complete"
+	EventFingerprintDecision = "fingerprint_decision"
+)
+
 // ScanConfig 扫描配置
 type ScanConfig struct {
 	Target            string      `json:"target"`
@@ -31,6 +44,8 @@ type ScanConfig struct {
 	WorkerConcurrency int         `json:"-"` // Worker 自适应并发数，scanner 模块用作 Worker Pool 默认值
 	// TaskLogger 任务日志回调，用于将扫描日志推送到任务日志流
 	TaskLogger func(level, format string, args ...interface{}) `json:"-"`
+	// EventLogger 可选结构化事件回调；字段在持久化边界再次白名单过滤。
+	EventLogger ScanEventLogger `json:"-"`
 	// OnProgress 进度回调，参数为当前进度(0-100)和描述
 	OnProgress func(progress int, message string) `json:"-"`
 	// OnAssetUpdated 局部资产完成更新时的回调事件（用于流式结果更新）
@@ -43,40 +58,47 @@ type ScanConfig struct {
 
 // ScanResult 扫描结果
 type ScanResult struct {
-	MainTaskId      string            `json:"mainTaskId"`
-	Assets          []*Asset          `json:"assets"`
-	Vulnerabilities []*Vulnerability  `json:"vulnerabilities"`
-	JSFinderResults []*JSFinderResult `json:"jsfinderResults,omitempty"`
-	CertResults     []*CertResult     `json:"certResults,omitempty"`    // 证书采集结果（T2.1 certcheck 扫描器产出，由 T2.2 落库）
-	SkippedHosts    []string          `json:"skippedHosts,omitempty"`   // 因端口阈值超限被跳过的主机列表
-	DNSFailedHosts  []string          `json:"dnsFailedHosts,omitempty"` // DNS解析失败的主机列表
+	MainTaskId          string               `json:"mainTaskId"`
+	Assets              []*Asset             `json:"assets"`
+	Vulnerabilities     []*Vulnerability     `json:"vulnerabilities"`
+	JSFinderResults     []*JSFinderResult    `json:"jsfinderResults,omitempty"`
+	CertResults         []*CertResult        `json:"certResults,omitempty"`         // 证书采集结果（T2.1 certcheck 扫描器产出，由 T2.2 落库）
+	SkippedHosts        []string             `json:"skippedHosts,omitempty"`        // 因端口阈值超限被跳过的主机列表
+	DNSFailedHosts      []string             `json:"dnsFailedHosts,omitempty"`      // DNS解析失败的主机列表
+	Diagnostic          *ScanDiagnostic      `json:"diagnostic,omitempty"`          // 可选扫描执行诊断；旧调用方可忽略
+	PortIdentifyResults []PortIdentifyResult `json:"portIdentifyResults,omitempty"` // Nmap逐host-port识别结果
 }
 
 // Asset 资产
 type Asset struct {
-	Authority  string   `json:"authority"`
-	Host       string   `json:"host"`
-	Port       int      `json:"port"`
-	Category   string   `json:"category"` // ipv4/ipv6/domain/url
-	Service    string   `json:"service"`
-	Server     string   `json:"server"`
-	Banner     string   `json:"banner"`
-	Title      string   `json:"title"`
-	App        []string `json:"app"`
-	HttpStatus string   `json:"httpStatus"`
-	HttpHeader string   `json:"httpHeader"`
-	HttpBody   string   `json:"httpBody"`
-	Cert       string   `json:"cert"`
-	IconHash   string   `json:"iconHash"`
-	IconData   []byte   `json:"iconData,omitempty"` // favicon 图片原始数据
-	Screenshot string   `json:"screenshot"`
-	IsCDN      bool     `json:"isCdn"`
-	CName      string   `json:"cname"`
-	IsCloud    bool     `json:"isCloud"`
-	IsHTTP     bool     `json:"isHttp"` // 是否为HTTP服务
-	IPV4       []IPInfo `json:"ipv4"`
-	IPV6       []IPInfo `json:"ipv6"`
-	Source     string   `json:"source"` // 资产来源: subfinder, portscan, urlfinder, etc.
+	Authority           string              `json:"authority"`
+	Host                string              `json:"host"`
+	Port                int                 `json:"port"`
+	Category            string              `json:"category"` // ipv4/ipv6/domain/url
+	Service             string              `json:"service"`
+	Server              string              `json:"server"`
+	Banner              string              `json:"banner"`
+	Title               string              `json:"title"`
+	App                 []string            `json:"app"`
+	FingerprintFindings FingerprintFindings `json:"fingerprintFindings,omitempty"`
+	// FingerprintFindingsCollected distinguishes an intentional empty result from
+	// a phase that did not obtain a usable response. It is transport-only.
+	FingerprintFindingsCollected bool     `json:"-"`
+	HttpStatus                   string   `json:"httpStatus"`
+	HttpHeader                   string   `json:"httpHeader"`
+	HttpBody                     string   `json:"httpBody"`
+	Cert                         string   `json:"cert"`
+	IconHash                     string   `json:"iconHash"`
+	IconData                     []byte   `json:"iconData,omitempty"` // favicon 图片原始数据
+	Screenshot                   string   `json:"screenshot"`
+	IsCDN                        bool     `json:"isCdn"`
+	CName                        string   `json:"cname"`
+	IsCloud                      bool     `json:"isCloud"`
+	IsHTTP                       bool     `json:"isHttp"`                        // 是否为HTTP服务
+	ProtocolProbeStatus          string   `json:"protocolProbeStatus,omitempty"` // HTTP/HTTPS 协议探测结论
+	IPV4                         []IPInfo `json:"ipv4"`
+	IPV6                         []IPInfo `json:"ipv6"`
+	Source                       string   `json:"source"` // 资产来源: subfinder, portscan, urlfinder, etc.
 	// 目录扫描相关字段
 	Path          string `json:"path,omitempty"`          // 发现的路径
 	ContentLength int64  `json:"contentLength,omitempty"` // 响应内容长度

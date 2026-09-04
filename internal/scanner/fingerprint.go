@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -135,6 +137,12 @@ type FingerprintScanner struct {
 	client                  *http.Client
 	wappalyzerClient        *wappalyzer.Wappalyze
 	customFingerprintEngine *CustomFingerprintEngine
+	// Test seams also keep target construction observable without launching
+	// external httpx/Chrome or dialing public certificate endpoints.
+	runHttpx               func(context.Context, []*Asset, *FingerprintOptions, func(string, string, ...interface{})) error
+	runHttpxWithDiagnostic func(context.Context, []*Asset, *FingerprintOptions, func(string, string, ...interface{})) (*ScanDiagnostic, error)
+	captureScreen          func(context.Context, string, func(string, string, ...interface{})) string
+	fetchCert              func(context.Context, string, int, time.Duration) *CertResult
 	// assetMutex 保护 httpx 回调和主循环对同一 asset 的并发访问
 	assetMutex sync.Mutex
 	// httpxDone 标记 httpx 扫描是否完成，用于主循环等待
@@ -149,6 +157,361 @@ type AppDetectionResult struct {
 	Sources      []string // 检测来源：httpx, wappalyzer, custom
 	CustomIDs    []string // 自定义指纹的ID列表
 	ActiveIDs    []string // 主动指纹的ID列表
+}
+
+const (
+	fingerprintDecisionConfirmed = "CONFIRMED"
+	fingerprintDecisionCandidate = "CANDIDATE"
+
+	fingerprintWeakFanoutThreshold = 3
+	fingerprintConflictCloseDelta  = 10
+)
+
+type fingerprintEvidenceObservation struct {
+	source   string
+	evidence FingerprintEvidence
+}
+
+// GovernFingerprintFindings applies confidence, conflict, and weak fan-out
+// policy after rule evaluation. It never mutates the input findings or changes
+// RawMatched; governance only decides whether a raw match is confirmed or kept
+// as an auditable candidate.
+func GovernFingerprintFindings(findings FingerprintFindings) FingerprintFindings {
+	groups := make(map[string][]FingerprintFinding)
+	order := make([]string, 0)
+	for _, finding := range findings {
+		if !finding.RawMatched {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(finding.Name))
+		if key == "" {
+			continue
+		}
+		if _, exists := groups[key]; !exists {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], finding)
+	}
+
+	governed := make(FingerprintFindings, 0, len(order))
+	for _, key := range order {
+		merged, observations := mergeRawFingerprintFindings(groups[key])
+		applyFingerprintConfidence(&merged, observations)
+		governed = append(governed, merged)
+	}
+
+	applyWeakFingerprintFanout(governed)
+	applyFingerprintConflicts(governed)
+	sort.SliceStable(governed, func(i, j int) bool {
+		return strings.ToLower(governed[i].Name) < strings.ToLower(governed[j].Name)
+	})
+	return governed
+}
+
+func mergeRawFingerprintFindings(findings []FingerprintFinding) (FingerprintFinding, []fingerprintEvidenceObservation) {
+	merged := findings[0]
+	merged.RawMatched = true
+	merged.Decision = ""
+	merged.Confidence = 0
+	merged.ReasonCode = ""
+	merged.Evidence = nil
+
+	sources := make(map[string]struct{})
+	ids := make(map[string]struct{})
+	coexistence := make(map[string]struct{})
+	exclusiveWith := make(map[string]struct{})
+	evidenceSeen := make(map[string]struct{})
+	observations := make([]fingerprintEvidenceObservation, 0)
+
+	for _, finding := range findings {
+		source := strings.TrimSpace(finding.Source)
+		if source == "" {
+			source = "custom"
+		}
+		sources[source] = struct{}{}
+		if finding.FingerprintID != "" {
+			ids[finding.FingerprintID] = struct{}{}
+		}
+		if merged.ConflictGroup == "" {
+			merged.ConflictGroup = finding.ConflictGroup
+		}
+		for _, item := range finding.Coexistence {
+			if item = strings.TrimSpace(item); item != "" {
+				coexistence[item] = struct{}{}
+			}
+		}
+		for _, item := range finding.ExclusiveWith {
+			if item = strings.TrimSpace(item); item != "" {
+				exclusiveWith[item] = struct{}{}
+			}
+		}
+		for _, evidence := range finding.Evidence {
+			observations = append(observations, fingerprintEvidenceObservation{source: source, evidence: evidence})
+			key := source + "\x00" + evidence.Channel + "\x00" + evidence.Strength + "\x00" + evidence.MatchedValueDigest
+			if _, exists := evidenceSeen[key]; exists {
+				continue
+			}
+			evidenceSeen[key] = struct{}{}
+			merged.Evidence = append(merged.Evidence, evidence)
+		}
+	}
+
+	merged.Source = joinSortedSet(sources)
+	merged.FingerprintID = joinSortedSet(ids)
+	merged.Coexistence = sortedSetValues(coexistence)
+	merged.ExclusiveWith = sortedSetValues(exclusiveWith)
+	return merged, observations
+}
+
+func applyFingerprintConfidence(finding *FingerprintFinding, observations []fingerprintEvidenceObservation) {
+	strong := make(map[string]struct{})
+	medium := make(map[string]struct{})
+	weak := make(map[string]struct{})
+	incomplete := false
+	for _, observation := range observations {
+		evidence := observation.evidence
+		if !evidence.Complete {
+			incomplete = true
+			continue
+		}
+		key := observation.source + "\x00" + evidence.Channel
+		switch strings.ToLower(evidence.Strength) {
+		case "strong":
+			strong[key] = struct{}{}
+		case "medium":
+			medium[key] = struct{}{}
+		default:
+			weak[key] = struct{}{}
+		}
+	}
+
+	switch {
+	case len(strong) > 0:
+		finding.Decision = fingerprintDecisionConfirmed
+		finding.Confidence = 95
+		finding.ReasonCode = "confirmed_strong_evidence"
+	case len(medium) >= 2:
+		finding.Decision = fingerprintDecisionConfirmed
+		finding.Confidence = 85
+		finding.ReasonCode = "confirmed_independent_medium_evidence"
+	case hasIndependentMediumAndWeak(medium, weak):
+		finding.Decision = fingerprintDecisionConfirmed
+		finding.Confidence = 75
+		finding.ReasonCode = "confirmed_medium_weak_evidence"
+	case len(medium) > 0:
+		finding.Decision = fingerprintDecisionCandidate
+		finding.Confidence = 55
+		finding.ReasonCode = "insufficient_evidence"
+	case len(weak) > 0:
+		finding.Decision = fingerprintDecisionCandidate
+		finding.Confidence = 25
+		finding.ReasonCode = "insufficient_evidence"
+	default:
+		finding.Decision = fingerprintDecisionCandidate
+		finding.Confidence = 10
+		if incomplete {
+			finding.ReasonCode = "incomplete_evidence"
+		} else {
+			finding.ReasonCode = "no_complete_evidence"
+		}
+	}
+}
+
+func hasIndependentMediumAndWeak(medium, weak map[string]struct{}) bool {
+	for mediumKey := range medium {
+		for weakKey := range weak {
+			if mediumKey != weakKey {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func applyWeakFingerprintFanout(findings FingerprintFindings) {
+	weakOnly := make([]int, 0)
+	for i := range findings {
+		if findings[i].Decision == fingerprintDecisionCandidate && findings[i].Confidence == 25 {
+			weakOnly = append(weakOnly, i)
+		}
+	}
+	if len(weakOnly) <= fingerprintWeakFanoutThreshold {
+		return
+	}
+	for _, index := range weakOnly {
+		findings[index].ReasonCode = "weak_fanout"
+	}
+}
+
+func applyFingerprintConflicts(findings FingerprintFindings) {
+	conflictGroups := make(map[string][]int)
+	for i := range findings {
+		group := strings.ToLower(strings.TrimSpace(findings[i].ConflictGroup))
+		if group != "" {
+			conflictGroups[group] = append(conflictGroups[group], i)
+		}
+	}
+	for _, indexes := range conflictGroups {
+		filtered := make([]int, 0, len(indexes))
+		for _, index := range indexes {
+			coexistsWithAll := true
+			for _, other := range indexes {
+				if index != other && !fingerprintsMayCoexist(findings[index], findings[other]) {
+					coexistsWithAll = false
+					break
+				}
+			}
+			if !coexistsWithAll {
+				filtered = append(filtered, index)
+			}
+		}
+		downgradeFingerprintConflict(findings, filtered)
+	}
+
+	seenPairs := make(map[string]struct{})
+	for i := range findings {
+		for j := i + 1; j < len(findings); j++ {
+			if fingerprintsMayCoexist(findings[i], findings[j]) || !fingerprintsExplicitlyConflict(findings[i], findings[j]) {
+				continue
+			}
+			pairKey := fmt.Sprintf("%d:%d", i, j)
+			if _, seen := seenPairs[pairKey]; seen {
+				continue
+			}
+			seenPairs[pairKey] = struct{}{}
+			downgradeFingerprintConflict(findings, []int{i, j})
+		}
+	}
+}
+
+func downgradeFingerprintConflict(findings FingerprintFindings, indexes []int) {
+	if len(indexes) < 2 {
+		return
+	}
+	sort.SliceStable(indexes, func(i, j int) bool {
+		return findings[indexes[i]].Confidence > findings[indexes[j]].Confidence
+	})
+	if findings[indexes[0]].Confidence-findings[indexes[1]].Confidence <= fingerprintConflictCloseDelta {
+		for _, index := range indexes {
+			findings[index].Decision = fingerprintDecisionCandidate
+			findings[index].ReasonCode = "exclusive_conflict_close_score"
+		}
+		return
+	}
+	for _, index := range indexes[1:] {
+		findings[index].Decision = fingerprintDecisionCandidate
+		findings[index].ReasonCode = "exclusive_conflict_lower_confidence"
+	}
+}
+
+func fingerprintsExplicitlyConflict(left, right FingerprintFinding) bool {
+	return containsFold(left.ExclusiveWith, right.Name) || containsFold(right.ExclusiveWith, left.Name)
+}
+
+func fingerprintsMayCoexist(left, right FingerprintFinding) bool {
+	return containsFold(left.Coexistence, right.Name) || containsFold(right.Coexistence, left.Name) ||
+		(left.ConflictGroup != "" && (containsFold(left.Coexistence, right.ConflictGroup) || containsFold(right.Coexistence, left.ConflictGroup)))
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func joinSortedSet(values map[string]struct{}) string {
+	return strings.Join(sortedSetValues(values), "+")
+}
+
+func sortedSetValues(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// resetFingerprintFindingsForScan starts a fresh collection window while
+// retaining historical findings until a real response proves the current
+// fingerprint phase completed for that asset.
+func resetFingerprintFindingsForScan(assets []*Asset) {
+	for _, asset := range assets {
+		if asset != nil {
+			asset.FingerprintFindingsCollected = false
+		}
+	}
+}
+
+// markFingerprintFindingsCollected clears historical findings exactly once per
+// scan window. An empty current result is intentional and must reach storage.
+func markFingerprintFindingsCollected(asset *Asset) {
+	if asset == nil {
+		return
+	}
+	if !asset.FingerprintFindingsCollected {
+		asset.FingerprintFindings = nil
+	}
+	asset.FingerprintFindingsCollected = true
+}
+
+func hasFingerprintResponseEvidence(asset *Asset) bool {
+	if asset == nil {
+		return false
+	}
+	return asset.HttpStatus != "" || (asset.IsHTTP &&
+		(asset.Title != "" || asset.HttpBody != "" || asset.HttpHeader != "" || asset.Server != ""))
+}
+
+func applyGovernedFingerprintFindings(asset *Asset, appResults map[string]*AppDetectionResult, findings FingerprintFindings, taskLog func(level, format string, args ...interface{})) {
+	if asset == nil {
+		return
+	}
+	if !asset.FingerprintFindingsCollected {
+		if taskLog != nil {
+			taskLog("DEBUG", "[Fingerprint] findings skipped because no valid response was collected for %s:%d", asset.Host, asset.Port)
+		}
+		return
+	}
+	combined := make(FingerprintFindings, 0, len(asset.FingerprintFindings)+len(findings))
+	combined = append(combined, asset.FingerprintFindings...)
+	combined = append(combined, findings...)
+	asset.FingerprintFindings = GovernFingerprintFindings(combined)
+	for _, finding := range asset.FingerprintFindings {
+		if finding.Decision != fingerprintDecisionConfirmed {
+			if taskLog != nil {
+				taskLog("DEBUG", "[Fingerprint] candidate %s confidence=%d reason=%s", finding.Name, finding.Confidence, finding.ReasonCode)
+			}
+			continue
+		}
+		mergeGovernedFingerprintDetection(appResults, finding)
+		if taskLog != nil {
+			taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, finding.Name, finding.Source)
+		}
+	}
+}
+
+func mergeGovernedFingerprintDetection(appResults map[string]*AppDetectionResult, finding FingerprintFinding) {
+	sources := strings.Split(finding.Source, "+")
+	ids := strings.Split(finding.FingerprintID, "+")
+	incoming := &AppDetectionResult{Name: finding.Name, OriginalName: finding.Name}
+	for _, source := range sources {
+		source = strings.TrimSpace(source)
+		if source == "" {
+			continue
+		}
+		incoming.Sources = append(incoming.Sources, source)
+		if source == "custom" {
+			incoming.CustomIDs = append(incoming.CustomIDs, ids...)
+		}
+		if source == "active" {
+			incoming.ActiveIDs = append(incoming.ActiveIDs, ids...)
+		}
+	}
+	mergeAppDetectionResult(appResults, incoming)
 }
 
 // NewFingerprintScanner 创建指纹扫描器
@@ -170,6 +533,54 @@ func NewFingerprintScanner() *FingerprintScanner {
 		},
 		wappalyzerClient: wappalyzerClient,
 	}
+}
+
+func (s *FingerprintScanner) runHttpxScan(ctx context.Context, assets []*Asset, opts *FingerprintOptions, taskLog func(string, string, ...interface{})) error {
+	if s.runHttpx != nil {
+		return s.runHttpx(ctx, assets, opts, taskLog)
+	}
+	return RunHttpxLib(ctx, assets, opts, taskLog)
+}
+
+func mergeFingerprintDiagnostic(dst, src *ScanDiagnostic) {
+	if dst == nil || src == nil {
+		return
+	}
+	for _, code := range src.WarningCodes {
+		appendWarningCode(dst, code)
+	}
+	for _, target := range src.Targets {
+		if len(dst.Targets) >= MaxTargetDiagnostics {
+			break
+		}
+		target.Metadata = cloneDiagnosticMetadata(target.Metadata)
+		dst.Targets = append(dst.Targets, target)
+	}
+}
+
+func cloneDiagnosticMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	clone := make(map[string]interface{}, len(metadata))
+	for key, value := range metadata {
+		clone[key] = value
+	}
+	return clone
+}
+
+func (s *FingerprintScanner) captureScreenshot(ctx context.Context, targetURL string, taskLog func(string, string, ...interface{})) string {
+	if s.captureScreen != nil {
+		return s.captureScreen(ctx, targetURL, taskLog)
+	}
+	return s.takeScreenshot(ctx, targetURL, taskLog)
+}
+
+func (s *FingerprintScanner) fetchCertificate(ctx context.Context, host string, port int, timeout time.Duration) *CertResult {
+	if s.fetchCert != nil {
+		return s.fetchCert(ctx, host, port, timeout)
+	}
+	return FetchCert(ctx, host, port, timeout)
 }
 
 // SetCustomFingerprintEngine 设置自定义指纹引擎
@@ -294,11 +705,16 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	result := &ScanResult{
 		MainTaskId: config.MainTaskId,
 		Assets:     make([]*Asset, 0),
+		Diagnostic: &ScanDiagnostic{Phase: "fingerprint"},
 	}
 
-	// 使用传入的资产（worker层已过滤HTTP资产）
+	// The scanner may receive assets carrying findings from a previous scan.
+	// Do not clear them until a real response is observed for each asset.
 	httpAssets := config.Assets
+	resetFingerprintFindingsForScan(httpAssets)
+	result.Diagnostic.Coverage.Input = len(httpAssets)
 	if len(httpAssets) == 0 {
+		result.Diagnostic.Status = PhaseSkippedNotApplicable
 		taskLog("INFO", "Fingerprint: no assets to scan, skipping")
 		return result, nil
 	}
@@ -307,13 +723,34 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 
 	// 根据选择的工具执行扫描
 	useHttpx := opts.Tool == "httpx"
+	var httpxErr error
+	var httpxDiagnostic *ScanDiagnostic
 	if useHttpx {
-		// 使用httpx库进行扫描（不再依赖命令行工具）
+		// 使用 httpx 库进行基础探测，并保留其逐目标诊断；指纹 worker 的回调完成
+		// 不能替代真实响应成功，否则全量 timeout/no-output 会被误报为 COMPLETE。
 		taskLog("DEBUG", "Using httpx library for fingerprint detection")
-		if err := RunHttpxLib(ctx, httpAssets, opts, taskLog); err != nil {
-			taskLog("ERROR", "httpx CLI failed: %v", err)
+		if s.runHttpxWithDiagnostic != nil {
+			httpxDiagnostic, httpxErr = s.runHttpxWithDiagnostic(ctx, httpAssets, opts, taskLog)
+		} else if s.runHttpx != nil {
+			httpxErr = s.runHttpx(ctx, httpAssets, opts, taskLog)
+		} else {
+			httpxDiagnostic, httpxErr = runHttpxLibWithEventsResult(ctx, httpAssets, opts, taskLog, config.EventLogger)
 		}
-		// httpx CLI 已完成基础信息采集（title/status/server/faviconHash 等），立即流式入库
+		mergeFingerprintDiagnostic(result.Diagnostic, httpxDiagnostic)
+		for _, asset := range httpAssets {
+			if hasSuccessfulHTTPResponseEvidence(asset) {
+				// Compatibility seams may populate response fields without going
+				// through HttpxScanner.applyHttpxResult.
+				markFingerprintFindingsCollected(asset)
+			}
+		}
+		if httpxErr != nil {
+			taskLog("ERROR", "httpx probe failed (error_type=%T)", httpxErr)
+			if httpxDiagnostic == nil {
+				appendWarningCode(result.Diagnostic, ReasonExecutionError)
+			}
+		}
+		// httpx 已完成基础信息采集（title/status/server/faviconHash 等），立即流式入库
 		// 避免等待后续 worker pool 的截图/指纹识别完成才入库
 		if config.OnAssetUpdated != nil {
 			for _, asset := range httpAssets {
@@ -324,6 +761,25 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		}
 	} else {
 		taskLog("DEBUG", "Using builtin method for fingerprint detection")
+	}
+
+	// Screenshot errors are diagnostic-only: they never mutate protocol evidence
+	// or any previously collected asset fields.
+	recordScreenshotFailure := func(asset *Asset, targetURL string) {
+		s.assetMutex.Lock()
+		defer s.assetMutex.Unlock()
+		if len(result.Diagnostic.Targets) < MaxTargetDiagnostics {
+			resolution := resolveAssetScheme(asset)
+			result.Diagnostic.Targets = append(result.Diagnostic.Targets, TargetDiagnostic{
+				Target: targetURL, Host: asset.Host, Port: asset.Port,
+				Outcome: "screenshot_failed", ReasonCode: ReasonScreenshotFailed,
+				Metadata: map[string]interface{}{
+					"selected_scheme": resolution.Scheme,
+					"evidence_kind":   resolution.SelectedEvidence.Kind,
+				},
+			})
+		}
+		appendWarningCode(result.Diagnostic, ReasonScreenshotFailed)
 	}
 
 	// 记录已处理的资产索引，用于超时时补充未处理的资产
@@ -366,9 +822,9 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 				}
 				targetCtx, targetCancel := context.WithTimeout(ctx, time.Duration(opts.TargetTimeout)*time.Second)
 				if useHttpx && asset.Title != "" && asset.HttpStatus != "" {
-					s.runAdditionalFingerprint(targetCtx, asset, opts, taskLog)
+					s.runAdditionalFingerprint(targetCtx, asset, opts, taskLog, recordScreenshotFailure)
 				} else {
-					s.fingerprint(targetCtx, asset, opts, taskLog)
+					s.fingerprint(targetCtx, asset, opts, taskLog, recordScreenshotFailure)
 				}
 				if targetCtx.Err() == context.DeadlineExceeded {
 					taskLog("WARN", "Fingerprint: %s timeout", formatAssetTarget(asset))
@@ -398,6 +854,9 @@ dispatch:
 	for res := range resultChan {
 		completed++
 		processedSet[completed] = true
+		if res.asset == nil {
+			continue
+		}
 		result.Assets = append(result.Assets, res.asset)
 		if config.OnAssetUpdated != nil {
 			config.OnAssetUpdated(res.asset)
@@ -406,6 +865,56 @@ dispatch:
 			target := fmt.Sprintf("%s:%d", res.asset.Host, res.asset.Port)
 			config.OnTargetDone(target, []*Asset{res.asset})
 		}
+	}
+
+	// Worker completion only means the callback returned. A target is successful
+	// for coverage purposes only when a real HTTP response was observed; this
+	// prevents httpx timeout/no-output from becoming a false COMPLETE phase.
+	succeeded := 0
+	for _, asset := range httpAssets {
+		if asset != nil && asset.HttpStatus != "" {
+			succeeded++
+		}
+	}
+	coverage := &result.Diagnostic.Coverage
+	coverage.Attempted = completed
+	coverage.Succeeded = succeeded
+	coverage.Unconfirmed = len(httpAssets) - succeeded
+	if coverage.Unconfirmed < 0 {
+		coverage.Unconfirmed = 0
+	}
+	if completed < len(httpAssets) {
+		coverage.Uncovered = len(httpAssets) - completed
+	}
+	if httpxDiagnostic != nil {
+		timeoutCount := httpxDiagnostic.Coverage.TimedOut
+		if timeoutCount > coverage.Unconfirmed {
+			timeoutCount = coverage.Unconfirmed
+		}
+		coverage.TimedOut = timeoutCount
+		failedCount := httpxDiagnostic.Coverage.Failed
+		remaining := coverage.Unconfirmed - coverage.TimedOut
+		if failedCount > remaining {
+			failedCount = remaining
+		}
+		coverage.Failed = failedCount
+	}
+	if httpxErr != nil && coverage.Unconfirmed > 0 && coverage.Failed == 0 && coverage.TimedOut == 0 {
+		coverage.Failed = coverage.Unconfirmed
+	}
+	if coverage.Unconfirmed > 0 {
+		appendWarningCode(result.Diagnostic, ReasonUnconfirmed)
+	}
+	if ctx.Err() != nil {
+		result.Diagnostic.Status = PhaseCanceled
+	} else if succeeded == len(httpAssets) && completed == len(httpAssets) {
+		result.Diagnostic.Status = PhaseComplete
+	} else if succeeded > 0 {
+		result.Diagnostic.Status = PhasePartial
+	} else if coverage.TimedOut > 0 || coverage.Failed > 0 || coverage.Unconfirmed > 0 {
+		result.Diagnostic.Status = PhaseFailed
+	} else {
+		result.Diagnostic.Status = PhaseUncovered
 	}
 
 	// 确保所有已扫描的 HTTP 资产 IsHTTP 标记正确
@@ -423,7 +932,7 @@ dispatch:
 	if opts.Cert {
 		taskLog("DEBUG", "Fingerprint: cert fetch enabled, checking %d assets for cert targets", len(httpAssets))
 		// 使用独立上下文避免指纹扫描超时影响证书采集
-		certCtx, certCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		certCtx, certCancel := context.WithTimeout(ctx, 120*time.Second)
 		certFetched := s.fetchCertsForAssets(certCtx, httpAssets, result, taskLog, config.OnCertFound)
 		certCancel()
 		if certFetched > 0 {
@@ -450,6 +959,23 @@ dispatch:
 		}
 	} else {
 		taskLog("DEBUG", "Active fingerprint scan not enabled (activeScan=%v)", opts.ActiveScan)
+	}
+
+	if config.EventLogger != nil {
+		for _, asset := range httpAssets {
+			for _, finding := range asset.FingerprintFindings {
+				channels := make([]string, 0, len(finding.Evidence))
+				for _, evidence := range finding.Evidence {
+					channels = append(channels, evidence.Channel)
+				}
+				config.EventLogger(EventFingerprintDecision, "fingerprint", finding.Decision, map[string]interface{}{
+					"host": asset.Host, "port": asset.Port, "fingerprint_id": finding.FingerprintID,
+					"source": finding.Source, "confidence": finding.Confidence,
+					"evidence_channels": uniqueStrings(channels), "decision": finding.Decision,
+					"reason_code": finding.ReasonCode,
+				})
+			}
+		}
 	}
 
 	return result, nil
@@ -611,29 +1137,34 @@ func GetHttpServiceChecker() HttpServiceChecker {
 	return globalHttpServiceChecker
 }
 
-// buildTargetURL 构造指纹探测目标 URL。
-// 修复 D6：当 port <= 0 时回落到默认端口（不附加 :port），避免拼出形如
-// https://host:0 的非法 URL——Chrome 会拒绝 net::ERR_UNSAFE_PORT，HTTP client
-// 也会因连接 :0 失败。未指定协议时按端口推断 https/http（与原逻辑一致）。
+// buildTargetURL keeps the legacy call shape while routing the decision through
+// ResolveScheme. Asset-aware callers use buildAssetTargetURL so successful
+// response evidence outranks service metadata and port hints.
 func buildTargetURL(service, host string, port int) string {
-	scheme := service
-	if scheme == "" {
-		if port == 443 || port == 8443 || port == 9443 {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
+	return buildAssetTargetURL(&Asset{Service: service, Host: host, Port: port})
+}
+
+func buildAssetTargetURL(asset *Asset) string {
+	if asset == nil {
+		return ""
 	}
-	if port <= 0 {
-		return scheme + "://" + host
+	resolution := resolveAssetScheme(asset)
+	scheme := SchemeHTTP
+	if resolution.HasEvidence {
+		scheme = resolution.Scheme
 	}
-	return fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	if asset.Port <= 0 {
+		return scheme + "://" + asset.Host
+	}
+	return scheme + "://" + net.JoinHostPort(asset.Host, fmt.Sprintf("%d", asset.Port))
 }
 
 // runAdditionalFingerprint 执行额外的指纹识别功能（httpx已执行后）
-func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) {
-	// 修复 D6：统一 URL 构造，port<=0 时回落默认端口，避免 :0 非法 URL
-	targetUrl := buildTargetURL(asset.Service, asset.Host, asset.Port)
+func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{}), onScreenshotFailure func(*Asset, string)) {
+	if hasFingerprintResponseEvidence(asset) {
+		markFingerprintFindingsCollected(asset)
+	}
+	targetUrl := buildAssetTargetURL(asset)
 
 	// 解析HTTP headers用于指纹识别
 	var headers http.Header
@@ -667,8 +1198,18 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			if headers == nil {
 				headers = resp.Header
 			}
-			// 更新状态码为最终响应的状态码
+			// 更新状态码并持久化实际成功响应的 scheme；重定向后的
+			// Request.URL 是后续 favicon/截图应使用的协议证据。
 			asset.HttpStatus = fmt.Sprintf("%d", resp.StatusCode)
+			observedScheme := ""
+			if resp.Request != nil && resp.Request.URL != nil {
+				observedScheme = resp.Request.URL.Scheme
+			}
+			if observedScheme == "" {
+				observedScheme = resolveAssetScheme(asset).Scheme
+			}
+			persistSuccessfulScheme(asset, observedScheme, resp.StatusCode)
+			targetUrl = buildAssetTargetURL(asset)
 			taskLog("DEBUG", "[Fingerprint] builtin HTTP %s: status=%d server=%q title=%q bodyLen=%d",
 				targetUrl, resp.StatusCode, asset.Server, asset.Title, len(body))
 			// 更新HttpHeader为实际响应的header
@@ -749,25 +1290,24 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			cookies = extractCookiesFromHeader(asset.HttpHeader)
 		}
 		fpData := &FingerprintData{
-			Title:        asset.Title,
-			Body:         asset.HttpBody,
-			BodyBytes:    bodyBytes,
-			Headers:      headers,
-			HeaderString: asset.HttpHeader,
-			Server:       asset.Server,
-			URL:          targetUrl,
-			FaviconHash:  faviconMMH3Hash,
-			Cookies:      cookies,
+			Title:           asset.Title,
+			Body:            asset.HttpBody,
+			BodyBytes:       bodyBytes,
+			Headers:         headers,
+			HeaderString:    asset.HttpHeader,
+			Server:          asset.Server,
+			URL:             targetUrl,
+			FaviconHash:     faviconMMH3Hash,
+			Cookies:         cookies,
+			ResponseMissing: asset.HttpStatus == "" && asset.Title == "" && asset.HttpBody == "" && asset.HttpHeader == "" && asset.Server == "" && asset.IconHash == "",
+			BodyTruncated:   strings.Contains(strings.ToLower(asset.HttpBody), "[truncated]"),
+			HeaderTruncated: strings.Contains(strings.ToLower(asset.HttpHeader), "[truncated]"),
 		}
 		taskLog("DEBUG", "[Fingerprint] custom engine input: host=%s:%d url=%s title=%q server=%q bodyLen=%d faviconHash=%s cookies=%q",
 			asset.Host, asset.Port, targetUrl, asset.Title, asset.Server, len(asset.HttpBody), faviconMMH3Hash, cookies)
-		customApps := s.customFingerprintEngine.MatchWithId(fpData)
-		taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
-
-		for _, customApp := range customApps {
-			mergeFingerprintDetection(appResults, customApp)
-			taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, customApp.Name, customApp.Source)
-		}
+		findings := s.customFingerprintEngine.MatchWithEvidence(fpData)
+		taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) evaluated findings for %s:%d: %v", fpCount, asset.Host, asset.Port, findings)
+		applyGovernedFingerprintFindings(asset, appResults, findings, taskLog)
 	}
 
 	// 重新构建asset.App列表，使用智能合并的结果
@@ -783,11 +1323,13 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	if opts.Screenshot && asset.Screenshot == "" && asset.Port > 0 {
 		// 截图独立预算：不依赖 httpx/指纹共用的 ctx，避免被上游模块耗尽预算而饿死
 		shotCtx, shotCancel := screenshotContext(ctx, opts)
-		screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
+		screenshot := s.captureScreenshot(shotCtx, targetUrl, taskLog)
 		shotCancel()
 		if screenshot != "" {
 			asset.Screenshot = screenshot
 			taskLog("DEBUG", "Screenshot captured for %s:%d using builtin method", asset.Host, asset.Port)
+		} else if onScreenshotFailure != nil {
+			onScreenshotFailure(asset, targetUrl)
 		}
 	}
 }
@@ -823,7 +1365,7 @@ func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*
 			return count
 		default:
 		}
-		if cr := FetchCert(ctx, a.Host, a.Port, 10*time.Second); cr != nil {
+		if cr := s.fetchCertificate(ctx, a.Host, a.Port, 10*time.Second); cr != nil {
 			result.CertResults = append(result.CertResults, cr)
 			count++
 			// 流式入库：单证书采集完成立即回调
@@ -949,16 +1491,18 @@ func parseFaviconFromHTML(htmlBody string, _ string) []string {
 }
 
 // fingerprint 识别单个资产指纹
-func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{})) {
+func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts *FingerprintOptions, taskLog func(level, format string, args ...interface{}), onScreenshotFailure func(*Asset, string)) {
 	// 检查上下文是否已取消
 	if ctx.Err() != nil {
 		return
 	}
 
-	// 尝试HTTP和HTTPS
-	schemes := []string{"http", "https"}
-	if asset.Port == 443 || asset.Port == 8443 || asset.Port == 9443 {
-		schemes = []string{"https", "http"}
+	// Probe order is derived from the same evidence resolver used by httpx and
+	// downstream consumers. The alternate protocol is still attempted when the
+	// selected hint fails.
+	schemes := []string{SchemeHTTP, SchemeHTTPS}
+	if resolution := resolveAssetScheme(asset); resolution.HasEvidence && resolution.Scheme == SchemeHTTPS {
+		schemes = []string{SchemeHTTPS, SchemeHTTP}
 	}
 
 	var httpDetected bool
@@ -968,7 +1512,6 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 			return
 		}
 
-		// 修复 D6：统一 URL 构造，port<=0 时回落默认端口
 		targetUrl := buildTargetURL(scheme, asset.Host, asset.Port)
 		resp, err := s.client.Get(targetUrl)
 		if err != nil {
@@ -998,7 +1541,12 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		}
 		asset.Title = extractTitle(string(body))
 		asset.Server = resp.Header.Get("Server")
-		asset.Service = scheme
+		observedScheme := scheme
+		if resp.Request != nil && resp.Request.URL != nil && normalizeScheme(resp.Request.URL.Scheme) != "" {
+			observedScheme = resp.Request.URL.Scheme
+		}
+		persistSuccessfulScheme(asset, observedScheme, resp.StatusCode)
+		targetUrl = buildAssetTargetURL(asset)
 
 		// 获取Icon Hash和原始数据
 		var faviconMMH3Hash string
@@ -1033,23 +1581,20 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		if opts.CustomEngine && s.customFingerprintEngine != nil {
 			fpCount := s.customFingerprintEngine.GetFingerprintCount()
 			fpData := &FingerprintData{
-				Title:        asset.Title,
-				Body:         asset.HttpBody,
-				BodyBytes:    body, // 原始字节用于GBK编码匹配
-				Headers:      resp.Header,
-				HeaderString: asset.HttpHeader, // 原始header字符串
-				Server:       asset.Server,
-				URL:          targetUrl,
-				FaviconHash:  faviconMMH3Hash,
-				Cookies:      resp.Header.Get("Set-Cookie"),
+				Title:         asset.Title,
+				Body:          asset.HttpBody,
+				BodyBytes:     body, // 原始字节用于GBK编码匹配
+				Headers:       resp.Header,
+				HeaderString:  asset.HttpHeader, // 原始header字符串
+				Server:        asset.Server,
+				URL:           targetUrl,
+				FaviconHash:   faviconMMH3Hash,
+				Cookies:       resp.Header.Get("Set-Cookie"),
+				BodyTruncated: len(body) > 50*1024 || strings.Contains(strings.ToLower(asset.HttpBody), "[truncated]"),
 			}
-			customApps := s.customFingerprintEngine.MatchWithId(fpData)
-			taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) detected apps for %s:%d: %v", fpCount, asset.Host, asset.Port, customApps)
-
-			for _, customApp := range customApps {
-				mergeFingerprintDetection(appResults, customApp)
-				taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, customApp.Name, customApp.Source)
-			}
+			findings := s.customFingerprintEngine.MatchWithEvidence(fpData)
+			taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) evaluated findings for %s:%d: %v", fpCount, asset.Host, asset.Port, findings)
+			applyGovernedFingerprintFindings(asset, appResults, findings, taskLog)
 		}
 
 		// 构建最终的应用列表
@@ -1063,11 +1608,13 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 		if opts.Screenshot && asset.Port > 0 {
 			// 截图独立预算：不依赖指纹探测共用的 ctx，避免被上游模块耗尽预算而饿死
 			shotCtx, shotCancel := screenshotContext(ctx, opts)
-			screenshot := s.takeScreenshot(shotCtx, targetUrl, taskLog)
+			screenshot := s.captureScreenshot(shotCtx, targetUrl, taskLog)
 			shotCancel()
 			taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
 			if screenshot != "" {
 				asset.Screenshot = screenshot
+			} else if onScreenshotFailure != nil {
+				onScreenshotFailure(asset, targetUrl)
 			}
 		}
 
@@ -1816,14 +2363,15 @@ dispatch:
 
 					// 构建指纹匹配数据
 					fpData := &FingerprintData{
-						Title:        extractTitle(ToUTF8(body, "")),
-						Body:         ToUTF8(body, ""),
-						BodyBytes:    body,
-						Headers:      resp.Header,
-						HeaderString: formatHeaders(resp.Header),
-						Server:       resp.Header.Get("Server"),
-						URL:          fullURL,
-						Cookies:      resp.Header.Get("Set-Cookie"),
+						Title:         extractTitle(ToUTF8(body, "")),
+						Body:          ToUTF8(body, ""),
+						BodyBytes:     body,
+						Headers:       resp.Header,
+						HeaderString:  formatHeaders(resp.Header),
+						Server:        resp.Header.Get("Server"),
+						URL:           fullURL,
+						Cookies:       resp.Header.Get("Set-Cookie"),
+						BodyTruncated: len(body) >= 1024*1024,
 					}
 
 					// 调试：记录请求结果

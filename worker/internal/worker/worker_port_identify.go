@@ -41,8 +41,14 @@ func (w *Worker) executePortIdentify(ctx context.Context, task *scheduler.TaskIn
 	}
 }
 
-// executePortIdentifyWithNmap 使用 Nmap 执行端口识别
+// executePortIdentifyWithNmap 使用 Nmap 执行端口识别。
 func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig, orgId string) []*scanner.Asset {
+	return w.executePortIdentifyWithNmapResult(ctx, task, assets, config, orgId).Assets
+}
+
+// executePortIdentifyWithNmapResult exposes the merged phase conclusion for
+// the pipeline and deterministic scanner-to-worker integration tests.
+func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *scheduler.TaskInfo, assets []*scanner.Asset, config *scheduler.PortIdentifyConfig, orgId string) portIdentifyMergeResult {
 	// 获取超时配置
 	timeout := config.Timeout
 	if timeout <= 0 {
@@ -90,7 +96,7 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 		}
 	})
 
-	var identifiedAssets []*scanner.Asset
+	var identifyResults []scanner.PortIdentifyResult
 	nmapScanner := w.scanners["nmap"]
 
 	// Nmap 内部并发数（nmap 本身已有并发控制，这里限制同时扫描的端口数）
@@ -102,26 +108,24 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 	for host, ports := range hostPorts {
 		// 检查是否被停止或超时
 		if identifyCtx.Err() == context.DeadlineExceeded {
-			w.taskLog(task.TaskId, LevelWarn, "Port identify timeout, using partial results")
-			// 超时时使用原始资产
-			for _, asset := range hostAssets[host] {
-				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
-				identifiedAssets = append(identifiedAssets, asset)
-			}
+			w.taskLog(task.TaskId, LevelWarn, "Port identify timeout, retaining unconfirmed discovered assets")
+			timedOut := portIdentifyResultsForAssets(hostAssets[host], scanner.PortTimeout, scanner.NmapReasonTimeout)
+			identifyResults = append(identifyResults, timedOut...)
+			mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], timedOut, config.ExcludeClosed)
+			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, mergedHost.Assets)
 			continue
 		}
 		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
 			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
-			return identifiedAssets
+			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
+			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
 		}
 
 		// naabu/masscan 未识别到端口时跳过 nmap，避免产生大量 "Nmap: no ports to scan" 噪音日志
 		if len(ports) == 0 {
 			w.taskLog(task.TaskId, LevelDebug, "Port identify(nmap): skipping %s, no ports to scan", host)
-			for _, asset := range hostAssets[host] {
-				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
-				identifiedAssets = append(identifiedAssets, asset)
-			}
+			mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], nil, config.ExcludeClosed)
+			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, mergedHost.Assets)
 			continue
 		}
 
@@ -143,8 +147,9 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 		}
 
 		nmapResult, err := nmapScanner.Scan(identifyCtx, &scanner.ScanConfig{
-			Target:  host,
-			Options: nmapOpts,
+			Target:      host,
+			Options:     nmapOpts,
+			EventLogger: w.scannerEventLogger(task.TaskId),
 			TaskLogger: func(level, format string, args ...interface{}) {
 				w.taskLog(task.TaskId, level, format, args...)
 			},
@@ -153,38 +158,34 @@ func (w *Worker) executePortIdentifyWithNmap(ctx context.Context, task *schedule
 		// 检查是否被停止
 		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
 			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
-			return identifiedAssets
+			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
+			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
 		}
 
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "Nmap error %s: %v", host, err)
-			// Nmap失败时，使用原始资产
-			for _, asset := range hostAssets[host] {
-				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
-				identifiedAssets = append(identifiedAssets, asset)
-			}
+			failed := portIdentifyResultsForAssets(hostAssets[host], scanner.PortExecError, scanner.NmapReasonNonzeroExit)
+			identifyResults = append(identifyResults, failed...)
+			mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], failed, config.ExcludeClosed)
+			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, mergedHost.Assets)
 			continue
 		}
 
-		if nmapResult != nil && len(nmapResult.Assets) > 0 {
-			// 设置 IsHTTP 字段
-			for _, asset := range nmapResult.Assets {
-				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
-			}
-			identifiedAssets = append(identifiedAssets, nmapResult.Assets...)
-			// 流式入库：单主机端口识别完成立即保存
-			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, nmapResult.Assets)
-		} else {
-			// Nmap没有结果时，使用原始资产
-			for _, asset := range hostAssets[host] {
-				asset.IsHTTP = scanner.IsHTTPService(asset.Service, asset.Port)
-				identifiedAssets = append(identifiedAssets, asset)
-			}
+		var hostResults []scanner.PortIdentifyResult
+		if nmapResult != nil {
+			hostResults = nmapResult.PortIdentifyResults
 		}
+		identifyResults = append(identifyResults, hostResults...)
+		mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], hostResults, config.ExcludeClosed)
+		// 流式入库：保存以发现资产为基线的合并结果，而不是仅保存 OPEN 投影。
+		w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, mergedHost.Assets)
 	}
 
-	w.taskLog(task.TaskId, LevelInfo, "Port identify completed: %d assets", len(identifiedAssets))
-	return identifiedAssets
+	merged := mergeNmapPortIdentifyResults(assets, identifyResults, config.ExcludeClosed)
+	w.taskLog(task.TaskId, LevelInfo, "Port identify completed: %d assets, status=%s, succeeded=%d, timed_out=%d, failed=%d, unconfirmed=%d",
+		len(merged.Assets), merged.Phase.Status, merged.Phase.Coverage.Succeeded, merged.Phase.Coverage.TimedOut,
+		merged.Phase.Coverage.Failed, merged.Phase.Coverage.Unconfirmed)
+	return merged
 }
 
 // executePortIdentifyWithFingerprintx 使用 Fingerprintx 执行端口识别

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strconv"
@@ -141,6 +140,41 @@ type NaabuHostResult struct {
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
 	TLS      bool   `json:"tls"`
+}
+
+// NaabuParseSource identifies the output material that was actually parsed.
+type NaabuParseSource string
+
+const (
+	NaabuParseSourceFile       NaabuParseSource = "file"
+	NaabuParseSourceStdout     NaabuParseSource = "stdout"
+	NaabuParseSourceFileStdout NaabuParseSource = "file+stdout"
+	NaabuParseSourceNone       NaabuParseSource = "none"
+)
+
+// NaabuParseStats accounts for all non-empty records from the selected source.
+type NaabuParseStats struct {
+	FileBytes, StdoutBytes, ParsedBytes                  int
+	TotalLines, ValidLines, InvalidLines, DuplicateLines int
+	AcceptedPorts                                        int
+}
+
+// NaabuTargetDiagnostic is the Naabu-specific evidence attached to the
+// generic scanner diagnostic for a single target.
+type NaabuTargetDiagnostic struct {
+	Source          NaabuParseSource
+	ProcessOutcome  string // success | timeout | exit_error | canceled
+	ExitCode        int
+	OutputFileEmpty bool
+	DurationMs      int64
+	Stats           NaabuParseStats
+}
+
+type naabuTargetResult struct {
+	target            string
+	assets            []*Asset
+	thresholdExceeded bool
+	diagnostic        NaabuTargetDiagnostic
 }
 
 // Scan 执行Naabu扫描
@@ -344,20 +378,20 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	logFn("INFO", "Naabu(CLI): targetTimeout=%ds probeTimeout=%dms targets=%d",
 		opts.TargetTimeout, opts.ProbeTimeoutMs, len(cleanTargets))
 
-	assets, thresholdExceeded := s.runNaabuCLI(ctx, config, opts, logFn)
-	if thresholdExceeded {
-		return &ScanResult{
-			MainTaskId: config.MainTaskId,
-			Assets:     assets, SkippedHosts: s.collectSkippedHosts(),
-		}, ErrPortThresholdExceeded
+	assets, thresholdExceeded, diagnostic := s.runNaabuCLI(ctx, config, opts, logFn)
+	result := &ScanResult{
+		MainTaskId:   config.MainTaskId,
+		Assets:       assets,
+		SkippedHosts: s.collectSkippedHosts(),
+		Diagnostic:   diagnostic,
 	}
-	return &ScanResult{
-		MainTaskId: config.MainTaskId,
-		Assets:     assets, SkippedHosts: s.collectSkippedHosts(),
-	}, nil
+	if thresholdExceeded {
+		return result, ErrPortThresholdExceeded
+	}
+	return result, nil
 }
 
-func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
+func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool, *ScanDiagnostic) {
 	var allAssets []*Asset
 	anyThresholdExceeded := false
 
@@ -393,17 +427,8 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 
 	totalTargets := len(cleanTargets)
 	concurrency := EffectiveNaabuProcessConcurrency(opts.Workers, totalTargets)
-
-	type targetResult struct {
-		target            string
-		assets            []*Asset
-		thresholdExceeded bool
-		err               error
-	}
-
-	// 并发 Worker Pool：每个 Worker 从 targetChan 取目标执行，结果写入 resultChan
 	targetChan := make(chan string, totalTargets)
-	resultChan := make(chan targetResult, totalTargets)
+	resultChan := make(chan naabuTargetResult, totalTargets)
 	var scanWg sync.WaitGroup
 
 	for i := 0; i < concurrency; i++ {
@@ -413,16 +438,11 @@ func (s *NaabuScanner) runNaabuCLI(ctx context.Context, config *ScanConfig, opts
 			for target := range targetChan {
 				select {
 				case <-ctx.Done():
-					resultChan <- targetResult{err: ctx.Err()}
+					resultChan <- naabuTargetResult{target: target, diagnostic: NaabuTargetDiagnostic{Source: NaabuParseSourceNone, ProcessOutcome: "canceled"}}
 					return
 				default:
 				}
-				assets, thresholdExceeded := s.scanTargetCLI(ctx, target, portsStr, opts, logFn)
-				resultChan <- targetResult{
-					target:            target,
-					assets:            assets,
-					thresholdExceeded: thresholdExceeded,
-				}
+				resultChan <- s.scanTargetCLI(ctx, target, portsStr, opts, logFn, config.EventLogger)
 			}
 		}()
 	}
@@ -442,32 +462,58 @@ dispatch:
 		close(resultChan)
 	}()
 
+	diagnostic := &ScanDiagnostic{Phase: "naabu", Coverage: Coverage{Input: totalTargets}}
+	seenAsset := make(map[string]struct{})
 	completed := 0
 	for res := range resultChan {
-		if res.err != nil {
-			logFn("WARN", "Naabu(CLI): worker error: %v", res.err)
-			continue
-		}
-		if ctx.Err() == context.Canceled {
-			// 主动停止任务时不再触发完成/进度回调，避免取消后的部分结果异步入库。
-			continue
+		diagnostic.Coverage.Attempted++
+		appendNaabuTargetDiagnostic(diagnostic, res.target, res.diagnostic)
+		switch res.diagnostic.ProcessOutcome {
+		case "success":
+			diagnostic.Coverage.Succeeded++
+		case "timeout":
+			diagnostic.Coverage.TimedOut++
+			diagnostic.Coverage.Unconfirmed++
+		case "exit_error":
+			diagnostic.Coverage.Failed++
+			diagnostic.Coverage.Unconfirmed++
+		case "canceled":
+			diagnostic.Coverage.Skipped++
 		}
 		if res.thresholdExceeded {
 			anyThresholdExceeded = true
+			diagnostic.Coverage.Unconfirmed++
+			diagnostic.WarningCodes = appendUniqueReason(diagnostic.WarningCodes, ReasonPortThresholdExceeded)
 		}
-		allAssets = append(allAssets, res.assets...)
+		if ctx.Err() == context.Canceled {
+			continue
+		}
+		for _, asset := range res.assets {
+			key := naabuHostPortKey(asset.Host, asset.Port)
+			if _, exists := seenAsset[key]; exists {
+				continue
+			}
+			seenAsset[key] = struct{}{}
+			allAssets = append(allAssets, asset)
+		}
 		if config.OnTargetDone != nil {
 			config.OnTargetDone(res.target, res.assets)
 		}
 		completed++
 		if config.OnProgress != nil && totalTargets > 0 {
-			config.OnProgress(completed*100/totalTargets,
-				fmt.Sprintf("端口扫描: %d/%d", completed, totalTargets))
+			config.OnProgress(completed*100/totalTargets, fmt.Sprintf("端口扫描: %d/%d", completed, totalTargets))
 		}
 	}
 
-	logFn("INFO", "Naabu(CLI): completed, found %d open ports across %d targets", len(allAssets), totalTargets)
-	return allAssets, anyThresholdExceeded
+	diagnostic.Status = deriveNaabuPhaseStatus(ctx, diagnostic.Coverage, anyThresholdExceeded, len(allAssets))
+	if diagnostic.Status == PhasePartial {
+		diagnostic.WarningCodes = appendUniqueReason(diagnostic.WarningCodes, ReasonPartialOutput)
+	}
+	if diagnostic.Status == PhaseFailed && diagnostic.Coverage.Attempted > 0 {
+		diagnostic.WarningCodes = appendUniqueReason(diagnostic.WarningCodes, ReasonNoOutput)
+	}
+	logFn("INFO", "Naabu(CLI): completed, found %d open ports across %d targets (%s)", len(allAssets), totalTargets, diagnostic.Status)
+	return allAssets, anyThresholdExceeded, diagnostic
 }
 
 func (o *NaabuOptions) targetTimeoutDuration() time.Duration {
@@ -516,7 +562,13 @@ func buildNaabuArgs(target, portsStr, outputPath string, opts *NaabuOptions) []s
 	return append(args, "-o", outputPath)
 }
 
-func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{})) ([]*Asset, bool) {
+func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr string, opts *NaabuOptions, logFn func(level, format string, args ...interface{}), eventLog ScanEventLogger) (result naabuTargetResult) {
+	startedAt := time.Now()
+	result = naabuTargetResult{target: target}
+	defer func() {
+		result.diagnostic.DurationMs = time.Since(startedAt).Milliseconds()
+		emitNaabuParseEvent(eventLog, target, result.diagnostic)
+	}()
 	// 单目标 Context 是 Web targetTimeout 的真正执行边界；等待全局进程槽也计入该预算。
 	targetTimeout := opts.targetTimeoutDuration()
 	targetCtx, targetCancel := context.WithTimeout(ctx, targetTimeout)
@@ -524,129 +576,244 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 
 	tmpFile, err := os.CreateTemp("", "naabu-*.json")
 	if err != nil {
-		return nil, false
+		result.diagnostic = NaabuTargetDiagnostic{Source: NaabuParseSourceNone, ProcessOutcome: "exit_error", OutputFileEmpty: true}
+		return result
 	}
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
 	args := buildNaabuArgs(target, portsStr, tmpPath, opts)
+	logFn("INFO", "[Naabu] CLI: target=%s targetTimeout=%s probeTimeout=%dms retries=%d", target, targetTimeout, opts.ProbeTimeoutMs, opts.Retries)
 
-	logFn("INFO", "[Naabu] CLI: target=%s targetTimeout=%s probeTimeout=%dms retries=%d args=%s",
-		target, targetTimeout, opts.ProbeTimeoutMs, opts.Retries, strings.Join(args, " "))
-
-	res, execErr := s.executor.Execute(targetCtx, args, ExecuteOpts{
-		Timeout: targetTimeout,
-		LogFn:   logFn,
-	})
-	// 主动取消表示任务已停止，不应把临时文件中残留的部分结果继续回调给
-	// Worker；阶段 deadline 则仍按既有设计保留可解析的部分结果。
-	if targetCtx.Err() == context.Canceled {
-		return nil, false
+	execResult, execErr := s.executor.Execute(targetCtx, args, ExecuteOpts{Timeout: targetTimeout, LogFn: logFn})
+	if execResult == nil {
+		execResult = &ExecuteResult{}
 	}
-	if execErr != nil {
-		if targetCtx.Err() == context.DeadlineExceeded {
-			logFn("WARN", "Naabu(CLI): target %s reached targetTimeout=%s; attempting to parse partial output", target, targetTimeout)
-		} else {
-			logFn("WARN", "Naabu(CLI): %s execution ended early: %v, stderr=%q", target, execErr, strings.TrimSpace(res.Stderr))
-		}
+	processOutcome := classifyNaabuProcessOutcome(ctx, targetCtx, execErr, execResult.ExitCode)
+	if processOutcome == "canceled" {
+		// 用户取消时不将残留文件作为已完成结果回调给 Worker。
+		result.diagnostic = NaabuTargetDiagnostic{Source: NaabuParseSourceNone, ProcessOutcome: processOutcome, ExitCode: execResult.ExitCode, OutputFileEmpty: true}
+		return result
 	}
-	s.executor.LogResult("Naabu(CLI): "+target, res, execErr)
+	if processOutcome == "timeout" {
+		logFn("WARN", "Naabu(CLI): target %s reached targetTimeout=%s; attempting to parse partial output", target, targetTimeout)
+	} else if processOutcome == "exit_error" {
+		logFn("WARN", "Naabu(CLI): %s execution ended early: %v", target, execErr)
+	}
+	s.executor.LogResult("Naabu(CLI): "+target, execResult, execErr)
 
-	// 进程超时或异常退出时仍读取临时文件，尽可能保留已发现的端口。
-	content, readErr := os.ReadFile(tmpPath)
+	fileContent, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
 		logFn("WARN", "[WARN] Naabu(CLI): failed to read output file: %v", readErr)
-		return nil, false
+		fileContent = nil
 	}
+	assets, stats, source := parseNaabuOutput(target, fileContent, []byte(execResult.Stdout), processOutcome)
+	result.diagnostic = NaabuTargetDiagnostic{
+		Source:          source,
+		ProcessOutcome:  processOutcome,
+		ExitCode:        execResult.ExitCode,
+		OutputFileEmpty: len(fileContent) == 0,
+		Stats:           stats,
+	}
+	if readErr != nil && source == NaabuParseSourceNone {
+		result.diagnostic.ProcessOutcome = "exit_error"
+	}
+	result.thresholdExceeded = exceedsNaabuPortThreshold(stats, opts.PortThreshold)
+	if result.thresholdExceeded {
+		logFn("WARN", "Naabu(CLI): target %s exceeded port threshold %d with %d accepted ports", target, opts.PortThreshold, stats.AcceptedPorts)
+		// 保持既有阈值语义：被跳过的目标不产出部分资产，但诊断保留完整计数。
+		return result
+	}
+	result.assets = assets
 
-	var parseSource io.Reader
-	if len(content) > 0 {
-		parseSource = strings.NewReader(string(content))
-	} else if len(res.Stdout) > 0 {
-		logFn("INFO", "Naabu(CLI): output file is empty, falling back to stdout (%d bytes)", len(res.Stdout))
-		parseSource = bytes.NewReader([]byte(res.Stdout))
-	} else {
+	if len(assets) > 0 {
+		ports := make([]string, 0, len(assets))
+		for _, asset := range assets {
+			ports = append(ports, strconv.Itoa(asset.Port))
+		}
+		logFn("INFO", "Naabu(CLI): %s -> %s", target, strings.Join(ports, ","))
+	} else if source == NaabuParseSourceNone {
 		logFn("INFO", "Naabu(CLI): no output from file or stdout, returning empty result")
-		return nil, false
+	} else {
+		logFn("INFO", "Naabu(CLI): %s -> no open ports found", target)
 	}
 
-	if execErr != nil || res.ExitCode != 0 {
-		logFn("WARN", "[WARN] Naabu(CLI): %s ended with exit code %d; parsing partial output (%d bytes)", target, res.ExitCode, len(content))
+	if processOutcome != "success" {
+		logFn("WARN", "Naabu(CLI): %s ended with exit code %d; parsing partial output source=%s parsed_bytes=%d", target, execResult.ExitCode, source, stats.ParsedBytes)
 	}
+	logFn("DEBUG", "Naabu(CLI): parse complete target=%s source=%s file_bytes=%d stdout_bytes=%d parsed_bytes=%d total_lines=%d valid_lines=%d invalid_lines=%d duplicate_lines=%d accepted_ports=%d process_outcome=%s exit_code=%d", target, source, stats.FileBytes, stats.StdoutBytes, stats.ParsedBytes, stats.TotalLines, stats.ValidLines, stats.InvalidLines, stats.DuplicateLines, stats.AcceptedPorts, processOutcome, execResult.ExitCode)
+	return result
+}
 
-	var assets []*Asset
-	var foundPorts []string
-	seenPort := make(map[string]bool)
-	hostPortCount := 0
-	parseFailCount := 0
+func emitNaabuParseEvent(eventLog ScanEventLogger, target string, diagnostic NaabuTargetDiagnostic) {
+	if eventLog == nil {
+		return
+	}
+	stats := diagnostic.Stats
+	reasonCode := ""
+	switch diagnostic.ProcessOutcome {
+	case "timeout":
+		reasonCode = ReasonTimeout
+	case "exit_error":
+		reasonCode = ReasonExecutionError
+	case "canceled":
+		reasonCode = ReasonCanceled
+	}
+	eventLog(EventNaabuParseComplete, "naabu", diagnostic.ProcessOutcome, map[string]interface{}{
+		"target": target, "process_outcome": diagnostic.ProcessOutcome,
+		"exit_code": diagnostic.ExitCode, "source": string(diagnostic.Source),
+		"file_bytes": stats.FileBytes, "stdout_bytes": stats.StdoutBytes, "parsed_bytes": stats.ParsedBytes,
+		"total_lines": stats.TotalLines, "valid_lines": stats.ValidLines, "invalid_lines": stats.InvalidLines,
+		"duplicate_lines": stats.DuplicateLines, "accepted_ports": stats.AcceptedPorts,
+		"output_file_empty": diagnostic.OutputFileEmpty, "duration_ms": diagnostic.DurationMs,
+		"reason_code": reasonCode,
+	})
+}
 
-	scanner := bufio.NewScanner(parseSource)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var hostResult NaabuHostResult
-		if err := json.Unmarshal([]byte(line), &hostResult); err != nil {
-			parseFailCount++
-			logFn("DEBUG", "[Naabu] JSON parse failed line=%q err=%v", line, err)
-			continue
-		}
-		if hostResult.Port <= 0 {
-			logFn("DEBUG", "[Naabu] ignoring non-positive port: ip=%s port=%d", hostResult.IP, hostResult.Port)
-			continue
-		}
+func classifyNaabuProcessOutcome(parentCtx, targetCtx context.Context, execErr error, exitCode int) string {
+	if parentCtx.Err() == context.Canceled || targetCtx.Err() == context.Canceled {
+		return "canceled"
+	}
+	if targetCtx.Err() == context.DeadlineExceeded {
+		return "timeout"
+	}
+	if execErr != nil || exitCode != 0 {
+		return "exit_error"
+	}
+	return "success"
+}
 
-		// 优先使用原始目标主机名（子域名），仅在目标为 IP 时使用解析结果
-		// 修复：naabu 内部 DNS 解析后 JSON 仅含 IP，导致后续 nmap/证书扫描使用 IP 而非域名
-		assetHost := hostResult.IP
-		if target != "" && net.ParseIP(target) == nil {
-			assetHost = target
-		}
+func selectNaabuParseSource(fileContent, stdout []byte, processOutcome string) (NaabuParseSource, [][]byte) {
+	fileAvailable, stdoutAvailable := len(fileContent) > 0, len(stdout) > 0
+	if (processOutcome == "timeout" || processOutcome == "exit_error") && fileAvailable && stdoutAvailable {
+		return NaabuParseSourceFileStdout, [][]byte{fileContent, stdout}
+	}
+	if fileAvailable {
+		return NaabuParseSourceFile, [][]byte{fileContent}
+	}
+	if stdoutAvailable {
+		return NaabuParseSourceStdout, [][]byte{stdout}
+	}
+	return NaabuParseSourceNone, nil
+}
 
-		// 去重：同一 host:port 只保留一次（Naabu 可能对同一端口输出多条 JSON）
-		dedupKey := fmt.Sprintf("%s:%d", assetHost, hostResult.Port)
-		if seenPort[dedupKey] {
-			continue
-		}
-		seenPort[dedupKey] = true
-		hostPortCount++
-		if opts.PortThreshold > 0 && hostPortCount > opts.PortThreshold {
-			return nil, true
-		}
-		locStr, _ := ipLocator.Locate(hostResult.IP)
-		location := geolocation.NormalizeLocation(locStr)
-
-		asset := &Asset{
-			Authority: utils.BuildTargetWithPort(assetHost, hostResult.Port),
-			Host:      assetHost,
-			Port:      hostResult.Port,
-			Category:  getCategory(hostResult.IP),
-		}
-		if hostResult.IP != "" {
+// parseNaabuOutput parses the selected output sources in a stable order (file,
+// then stdout). Bad records are local failures and never discard valid ports.
+func parseNaabuOutput(target string, fileContent, stdout []byte, processOutcome string) ([]*Asset, NaabuParseStats, NaabuParseSource) {
+	source, contents := selectNaabuParseSource(fileContent, stdout, processOutcome)
+	stats := NaabuParseStats{FileBytes: len(fileContent), StdoutBytes: len(stdout)}
+	seen := make(map[string]struct{})
+	assets := make([]*Asset, 0)
+	for _, content := range contents {
+		stats.ParsedBytes += len(content)
+		lineScanner := bufio.NewScanner(bytes.NewReader(content))
+		lineScanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for lineScanner.Scan() {
+			line := strings.TrimSpace(lineScanner.Text())
+			if line == "" {
+				continue
+			}
+			stats.TotalLines++
+			var hostResult NaabuHostResult
+			if err := json.Unmarshal([]byte(line), &hostResult); err != nil || net.ParseIP(hostResult.IP) == nil || hostResult.Port < 1 || hostResult.Port > 65535 {
+				stats.InvalidLines++
+				continue
+			}
+			stats.ValidLines++
+			assetHost := hostResult.IP
+			if target != "" && net.ParseIP(target) == nil {
+				assetHost = target
+			}
+			key := naabuHostPortKey(assetHost, hostResult.Port)
+			if _, exists := seen[key]; exists {
+				stats.DuplicateLines++
+				continue
+			}
+			seen[key] = struct{}{}
+			locStr, _ := ipLocator.Locate(hostResult.IP)
+			location := geolocation.NormalizeLocation(locStr)
+			asset := &Asset{
+				Authority: utils.BuildTargetWithPort(assetHost, hostResult.Port),
+				Host:      assetHost,
+				Port:      hostResult.Port,
+				Category:  getCategory(hostResult.IP),
+			}
 			if strings.Contains(hostResult.IP, ":") {
 				asset.IPV6 = []IPInfo{{IP: hostResult.IP, Location: location}}
 			} else {
 				asset.IPV4 = []IPInfo{{IP: hostResult.IP, Location: location}}
 			}
+			assets = append(assets, asset)
+			stats.AcceptedPorts++
 		}
-		assets = append(assets, asset)
-		foundPorts = append(foundPorts, strconv.Itoa(hostResult.Port))
+		if lineScanner.Err() != nil {
+			stats.InvalidLines++
+		}
 	}
+	return assets, stats, source
+}
 
-	if len(foundPorts) > 0 {
-		logFn("INFO", "Naabu(CLI): %s -> %s", target, strings.Join(foundPorts, ","))
-	} else {
-		logFn("INFO", "Naabu(CLI): %s -> no open ports found", target)
+func naabuHostPortKey(host string, port int) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]")) + ":" + strconv.Itoa(port)
+}
+
+func exceedsNaabuPortThreshold(stats NaabuParseStats, threshold int) bool {
+	return threshold > 0 && stats.AcceptedPorts > threshold
+}
+
+func appendNaabuTargetDiagnostic(diagnostic *ScanDiagnostic, target string, naabuDiagnostic NaabuTargetDiagnostic) {
+	if len(diagnostic.Targets) >= MaxTargetDiagnostics {
+		return
 	}
-
-	if parseFailCount > 0 {
-		logFn("DEBUG", "[Naabu] scanTargetCLI target=%s: assets=%d parseFail=%d", target, len(assets), parseFailCount)
+	reason := ""
+	switch naabuDiagnostic.ProcessOutcome {
+	case "timeout":
+		reason = ReasonTimeout
+	case "exit_error":
+		reason = ReasonExecutionError
+	case "canceled":
+		reason = ReasonCanceled
 	}
+	if reason != "" {
+		diagnostic.WarningCodes = appendUniqueReason(diagnostic.WarningCodes, reason)
+	}
+	stats := naabuDiagnostic.Stats
+	diagnostic.Targets = append(diagnostic.Targets, TargetDiagnostic{
+		Target: target, Host: target, Outcome: naabuDiagnostic.ProcessOutcome, ReasonCode: reason,
+		Metadata: map[string]interface{}{
+			"source": string(naabuDiagnostic.Source), "process_outcome": naabuDiagnostic.ProcessOutcome,
+			"exit_code": naabuDiagnostic.ExitCode, "file_bytes": stats.FileBytes, "stdout_bytes": stats.StdoutBytes,
+			"parsed_bytes": stats.ParsedBytes, "total_lines": stats.TotalLines, "valid_lines": stats.ValidLines,
+			"invalid_lines": stats.InvalidLines, "duplicate_lines": stats.DuplicateLines, "accepted_ports": stats.AcceptedPorts,
+			"output_file_empty": naabuDiagnostic.OutputFileEmpty, "duration_ms": naabuDiagnostic.DurationMs,
+		},
+	})
+}
 
-	return assets, false
+func appendUniqueReason(codes []string, code string) []string {
+	for _, existing := range codes {
+		if existing == code {
+			return codes
+		}
+	}
+	return append(codes, code)
+}
+
+func deriveNaabuPhaseStatus(ctx context.Context, coverage Coverage, thresholdExceeded bool, assets int) PhaseStatus {
+	if ctx.Err() == context.Canceled {
+		return PhaseCanceled
+	}
+	if coverage.Attempted == 0 && coverage.Input > 0 {
+		return PhaseCanceled
+	}
+	if coverage.TimedOut == 0 && coverage.Failed == 0 && coverage.Unconfirmed == 0 && !thresholdExceeded && coverage.Succeeded == coverage.Input {
+		return PhaseComplete
+	}
+	if assets > 0 || coverage.Succeeded > 0 {
+		return PhasePartial
+	}
+	return PhaseFailed
 }
 
 func (s *NaabuScanner) collectSkippedHosts() []string {

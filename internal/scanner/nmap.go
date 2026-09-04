@@ -5,22 +5,75 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"net"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"cscan/pkg/geolocation"
-	"cscan/pkg/utils"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
+// PortIdentifyOutcome is the explicit Nmap conclusion for one normalized
+// host-port pair. A missing Asset must never be used to infer one of these
+// outcomes.
+type PortIdentifyOutcome string
+
+const (
+	PortOpen       PortIdentifyOutcome = "OPEN"
+	PortClosed     PortIdentifyOutcome = "CLOSED"
+	PortFiltered   PortIdentifyOutcome = "FILTERED"
+	PortTimeout    PortIdentifyOutcome = "TIMEOUT"
+	PortExecError  PortIdentifyOutcome = "EXEC_ERROR"
+	PortParseError PortIdentifyOutcome = "PARSE_ERROR"
+	PortCanceled   PortIdentifyOutcome = "CANCELED"
+	PortNoRecord   PortIdentifyOutcome = "NO_HOST_RECORD"
+)
+
+// Stable Nmap reason codes. Callers aggregate these codes rather than matching
+// process or XML error text.
+const (
+	NmapReasonLaunchError  = "nmap_launch_error"
+	NmapReasonNonzeroExit  = "nmap_nonzero_exit"
+	NmapReasonXMLParse     = "nmap_xml_parse_error"
+	NmapReasonTimeout      = "nmap_timeout"
+	NmapReasonCanceled     = "nmap_canceled"
+	NmapReasonNoHostRecord = "nmap_no_host_record"
+)
+
+// PortIdentifyResult is the one-for-one result of dispatching a normalized
+// host-port pair to Nmap. Service metadata and ResolvedIP are populated only
+// for OPEN results.
+type PortIdentifyResult struct {
+	Host       string              `json:"host"`
+	ResolvedIP string              `json:"resolvedIp,omitempty"`
+	Port       int                 `json:"port"`
+	Outcome    PortIdentifyOutcome `json:"outcome"`
+	Service    string              `json:"service,omitempty"`
+	Product    string              `json:"product,omitempty"`
+	Version    string              `json:"version,omitempty"`
+	ErrorCode  string              `json:"errorCode,omitempty"`
+}
+
+type nmapCommandResult struct {
+	Stdout   []byte
+	Stderr   []byte
+	StartErr error
+	WaitErr  error
+}
+
+type nmapCommandRunner func(context.Context, []string) nmapCommandResult
+
 // NmapScanner Nmap扫描器
 type NmapScanner struct {
 	BaseScanner
+	commandRunner nmapCommandRunner
 }
 
 // logFunc 日志函数类型
@@ -32,7 +85,8 @@ type progressFunc func(progress int, message string)
 // NewNmapScanner 创建Nmap扫描器
 func NewNmapScanner() *NmapScanner {
 	return &NmapScanner{
-		BaseScanner: BaseScanner{name: "nmap"},
+		BaseScanner:   BaseScanner{name: "nmap"},
+		commandRunner: runNmapCommand,
 	}
 }
 
@@ -68,7 +122,16 @@ type NmapRun struct {
 
 type NmapHost struct {
 	Addresses []NmapAddress `xml:"address"`
+	Hostnames NmapHostnames `xml:"hostnames"`
 	Ports     NmapPorts     `xml:"ports"`
+}
+
+type NmapHostnames struct {
+	Names []NmapHostname `xml:"hostname"`
+}
+
+type NmapHostname struct {
+	Name string `xml:"name,attr"`
 }
 
 type NmapAddress struct {
@@ -188,7 +251,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		default:
 			// 尝试通过JSON转换
 			if data, err := json.Marshal(config.Options); err == nil {
-				json.Unmarshal(data, opts)
+				_ = json.Unmarshal(data, opts)
 			}
 		}
 	}
@@ -203,8 +266,6 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	}
 
 	// 端口识别超时以用户配置为准（默认 30s，来源于 scheduler.PortIdentifyConfig.Timeout）。
-	// 仅对明显异常的值做上限保护，避免单端口超时设置过大导致任务长时间挂起；
-	// 用户显式设置的超时（如 60s）必须被原样尊重，否则日志与配置不一致。
 	const maxPortIdentifyTimeout = 600
 	if opts.Timeout <= 0 {
 		opts.Timeout = 30
@@ -214,7 +275,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 		opts.Timeout = maxPortIdentifyTimeout
 	}
 
-	// P0-5: 校验额外参数 Args，防止参数注入（拒绝 --script、-i、-o、--data-dir 等危险参数）
+	// P0-5: 校验额外参数 Args，防止参数注入
 	if opts.Args != "" {
 		if err := ValidateNmapArgs(opts.Args); err != nil {
 			logError("Invalid nmap args %q: %v", opts.Args, err)
@@ -225,7 +286,6 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	// 检查nmap是否安装
 	if !checkNmapInstalled() {
 		logError("nmap not installed, falling back to tcp scan")
-		// 回退到TCP扫描
 		tcpScanner := NewPortScanner()
 		return tcpScanner.Scan(ctx, config)
 	}
@@ -271,239 +331,358 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	logInfo("Nmap: resolved targets=%v ports=%d concurrent=%d", targets, len(parsePorts(opts.Ports)), opts.Concurrent)
 
 	// 执行nmap扫描
-	assets := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError, logDebug)
+	assets, identifyResults := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError, logDebug)
+	if config.EventLogger != nil {
+		for _, identify := range identifyResults {
+			config.EventLogger(EventNmapPortResult, "nmap", string(identify.Outcome), map[string]interface{}{
+				"host": identify.Host, "port": identify.Port, "outcome": string(identify.Outcome),
+				"service": identify.Service, "error_code": identify.ErrorCode, "duration_ms": int64(0),
+			})
+		}
+	}
 
 	return &ScanResult{
-		MainTaskId: config.MainTaskId,
-		Assets:     assets,
+		MainTaskId:          config.MainTaskId,
+		Assets:              assets,
+		PortIdentifyResults: identifyResults,
 	}, nil
 }
 
-// runNmapWithLogger 运行nmap（带日志回调）
-// 优化为每个端口一个进程，通过并发控制降低扫描影响
-// 注意：每个端口使用独立的超时context，不会因为一个端口超时影响其他端口
+// runNmapWithLogger runs one Nmap command per unique port. It returns exactly
+// one PortIdentifyResult for every normalized target in every command that was
+// dispatched to a worker.
 func (s *NmapScanner) runNmapWithLogger(
 	ctx context.Context, targets []string, opts *NmapOptions,
 	onTargetDone func(string, []*Asset), onProgress func(int, string),
 	logInfo, _ logFunc, logError, logDebug logFunc,
-) []*Asset {
-	var assets []*Asset
-	var mu sync.Mutex
-	var finishedCount int32
-
-	// 使用 parsePorts 解析端口
-	ports := parsePorts(opts.Ports)
-	totalPorts := len(ports)
-
-	if totalPorts == 0 {
-		logInfo("Nmap: no ports to scan")
-		return assets
+) ([]*Asset, []PortIdentifyResult) {
+	normalizedTargets := normalizeNmapTargets(targets)
+	ports := uniqueNmapPorts(parsePorts(opts.Ports))
+	if len(ports) == 0 || len(normalizedTargets) == 0 {
+		logInfo("Nmap: no host-port pairs to scan")
+		return nil, nil
 	}
 
-	logInfo("Nmap: starting scan, %d ports, %d targets, concurrent=%d", totalPorts, len(targets), opts.Concurrent)
+	concurrent := opts.Concurrent
+	if concurrent <= 0 {
+		concurrent = 1
+	}
+	if concurrent > len(ports) {
+		concurrent = len(ports)
+	}
 
-	// 创建任务通道
+	logInfo("Nmap: starting scan, %d ports, %d targets, concurrent=%d", len(ports), len(normalizedTargets), concurrent)
+
 	type scanTask struct {
 		port  int
 		index int
 	}
-	taskChan := make(chan scanTask, opts.Concurrent)
+	type completedTask struct {
+		index   int
+		results []PortIdentifyResult
+	}
 
-	// 使用 WaitGroup 等待所有扫描完成
+	taskChan := make(chan scanTask, concurrent)
+	completedChan := make(chan completedTask, len(ports))
+	var finishedCount int32
 	var wg sync.WaitGroup
 
-	// 启动工作协程
-	for i := 0; i < opts.Concurrent; i++ {
+	for i := 0; i < concurrent; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for task := range taskChan {
-				// ctx 取消时立即退出，不再消费后续端口
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				// 每个端口使用独立的超时context，互不影响
-				result := s.scanSinglePortWithLogger(ctx, targets, task.port, opts, logInfo, logError, logDebug)
-				if len(result) > 0 {
-					mu.Lock()
-					assets = append(assets, result...)
-					mu.Unlock()
-				}
+				results := s.scanSinglePortWithLogger(ctx, normalizedTargets, task.port, opts, logInfo, logError, logDebug)
+				completedChan <- completedTask{index: task.index, results: results}
 
-				// Phase 4：每个 nmap 端口扫描 cmd 完成后立即回调
 				if onTargetDone != nil {
-					onTargetDone(fmt.Sprintf("port:%d", task.port), result)
+					onTargetDone(fmt.Sprintf("port:%d", task.port), portIdentifyResultsToAssets(results, logInfo))
 				}
 
-				// 更新进度（原子操作）
-				atomic.AddInt32(&finishedCount, 1)
-				if onProgress != nil && totalPorts > 0 {
-					progress := int(atomic.LoadInt32(&finishedCount)) * 100 / totalPorts
-					onProgress(progress, fmt.Sprintf("Scanning port %d (%d/%d)", task.port, atomic.LoadInt32(&finishedCount), totalPorts))
+				finished := atomic.AddInt32(&finishedCount, 1)
+				if onProgress != nil {
+					onProgress(int(finished)*100/len(ports), fmt.Sprintf("Scanning port %d (%d/%d)", task.port, finished, len(ports)))
 				}
 			}
 		}()
 	}
 
-	// 分发任务（带 ctx 取消检查，防止 worker 因 ctx 停止消费后 dispatch 永久阻塞）
+	dispatched := 0
 dispatch:
 	for i, port := range ports {
 		select {
 		case taskChan <- scanTask{port: port, index: i}:
+			dispatched++
 		case <-ctx.Done():
 			break dispatch
 		}
 	}
 	close(taskChan)
 	wg.Wait()
+	close(completedChan)
 
-	logInfo("Nmap: scan completed, found %d open ports", len(assets))
-	return assets
+	completed := make([]completedTask, 0, dispatched)
+	for item := range completedChan {
+		completed = append(completed, item)
+	}
+	sort.Slice(completed, func(i, j int) bool { return completed[i].index < completed[j].index })
+
+	identifyResults := make([]PortIdentifyResult, 0, dispatched*len(normalizedTargets))
+	for _, item := range completed {
+		identifyResults = append(identifyResults, item.results...)
+	}
+	assets := portIdentifyResultsToAssets(identifyResults, logInfo)
+	logInfo("Nmap: scan completed, found %d open ports, produced %d host-port results", len(assets), len(identifyResults))
+	return assets, identifyResults
 }
 
-// scanSinglePortWithLogger 扫描单个端口（带日志回调）
-func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError, logDebug logFunc) []*Asset {
-	var assets []*Asset
+// scanSinglePortWithLogger scans one port across all normalized targets and
+// always returns one result per target, including process and parse failures.
+func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError, logDebug logFunc) []PortIdentifyResult {
+	targets = normalizeNmapTargets(targets)
+	if len(targets) == 0 {
+		return nil
+	}
 
-	// 构建nmap命令
 	args := []string{
-		"-Pn",                         // 跳过主机发现
-		"-p", fmt.Sprintf("%d", port), // 单个端口
-		"-oX", "-", // XML输出到stdout
+		"-Pn",
+		"-p", fmt.Sprintf("%d", port),
+		"-oX", "-",
 	}
-
-	// 添加额外参数
 	if opts.Args != "" {
-		extraArgs := strings.Fields(opts.Args)
-		args = append(args, extraArgs...)
+		args = append(args, strings.Fields(opts.Args)...)
 	}
-
 	args = append(args, targets...)
+	logInfo("[Nmap] CLI: port=%d targets=%d timeout=%ds", port, len(targets), opts.Timeout)
 
-	// 输出执行命令到日志
-	logInfo("[Nmap] CLI: port=%d args=%s", port, strings.Join(args, " "))
-
-	// 为单个端口创建独立的超时context，避免一个端口超时导致所有扫描停止
-	// 修复 C-32：原使用 context.Background() 忽略父级 ctx，任务取消时 nmap 不会终止
-	portCtx, portCancel := context.WithTimeout(ctx, time.Duration(opts.Timeout)*time.Second)
+	timeout := time.Duration(opts.Timeout) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	portCtx, portCancel := context.WithTimeout(ctx, timeout)
 	defer portCancel()
 
-	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
 	if !acquireProcessSlot(portCtx) {
+		if errors.Is(portCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			logError("Nmap: port %d timeout while waiting for process slot", port)
+			return uniformPortIdentifyResults(targets, port, PortTimeout, NmapReasonTimeout)
+		}
 		logError("Nmap: canceled while waiting for process slot")
-		return assets
+		return uniformPortIdentifyResults(targets, port, PortCanceled, NmapReasonCanceled)
 	}
 	defer releaseProcessSlot()
 
-	cmd := exec.CommandContext(portCtx, "nmap", args...)
+	runner := s.commandRunner
+	if runner == nil {
+		runner = runNmapCommand
+	}
+	commandResult := runner(portCtx, args)
+
+	if commandResult.StartErr != nil {
+		logError("Nmap: failed to start nmap for port %d: %v", port, commandResult.StartErr)
+		return uniformPortIdentifyResults(targets, port, PortExecError, NmapReasonLaunchError)
+	}
+
+	if portCtx.Err() != nil || errors.Is(commandResult.WaitErr, context.Canceled) || errors.Is(commandResult.WaitErr, context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(portCtx.Err(), context.Canceled) {
+			logError("Nmap: port %d canceled", port)
+			return uniformPortIdentifyResults(targets, port, PortCanceled, NmapReasonCanceled)
+		}
+		logError("Nmap: port %d timeout after %s", port, timeout)
+		return uniformPortIdentifyResults(targets, port, PortTimeout, NmapReasonTimeout)
+	}
+
+	if commandResult.WaitErr != nil {
+		logError("Nmap: error for port %d: %v", port, commandResult.WaitErr)
+		return uniformPortIdentifyResults(targets, port, PortExecError, NmapReasonNonzeroExit)
+	}
+
+	var nmapRun NmapRun
+	if err := xml.Unmarshal(commandResult.Stdout, &nmapRun); err != nil {
+		logError("Nmap: xml parse error for port %d: %v", port, err)
+		return uniformPortIdentifyResults(targets, port, PortParseError, NmapReasonXMLParse)
+	}
+
+	return alignNmapHostPortResults(targets, port, nmapRun)
+}
+
+func runNmapCommand(ctx context.Context, args []string) nmapCommandResult {
+	cmd := exec.CommandContext(ctx, "nmap", args...)
 	setSysProcAttr(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
-	err := cmd.Start()
-	if err != nil {
-		logError("Nmap: failed to start nmap for port %d: %v", port, err)
-		return assets
+	if err := cmd.Start(); err != nil {
+		return nmapCommandResult{StartErr: err}
 	}
 
 	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	var output []byte
+	go func() { done <- cmd.Wait() }()
 	select {
-	case <-portCtx.Done():
-		// 超时，强制终止进程
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		<-done // 等待Wait返回
-		logError("Nmap: port %d timeout after %ds, killed", port, opts.Timeout)
-		return assets
+	case <-ctx.Done():
+		killProcessTree(cmd)
+		<-done
+		return nmapCommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), WaitErr: ctx.Err()}
 	case err := <-done:
-		if err != nil {
-			logError("Nmap: error for port %d: %v (stderr: %s)", port, err, stderr.String())
-			logDebug("[Nmap] port %d stderr: %s", port, stderr.String())
-			return assets
+		return nmapCommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), WaitErr: err}
+	}
+}
+
+func normalizeNmapTargets(targets []string) []string {
+	result := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		normalized := normalizeNmapHost(target)
+		if normalized == "" {
+			continue
 		}
-		output = stdout.Bytes()
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, normalized)
 	}
+	return result
+}
 
-	// 解析XML输出
-	var nmapRun NmapRun
-	if err := xml.Unmarshal(output, &nmapRun); err != nil {
-		logError("Nmap: xml parse error for port %d: %v", port, err)
-		logDebug("[Nmap] port %d raw XML stdout: %s", port, string(output))
-		return assets
+func normalizeNmapHost(host string) string {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.String()
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
 
-	for _, host := range nmapRun.Hosts {
-		// 获取IPv4地址（忽略MAC地址）
-		ip := host.GetIPv4Address()
-		if ip == "" {
-			logDebug("[Nmap] host skipped: empty IPv4 (addresses=%v)", host.Addresses)
+func uniqueNmapPorts(ports []int) []int {
+	result := make([]int, 0, len(ports))
+	seen := make(map[int]struct{}, len(ports))
+	for _, port := range ports {
+		if port <= 0 || port > 65535 {
+			continue
+		}
+		if _, exists := seen[port]; exists {
+			continue
+		}
+		seen[port] = struct{}{}
+		result = append(result, port)
+	}
+	return result
+}
+
+func uniformPortIdentifyResults(targets []string, port int, outcome PortIdentifyOutcome, reasonCode string) []PortIdentifyResult {
+	results := make([]PortIdentifyResult, 0, len(targets))
+	for _, target := range targets {
+		results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: outcome, ErrorCode: reasonCode})
+	}
+	return results
+}
+
+func alignNmapHostPortResults(targets []string, port int, run NmapRun) []PortIdentifyResult {
+	results := make([]PortIdentifyResult, 0, len(targets))
+	for _, target := range targets {
+		host := findNmapHostForTarget(target, run.Hosts, len(targets) == 1)
+		if host == nil {
+			results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: PortNoRecord, ErrorCode: NmapReasonNoHostRecord})
 			continue
 		}
 
-		// 查找原始目标（可能是域名）
-		originalTarget := ip
-		for _, target := range targets {
-			if getCategory(target) == "domain" {
-				originalTarget = target
+		var matchedPort *NmapPort
+		for i := range host.Ports.Ports {
+			if host.Ports.Ports[i].PortID == port {
+				matchedPort = &host.Ports.Ports[i]
 				break
 			}
 		}
+		if matchedPort == nil {
+			results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: PortNoRecord, ErrorCode: NmapReasonNoHostRecord})
+			continue
+		}
 
-		for _, nmapPort := range host.Ports.Ports {
-			if nmapPort.State.State == "open" {
-				authority := fmt.Sprintf("%s:%d", originalTarget, nmapPort.PortID)
-				hostStr := originalTarget
-				category := getCategory(originalTarget)
+		switch strings.ToLower(matchedPort.State.State) {
+		case "open":
+			results = append(results, PortIdentifyResult{
+				Host:       target,
+				ResolvedIP: host.GetIPv4Address(),
+				Port:       port,
+				Outcome:    PortOpen,
+				Service:    matchedPort.Service.Name,
+				Product:    matchedPort.Service.Product,
+				Version:    matchedPort.Service.Version,
+			})
+		case "closed":
+			results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: PortClosed})
+		case "filtered", "open|filtered", "closed|filtered", "unfiltered":
+			results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: PortFiltered})
+		default:
+			results = append(results, PortIdentifyResult{Host: target, Port: port, Outcome: PortNoRecord, ErrorCode: NmapReasonNoHostRecord})
+		}
+	}
+	return results
+}
 
-				asset := &Asset{
-					Authority: authority,
-					Host:      hostStr,
-					Port:      nmapPort.PortID,
-					Category:  category,
-					Service:   nmapPort.Service.Name,
-				}
-
-				// 填充已解析的 IP 和地理位置
-				if ip != "" && !utils.IsIPAddress(hostStr) {
-					locStr, _ := ipLocator.Locate(ip)
-					location := geolocation.NormalizeLocation(locStr)
-					if strings.Contains(ip, ":") {
-						asset.IPV6 = []IPInfo{{IP: ip, Location: location}}
-					} else {
-						asset.IPV4 = []IPInfo{{IP: ip, Location: location}}
-					}
-				} else if ip != "" && utils.IsIPAddress(hostStr) {
-					// 原始目标本身就是 IP
-					locStr, _ := ipLocator.Locate(ip)
-					location := geolocation.NormalizeLocation(locStr)
-					asset.IPV4 = []IPInfo{{IP: ip, Location: location}}
-				}
-				// 如果有产品信息，添加到App
-				if nmapPort.Service.Product != "" {
-					productInfo := nmapPort.Service.Product
-					if nmapPort.Service.Version != "" {
-						productInfo += ":" + nmapPort.Service.Version
-					}
-					asset.App = []string{productInfo}
-					// 输出详细服务指纹日志
-					logInfo("发现存活服务: %s:%d -> %s (产品: %s)", originalTarget, nmapPort.PortID, nmapPort.Service.Name, productInfo)
-				} else {
-					logInfo("发现存活服务: %s:%d -> %s", originalTarget, nmapPort.PortID, nmapPort.Service.Name)
-				}
-				assets = append(assets, asset)
+func findNmapHostForTarget(target string, hosts []NmapHost, allowSingleHostFallback bool) *NmapHost {
+	target = normalizeNmapHost(target)
+	for i := range hosts {
+		for _, address := range hosts[i].Addresses {
+			if address.AddrType != "mac" && normalizeNmapHost(address.Addr) == target {
+				return &hosts[i]
+			}
+		}
+		for _, hostname := range hosts[i].Hostnames.Names {
+			if normalizeNmapHost(hostname.Name) == target {
+				return &hosts[i]
 			}
 		}
 	}
+	// A single domain target is unambiguous even when Nmap omits <hostnames>.
+	// Never use this fallback for multi-host commands: doing so would attach one
+	// host's state and metadata to a different target sharing the same port.
+	if allowSingleHostFallback && len(hosts) == 1 {
+		return &hosts[0]
+	}
+	return nil
+}
 
+func portIdentifyResultsToAssets(results []PortIdentifyResult, logInfo logFunc) []*Asset {
+	assets := make([]*Asset, 0, len(results))
+	for _, result := range results {
+		if result.Outcome != PortOpen {
+			continue
+		}
+		asset := &Asset{
+			Authority: fmt.Sprintf("%s:%d", result.Host, result.Port),
+			Host:      result.Host,
+			Port:      result.Port,
+			Category:  getCategory(result.Host),
+			Service:   result.Service,
+		}
+
+		if result.ResolvedIP != "" {
+			locStr, _ := ipLocator.Locate(result.ResolvedIP)
+			location := geolocation.NormalizeLocation(locStr)
+			ipInfo := IPInfo{IP: result.ResolvedIP, Location: location}
+			if strings.Contains(result.ResolvedIP, ":") {
+				asset.IPV6 = []IPInfo{ipInfo}
+			} else {
+				asset.IPV4 = []IPInfo{ipInfo}
+			}
+		}
+
+		if result.Product != "" {
+			productInfo := result.Product
+			if result.Version != "" {
+				productInfo += ":" + result.Version
+			}
+			asset.App = []string{productInfo}
+			logInfo("发现存活服务: %s:%d -> %s (产品: %s)", result.Host, result.Port, result.Service, productInfo)
+		} else {
+			logInfo("发现存活服务: %s:%d -> %s", result.Host, result.Port, result.Service)
+		}
+		assets = append(assets, asset)
+	}
 	return assets
 }
 

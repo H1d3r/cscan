@@ -205,15 +205,29 @@ func TestRunActiveFingerprintNotifiesChangedAssetOnce(t *testing.T) {
 	}
 }
 
+type observedRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f observedRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestRunActiveFingerprintWaitsForStartedRequestAfterCancel(t *testing.T) {
 	started := make(chan struct{})
-	release := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	handlerDone := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(handlerDone)
 		close(started)
-		<-release
-		_, _ = w.Write([]byte("marker"))
+		<-r.Context().Done()
+		close(requestCanceled)
 	}))
-	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		server.CloseClientConnections()
+		server.Close()
+	})
 
 	serverURL, err := url.Parse(server.URL)
 	if err != nil {
@@ -228,24 +242,173 @@ func TestRunActiveFingerprintWaitsForStartedRequestAfterCancel(t *testing.T) {
 	scanner := NewFingerprintScanner()
 	scanner.SetCustomFingerprintEngine(NewCustomFingerprintEngineWithActive(nil, []*model.Fingerprint{fp}))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	lifecycle := make(chan string, 2)
+	client := server.Client()
+	baseTransport := client.Transport
+	client.Transport = observedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := baseTransport.RoundTrip(req)
+		lifecycle <- "roundtrip_done"
+		return resp, err
+	})
+	scanner.client = client
+
 	done := make(chan struct{})
 	go func() {
 		scanner.RunActiveFingerprint(ctx, []*Asset{{Host: serverURL.Hostname(), Port: port, Service: "http", HttpStatus: "200"}}, &FingerprintOptions{Concurrency: 1}, nil, nil)
+		lifecycle <- "scan_done"
 		close(done)
 	}()
 
-	<-started
-	cancel()
 	select {
-	case <-done:
-		t.Fatal("active scan returned before the started request exited")
-	case <-time.After(50 * time.Millisecond):
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("active fingerprint request did not start")
 	}
-	close(release)
+	cancel()
+
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("started active fingerprint request did not observe cancellation")
+	}
+
+	select {
+	case event := <-lifecycle:
+		if event != "roundtrip_done" {
+			t.Fatalf("first lifecycle event = %q, want roundtrip_done", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active fingerprint HTTP round trip did not exit after cancellation")
+	}
+
+	select {
+	case event := <-lifecycle:
+		if event != "scan_done" {
+			t.Fatalf("second lifecycle event = %q, want scan_done", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active scan did not wait for the canceled request to exit")
+	}
+
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("active scan did not return after the started request exited")
+		t.Fatal("active scan completion was not signaled")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("canceled active fingerprint handler did not exit")
+	}
+	server.Close()
+}
+
+// TestMatchWithEvidencePreservesInterpreterTruth locks the pre-governance rule
+// truth item-by-item while requiring the new explanatory interface to report
+// both matching and non-matching rules. **Validates: Requirements 2.6, 3.9, 3.10**
+func TestMatchWithEvidencePreservesInterpreterTruth(t *testing.T) {
+	gbk, err := encodeToGBK("管理平台")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := &FingerprintData{
+		Title:        "Portal",
+		Body:         `<html><meta name="generator" content="ExampleCMS"><script src="/assets/example.js"></script>welcome bootstrap</html>`,
+		BodyBytes:    gbk,
+		Headers:      http.Header{"X-Product": {"Example"}, "Set-Cookie": {"example_session=secret"}},
+		HeaderString: "HTTP/1.1 200 OK\nX-Product: Example\nSet-Cookie: example_session=secret",
+		Server:       "nginx",
+		URL:          "https://example.test/login",
+		FaviconHash:  "12345",
+		Cookies:      "example_session=secret",
+	}
+
+	fingerprints := []*model.Fingerprint{
+		{Name: "And", Rule: `title="Portal" && header="X-Product"`, Enabled: true},
+		{Name: "Or", Rule: `body="absent" || server="nginx"`, Enabled: true},
+		{Name: "Negated", Rule: `title!="Denied" && body="welcome"`, Enabled: true},
+		{Name: "NoMatch", Rule: `title="Denied"`, Enabled: true},
+		{Name: "ARL", HTML: []string{"welcome"}, Source: "arl-webapp", Enabled: true},
+		{Name: "Wappalyzer", Scripts: []string{"example\\.js"}, Source: "wappalyzer", IsBuiltin: true, Enabled: true},
+		{Name: "GBK", Rule: `body="管理平台"`, Enabled: true},
+	}
+	engine := NewCustomFingerprintEngine(fingerprints)
+	findings := engine.MatchWithEvidence(data)
+	if len(findings) != len(fingerprints) {
+		t.Fatalf("len(findings) = %d, want %d", len(findings), len(fingerprints))
+	}
+
+	for i, fp := range fingerprints {
+		var legacyTruth bool
+		switch {
+		case fp.Rule != "":
+			legacyTruth = engine.matchRule(fp.Rule, data)
+		case engine.matchARLWebappRules(fp, data):
+			legacyTruth = true
+		default:
+			legacyTruth = engine.matchWappalyzerRules(fp, data)
+		}
+		if findings[i].RawMatched != legacyTruth {
+			t.Fatalf("finding %q RawMatched = %v, legacy interpreter = %v", fp.Name, findings[i].RawMatched, legacyTruth)
+		}
+		if findings[i].RawMatched && len(findings[i].Evidence) == 0 {
+			t.Fatalf("finding %q has no explanatory evidence", fp.Name)
+		}
+	}
+
+	legacyProjection := engine.MatchWithId(data)
+	if len(legacyProjection) != len(fingerprints)-1 {
+		t.Fatalf("legacy projection matched %d fingerprints, want %d", len(legacyProjection), len(fingerprints)-1)
+	}
+}
+
+// TestMatchWithEvidenceMarksMissingAndTruncatedResponsesIncomplete verifies
+// incomplete evidence without changing negation or positive-match truth.
+// **Validates: Requirements 2.6, 3.9**
+func TestMatchWithEvidenceMarksMissingAndTruncatedResponsesIncomplete(t *testing.T) {
+	tests := []struct {
+		name string
+		fp   *model.Fingerprint
+		data *FingerprintData
+	}{
+		{
+			name: "missing response preserves negation truth",
+			fp:   &model.Fingerprint{Name: "Missing", Rule: `body!="forbidden"`, Enabled: true},
+			data: &FingerprintData{ResponseMissing: true},
+		},
+		{
+			name: "truncated body",
+			fp:   &model.Fingerprint{Name: "Body", Rule: `body="sensitive-marker"`, Enabled: true},
+			data: &FingerprintData{Body: "sensitive-marker", BodyTruncated: true},
+		},
+		{
+			name: "truncated header",
+			fp:   &model.Fingerprint{Name: "Header", Rule: `header="X-Secret"`, Enabled: true},
+			data: &FingerprintData{HeaderString: "X-Secret: raw-secret", HeaderTruncated: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finding := NewCustomFingerprintEngine([]*model.Fingerprint{tt.fp}).MatchWithEvidence(tt.data)
+			if len(finding) != 1 || !finding[0].RawMatched {
+				t.Fatalf("finding = %#v, want one raw match", finding)
+			}
+			if len(finding[0].Evidence) == 0 {
+				t.Fatal("expected explanatory evidence")
+			}
+			for _, evidence := range finding[0].Evidence {
+				if evidence.Complete {
+					t.Fatalf("evidence unexpectedly complete: %#v", evidence)
+				}
+				if !strings.HasPrefix(evidence.MatchedValueDigest, "sha256:") {
+					t.Fatalf("digest = %q, want sha256 prefix", evidence.MatchedValueDigest)
+				}
+				serialized := evidence.Pattern + evidence.MatchedValueDigest
+				if strings.Contains(serialized, "sensitive-marker") || strings.Contains(serialized, "raw-secret") {
+					t.Fatalf("evidence retained sensitive raw value: %#v", evidence)
+				}
+			}
+		})
 	}
 }

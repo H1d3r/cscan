@@ -190,7 +190,7 @@ func (s *DnsxScanner) querySingleDomain(ctx context.Context, domain string, opts
 		args = append(args, "-r", strings.Join(opts.Resolvers, ","))
 	}
 
-	logFn("INFO", "[Dnsx] CLI: domain=%s args=%s", domain, strings.Join(args, " "))
+	logFn("INFO", "[Dnsx] CLI: domain=%s resolvers=%d", domain, len(opts.Resolvers))
 
 	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: time.Duration(opts.Timeout+10) * time.Second,

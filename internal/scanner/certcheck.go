@@ -125,15 +125,11 @@ func joinNonEmpty(ss []string) string {
 	return strings.Join(ss, ",")
 }
 
-// isHTTPSAsset 判断资产是否为 HTTPS / 443 / 8443 类（证书采集候选）
+// isHTTPSAsset resolves the asset's persisted protocol evidence instead of
+// independently guessing from Service or a well-known port.
 func isHTTPSAsset(a *Asset) bool {
-	if a.Port == 443 || a.Port == 8443 {
-		return true
-	}
-	if strings.EqualFold(a.Service, "https") {
-		return true
-	}
-	return false
+	resolution := resolveAssetScheme(a)
+	return resolution.HasEvidence && resolution.Scheme == SchemeHTTPS
 }
 
 // tlsCertPorts 除 HTTPS 外常见承载 TLS 的端口白名单（ARL 会对所有非 80 端口尝试握手，
@@ -143,12 +139,25 @@ var tlsCertPorts = map[int]bool{
 	8443: true, 9443: true, 447: true, 448: true, 7474: true, 9000: true, 9090: true,
 }
 
-// isCertFetchTarget 判断资产是否需要抓取证书（HTTPS 资产或落在 TLS 端口白名单）
+// isCertFetchTarget uses the shared scheme resolver for HTTP assets. Verified
+// HTTP (including HTTP:443) is never overridden by the TLS-port fallback;
+// non-HTTP TLS services retain the historical certificate-port allowlist.
 func isCertFetchTarget(a *Asset) bool {
-	if isHTTPSAsset(a) {
-		return true
+	if a == nil {
+		return false
 	}
-	return tlsCertPorts[a.Port]
+	resolution := resolveAssetScheme(a)
+	if resolution.HasEvidence && resolution.SelectedEvidence.Kind == SchemeEvidenceSuccessfulResponse {
+		return resolution.Scheme == SchemeHTTPS
+	}
+	if normalizeScheme(a.Service) != "" {
+		return resolution.HasEvidence && resolution.Scheme == SchemeHTTPS
+	}
+	if !tlsCertPorts[a.Port] {
+		return false
+	}
+	certResolution := ResolveScheme([]SchemeEvidence{{Scheme: SchemeHTTPS, Kind: SchemeEvidencePortHint}})
+	return certResolution.HasEvidence && certResolution.Scheme == SchemeHTTPS
 }
 
 // FetchCert 对单个 host:port 执行 TLS 握手并解析证书，失败返回 nil（不影响整体）

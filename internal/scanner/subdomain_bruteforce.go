@@ -496,7 +496,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithDnsxSDKAndWildcard(ctx contex
 	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
 	// 超时按目标数量估算，最少 60s
 	timeout := time.Duration(len(subdomainCandidates)*opts.Timeout+60) * time.Second
-	taskLog("INFO", "[Bruteforce] Dnsx CLI: args=%s", strings.Join(args, " "))
+	taskLog("INFO", "[Bruteforce] Dnsx CLI: candidates=%d timeout=%s", len(subdomainCandidates), timeout)
 	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
 	if err != nil {
 		taskLog("WARN", "[Bruteforce] dnsx execution error: %v", err)
@@ -1038,7 +1038,7 @@ func (s *SubdomainBruteforceScanner) resolveDomains(ctx context.Context, domains
 	executor := NewCmdExecutor(ToolConfigs["dnsx"].BinaryName, ToolConfigs["dnsx"].MemoryLimitMB, ToolConfigs["dnsx"].DefaultTimeout)
 	// 超时按目标数量估算，最少 60s
 	timeout := time.Duration(len(domains)*5+60) * time.Second
-	taskLog("INFO", "[Bruteforce] Dnsx CLI: args=%s", strings.Join(args, " "))
+	taskLog("INFO", "[Bruteforce] Dnsx CLI: domains=%d timeout=%s", len(domains), timeout)
 	res, err := executor.Execute(ctx, args, ExecuteOpts{Timeout: timeout})
 	if err != nil {
 		taskLog("WARN", "[Bruteforce] dnsx resolve error: %v", err)
@@ -1249,8 +1249,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomain(ctx context.Contex
 			taskLog("WARN", "Bruteforce: ksubdomain not found, falling back to dnsx")
 			return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 		}
-		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s, falling back to dnsx", err, stderr.String())
-		taskLog("DEBUG", "[Bruteforce] ksubdomain stderr: %s", stderr.String())
+		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr_bytes=%d, falling back to dnsx", err, stderr.Len())
 		// 如果ksubdomain执行失败，回退到dnsx
 		return s.bruteforceWithDnsxSDK(ctx, domain, wordlist, opts, taskLog)
 	}
@@ -1395,8 +1394,7 @@ func (s *SubdomainBruteforceScanner) bruteforceWithKSubdomainAndParseIP(ctx cont
 			taskLog("WARN", "Bruteforce: ksubdomain not found")
 			return assets, fmt.Errorf("ksubdomain not found")
 		}
-		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr: %s", err, stderr.String())
-		taskLog("DEBUG", "[Bruteforce] ksubdomain stderr: %s", stderr.String())
+		taskLog("WARN", "Bruteforce: ksubdomain execution error: %v, stderr_bytes=%d", err, stderr.Len())
 		return assets, fmt.Errorf("ksubdomain execution error: %v", err)
 	}
 

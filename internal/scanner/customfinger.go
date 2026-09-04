@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -47,16 +48,25 @@ func (e *CustomFingerprintEngine) SetActiveFingerprints(fingerprints []*model.Fi
 // FingerprintData 用于指纹匹配的数据
 // 参考ARL的fetch_fingerprint函数设计
 type FingerprintData struct {
-	Title        string      // 网页标题
-	Body         string      // 网页内容（UTF-8）
-	BodyBytes    []byte      // 网页原始字节（用于GBK编码匹配）
-	Headers      http.Header // HTTP响应头（标准格式）
-	HeaderString string      // HTTP响应头原始字符串（用于httpx等非标准格式匹配）
-	Server       string      // Server头
-	URL          string      // 请求URL
-	FaviconHash  string      // favicon的MMH3 hash（Shodan风格）
-	Cookies      string      // Set-Cookie头内容
+	Title           string      // 网页标题
+	Body            string      // 网页内容（UTF-8）
+	BodyBytes       []byte      // 网页原始字节（用于GBK编码匹配）
+	Headers         http.Header // HTTP响应头（标准格式）
+	HeaderString    string      // HTTP响应头原始字符串（用于httpx等非标准格式匹配）
+	Server          string      // Server头
+	URL             string      // 请求URL
+	FaviconHash     string      // favicon的MMH3 hash（Shodan风格）
+	Cookies         string      // Set-Cookie头内容
+	ResponseMissing bool        // 响应未取得；仅用于证据完整性，不改变匹配真值
+	BodyTruncated   bool        // Body已截断；仅用于证据完整性
+	HeaderTruncated bool        // Header已截断；仅用于证据完整性
 }
+
+// FingerprintEvidence and FingerprintFinding are scanner-facing aliases for
+// the backward-compatible persistence model.
+type FingerprintEvidence = model.FingerprintEvidence
+type FingerprintFinding = model.FingerprintFinding
+type FingerprintFindings = model.FingerprintFindings
 
 // MatchedFingerprint 匹配到的指纹结果
 type MatchedFingerprint struct {
@@ -197,17 +207,51 @@ func (e *CustomFingerprintEngine) Match(data *FingerprintData) []string {
 	return names
 }
 
-// MatchWithId 执行指纹匹配，返回匹配到的应用名称和ID列表
+// MatchWithId executes fingerprint matching and projects raw explanatory
+// findings back to the legacy name/ID result. This keeps existing callers and
+// duplicate preference semantics unchanged.
 func (e *CustomFingerprintEngine) MatchWithId(data *FingerprintData) []MatchedFingerprint {
+	findings := e.MatchWithEvidence(data)
 	var matched []MatchedFingerprint
 	matchedByName := make(map[string]int)
+	for _, finding := range findings {
+		if !finding.RawMatched {
+			continue
+		}
+		match := MatchedFingerprint{
+			Name:      finding.Name,
+			Id:        finding.FingerprintID,
+			Source:    finding.Source,
+			IsBuiltin: finding.IsBuiltin,
+		}
+		key := strings.ToLower(finding.Name)
+		if index, exists := matchedByName[key]; exists {
+			if shouldPreferFingerprintMatch(match, matched[index]) {
+				matched[index] = match
+			}
+			continue
+		}
+		matchedByName[key] = len(matched)
+		matched = append(matched, match)
+	}
+	return matched
+}
 
+// MatchWithEvidence evaluates every enabled fingerprint with the existing rule
+// interpreters and returns one finding per rule. Evidence is derived only after
+// RawMatched is decided, so explanation generation cannot alter AND/OR,
+// negation, ARL/Wappalyzer, or GBK truth semantics.
+func (e *CustomFingerprintEngine) MatchWithEvidence(data *FingerprintData) FingerprintFindings {
+	if e == nil || data == nil {
+		return FingerprintFindings{}
+	}
+	findings := make(FingerprintFindings, 0, len(e.fingerprints))
 	if len(e.fingerprints) == 0 {
 		logx.Debug("[CustomFingerprint] no fingerprints loaded")
-		return matched
+		return findings
 	}
 
-	logx.Debugf("[CustomFingerprint] MatchWithId: evaluating %d fingerprints (enabled) against url=%s title=%q server=%q bodyLen=%d",
+	logx.Debugf("[CustomFingerprint] MatchWithEvidence: evaluating %d fingerprints (enabled) against url=%s title=%q server=%q bodyLen=%d",
 		len(e.fingerprints), data.URL, data.Title, data.Server, len(data.Body))
 
 	for _, fp := range e.fingerprints {
@@ -215,30 +259,237 @@ func (e *CustomFingerprintEngine) MatchWithId(data *FingerprintData) []MatchedFi
 			continue
 		}
 
-		if fp.Rule != "" {
-			if e.matchRule(fp.Rule, data) {
-				logx.Debugf("[CustomFingerprint] MATCH: rule=%s name=%s", fp.Rule, fp.Name)
-				matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
-			} else {
-				logx.Debugf("[CustomFingerprint] NO MATCH: rule=%s name=%s", fp.Rule, fp.Name)
-			}
-			continue
+		rawMatched := e.rawFingerprintMatch(fp, data)
+		finding := newFingerprintFinding(fp, rawMatched)
+		if rawMatched {
+			finding.Evidence = e.collectFingerprintEvidence(fp, data)
+			logx.Debugf("[CustomFingerprint] MATCH: source=%s name=%s evidence=%d", finding.Source, fp.Name, len(finding.Evidence))
+		} else {
+			logx.Debugf("[CustomFingerprint] NO MATCH: source=%s name=%s", finding.Source, fp.Name)
 		}
-
-		if e.matchARLWebappRules(fp, data) {
-			logx.Debugf("[CustomFingerprint] MATCH: arl_webapp name=%s", fp.Name)
-			matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
-			continue
-		}
-
-		if e.matchWappalyzerRules(fp, data) {
-			logx.Debugf("[CustomFingerprint] MATCH: wappalyzer name=%s", fp.Name)
-			matched = appendOrReplaceMatchedFingerprint(matched, matchedByName, fp)
-		}
+		findings = append(findings, finding)
 	}
 
-	logx.Debugf("[CustomFingerprint] MatchWithId result: matched=%d/%d", len(matched), len(e.fingerprints))
-	return matched
+	logx.Debugf("[CustomFingerprint] MatchWithEvidence result: evaluated=%d", len(findings))
+	return findings
+}
+
+func (e *CustomFingerprintEngine) rawFingerprintMatch(fp *model.Fingerprint, data *FingerprintData) bool {
+	if fp.Rule != "" {
+		return e.matchRule(fp.Rule, data)
+	}
+	if e.matchARLWebappRules(fp, data) {
+		return true
+	}
+	return e.matchWappalyzerRules(fp, data)
+}
+
+func newFingerprintFinding(fp *model.Fingerprint, rawMatched bool) FingerprintFinding {
+	source := fp.Source
+	if source == "" {
+		source = "custom"
+	}
+	return FingerprintFinding{
+		FingerprintID: fp.Id.Hex(),
+		Name:          fp.Name,
+		Source:        source,
+		IsBuiltin:     fp.IsBuiltin,
+		RawMatched:    rawMatched,
+		ConflictGroup: fp.ConflictGroup,
+		Coexistence:   append([]string(nil), fp.Coexistence...),
+		ExclusiveWith: append([]string(nil), fp.ExclusiveWith...),
+	}
+}
+
+func (e *CustomFingerprintEngine) collectFingerprintEvidence(fp *model.Fingerprint, data *FingerprintData) []FingerprintEvidence {
+	if fp.Rule != "" {
+		return e.collectRuleEvidence(fp.Rule, data)
+	}
+	if e.matchARLWebappRules(fp, data) {
+		return e.collectARLEvidence(fp, data)
+	}
+	if e.matchWappalyzerRules(fp, data) {
+		return e.collectWappalyzerEvidence(fp, data)
+	}
+	return nil
+}
+
+func (e *CustomFingerprintEngine) collectRuleEvidence(rule string, data *FingerprintData) []FingerprintEvidence {
+	branches := splitByOperator(strings.TrimSpace(rule), "||")
+	for _, branch := range branches {
+		branch = strings.TrimSpace(branch)
+		if branch == "" || !e.matchRuleAnd(branch, data) {
+			continue
+		}
+		conditions := splitByOperator(branch, "&&")
+		evidence := make([]FingerprintEvidence, 0, len(conditions))
+		for _, condition := range conditions {
+			condition = strings.TrimSpace(condition)
+			if condition == "" || !e.matchSingleCondition(condition, data) {
+				continue
+			}
+			channel, negated := evidenceConditionChannel(condition)
+			if channel == "" {
+				continue
+			}
+			evidence = append(evidence, newFingerprintEvidence(channel, negated, data))
+		}
+		return evidence
+	}
+	return nil
+}
+
+func (e *CustomFingerprintEngine) collectARLEvidence(fp *model.Fingerprint, data *FingerprintData) []FingerprintEvidence {
+	var evidence []FingerprintEvidence
+	for _, keyword := range fp.HTML {
+		if e.matchBodyWithEncoding(data, keyword) {
+			evidence = append(evidence, newFingerprintEvidence("body", false, data))
+		}
+	}
+	for key, pattern := range fp.Headers {
+		if pattern == "" {
+			if data.Headers.Get(key) != "" {
+				evidence = append(evidence, newFingerprintEvidence("header", false, data))
+			}
+		} else if containsIgnoreCase(formatHeadersToString(data.Headers), pattern) {
+			evidence = append(evidence, newFingerprintEvidence("header", false, data))
+		}
+	}
+	return evidence
+}
+
+func (e *CustomFingerprintEngine) collectWappalyzerEvidence(fp *model.Fingerprint, data *FingerprintData) []FingerprintEvidence {
+	var evidence []FingerprintEvidence
+	if len(fp.Headers) > 0 {
+		evidence = append(evidence, newFingerprintEvidence("header", false, data))
+	}
+	if len(fp.HTML) > 0 || len(fp.Meta) > 0 || len(fp.CSS) > 0 {
+		evidence = append(evidence, newFingerprintEvidence("body", false, data))
+	}
+	if len(fp.Scripts) > 0 || len(fp.ScriptSrc) > 0 {
+		evidence = append(evidence, newFingerprintEvidence("script", false, data))
+	}
+	if len(fp.Cookies) > 0 {
+		evidence = append(evidence, newFingerprintEvidence("cookie", false, data))
+	}
+	if len(fp.URL) > 0 {
+		evidence = append(evidence, newFingerprintEvidence("url", false, data))
+	}
+	return evidence
+}
+
+func evidenceConditionChannel(condition string) (string, bool) {
+	condition = strings.TrimSpace(condition)
+	negated := false
+	separator := "=\""
+	if strings.Contains(condition, "!=\"") {
+		separator = "!=\""
+		negated = true
+	}
+	index := strings.Index(condition, separator)
+	if index <= 0 {
+		index = strings.Index(condition, "=")
+		if index <= 0 {
+			return "", negated
+		}
+	}
+	conditionType := strings.ToLower(strings.TrimSpace(condition[:index]))
+	switch conditionType {
+	case "body", "body_regex", "body_re":
+		return "body", negated
+	case "title", "title_regex", "title_re":
+		return "title", negated
+	case "header":
+		return "header", negated
+	case "server":
+		return "header", negated
+	case "url":
+		return "url", negated
+	case "icon_hash", "favicon_hash":
+		return "favicon", negated
+	case "cookie":
+		return "cookie", negated
+	case "status":
+		return "status", negated
+	default:
+		return "", negated
+	}
+}
+
+func newFingerprintEvidence(channel string, negated bool, data *FingerprintData) FingerprintEvidence {
+	pattern := channel + " condition"
+	if negated {
+		pattern += " (negated)"
+	}
+	material := fingerprintEvidenceMaterial(channel, data)
+	digest := sha256.Sum256([]byte(material))
+	return FingerprintEvidence{
+		Channel:            channel,
+		Pattern:            truncateEvidenceSummary(pattern),
+		MatchedValueDigest: fmt.Sprintf("sha256:%x", digest[:16]),
+		Strength:           fingerprintEvidenceStrength(channel),
+		Complete:           fingerprintEvidenceComplete(channel, data),
+	}
+}
+
+func fingerprintEvidenceMaterial(channel string, data *FingerprintData) string {
+	switch channel {
+	case "body", "script":
+		if data.Body != "" {
+			return data.Body
+		}
+		return string(data.BodyBytes)
+	case "title":
+		return data.Title
+	case "header", "status":
+		return formatHeadersToString(data.Headers) + data.HeaderString + data.Server
+	case "cookie":
+		return data.Cookies + data.HeaderString + formatHeadersToString(data.Headers)
+	case "url":
+		return data.URL
+	case "favicon":
+		return data.FaviconHash
+	default:
+		return ""
+	}
+}
+
+func fingerprintEvidenceStrength(channel string) string {
+	switch channel {
+	case "favicon":
+		return "strong"
+	case "title", "header", "cookie", "script", "url":
+		return "medium"
+	default:
+		return "weak"
+	}
+}
+
+func fingerprintEvidenceComplete(channel string, data *FingerprintData) bool {
+	if data.ResponseMissing || responseDataMissing(data) {
+		return false
+	}
+	switch channel {
+	case "body", "script":
+		return !data.BodyTruncated && !strings.Contains(strings.ToLower(data.Body), "[truncated]")
+	case "header", "cookie", "status":
+		return !data.HeaderTruncated && !strings.Contains(strings.ToLower(data.HeaderString), "[truncated]")
+	default:
+		return true
+	}
+}
+
+func responseDataMissing(data *FingerprintData) bool {
+	return data.Title == "" && data.Body == "" && len(data.BodyBytes) == 0 && len(data.Headers) == 0 &&
+		data.HeaderString == "" && data.Server == "" && data.Cookies == "" && data.FaviconHash == ""
+}
+
+func truncateEvidenceSummary(summary string) string {
+	const maxEvidenceSummaryBytes = 64
+	if len(summary) <= maxEvidenceSummaryBytes {
+		return summary
+	}
+	return summary[:maxEvidenceSummaryBytes]
 }
 
 func appendOrReplaceMatchedFingerprint(matched []MatchedFingerprint, matchedByName map[string]int, fp *model.Fingerprint) []MatchedFingerprint {

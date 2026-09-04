@@ -15,29 +15,31 @@ import (
 
 // ScannerAsset 扫描器资产数据传输对象（避免循环依赖）
 type ScannerAsset struct {
-	Authority  string
-	Host       string
-	Port       int
-	Category   string
-	Service    string
-	Server     string
-	Banner     string
-	Title      string
-	App        []string
-	HttpStatus string
-	HttpHeader string
-	HttpBody   string
-	Cert       string
-	IconHash   string
-	IconData   []byte
-	Screenshot string
-	IsCDN      bool
-	CName      string
-	IsCloud    bool
-	IsHTTP     bool
-	IPV4       []ScannerIPInfo
-	IPV6       []ScannerIPInfo
-	Source     string
+	Authority                    string
+	Host                         string
+	Port                         int
+	Category                     string
+	Service                      string
+	Server                       string
+	Banner                       string
+	Title                        string
+	App                          []string
+	FingerprintFindings          FingerprintFindings
+	FingerprintFindingsCollected bool
+	HttpStatus                   string
+	HttpHeader                   string
+	HttpBody                     string
+	Cert                         string
+	IconHash                     string
+	IconData                     []byte
+	Screenshot                   string
+	IsCDN                        bool
+	CName                        string
+	IsCloud                      bool
+	IsHTTP                       bool
+	IPV4                         []ScannerIPInfo
+	IPV6                         []ScannerIPInfo
+	Source                       string
 }
 
 // ScannerIPInfo IP信息传输对象
@@ -139,7 +141,17 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 			existing, err = s.assetModel.FindByAuthorityOnly(ctx, asset.Authority)
 		}
 
-		if err != nil || existing == nil {
+		if err != nil {
+			// 查询失败不能等同于不存在，否则短暂的 Mongo 错误会把当前结果
+			// 丢进竞争插入路径，最终既不更新旧资产也可能丢失新字段。
+			logx.Errorf("[AssetWriteService] Find existing asset failed: %v", err)
+			failedWrites++
+			if firstWriteErr == nil {
+				firstWriteErr = err
+			}
+			continue
+		}
+		if existing == nil {
 			// 新资产
 			asset.Id = primitive.NewObjectID()
 			asset.CreateTime = now
@@ -221,13 +233,13 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 				updateAsset++
 				if len(changes) > 0 {
 					diffs = append(diffs, ScanDiff{
-					TaskId:     mainTaskID,
-					DiffType:   ScanDiffTypeAsset,
-					ChangeType: ScanDiffChangeUpdated,
-					TargetKey:  existing.Authority,
-					Summary:    existing.Host,
-					Changes:    changes,
-				})
+						TaskId:     mainTaskID,
+						DiffType:   ScanDiffTypeAsset,
+						ChangeType: ScanDiffChangeUpdated,
+						TargetKey:  existing.Authority,
+						Summary:    existing.Host,
+						Changes:    changes,
+					})
 				}
 			}
 		}
@@ -325,26 +337,28 @@ func mergeUnique(base, extra []string) []string {
 // mapScannerAssetToModel 将 ScannerAsset 映射为 model.Asset
 func (s *AssetWriteService) mapScannerAssetToModel(sa *ScannerAsset, mainTaskID, orgID string) *Asset {
 	return &Asset{
-		Authority:     sa.Authority,
-		Host:          sa.Host,
-		Port:          sa.Port,
-		Category:      sa.Category,
-		Service:       sa.Service,
-		Title:         sa.Title,
-		App:           sa.App,
-		HttpStatus:    sa.HttpStatus,
-		HttpHeader:    sa.HttpHeader,
-		HttpBody:      sa.HttpBody,
-		IconHash:      sa.IconHash,
-		IconHashBytes: sa.IconData,
-		Screenshot:    sa.Screenshot,
-		Server:        sa.Server,
-		Banner:        sa.Banner,
-		IsHTTP:        sa.IsHTTP,
-		TaskId:        mainTaskID,
-		Source:        sa.Source,
-		CName:         sa.CName,
-		OrgId:         orgID,
+		Authority:                    sa.Authority,
+		Host:                         sa.Host,
+		Port:                         sa.Port,
+		Category:                     sa.Category,
+		Service:                      sa.Service,
+		Title:                        sa.Title,
+		App:                          sa.App,
+		FingerprintFindings:          append(FingerprintFindings(nil), sa.FingerprintFindings...),
+		FingerprintFindingsCollected: sa.FingerprintFindingsCollected,
+		HttpStatus:                   sa.HttpStatus,
+		HttpHeader:                   sa.HttpHeader,
+		HttpBody:                     sa.HttpBody,
+		IconHash:                     sa.IconHash,
+		IconHashBytes:                sa.IconData,
+		Screenshot:                   sa.Screenshot,
+		Server:                       sa.Server,
+		Banner:                       sa.Banner,
+		IsHTTP:                       sa.IsHTTP,
+		TaskId:                       mainTaskID,
+		Source:                       sa.Source,
+		CName:                        sa.CName,
+		OrgId:                        orgID,
 	}
 }
 

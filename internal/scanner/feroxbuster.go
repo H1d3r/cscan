@@ -259,7 +259,7 @@ func (s *FeroxbusterScanner) scanTarget(ctx context.Context, target, wordlistFil
 
 	args = append(args, "-o", tmpPath, "--silent")
 
-	logFn("INFO", "[Feroxbuster] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
+	logFn("INFO", "[Feroxbuster] CLI: target=%s wordlist_configured=%t", target, wordlistFile != "")
 
 	// opts.Timeout 是单请求时限；进程总时限由父级阶段 context 和工具默认值共同约束。
 	res, err := s.executor.Execute(scanCtx, args, ExecuteOpts{

@@ -265,8 +265,8 @@ func (s *MasscanScanner) runMasscan(ctx context.Context, targets []string, opts 
 	}
 	args = append(args, targets...)
 
-	// 输出执行命令到日志
-	logFn("INFO", "[Masscan] CLI: args=%s", strings.Join(args, " "))
+	// 仅记录非敏感执行摘要，不记录完整命令参数。
+	logFn("INFO", "[Masscan] CLI: targets=%d ports_configured=%t", len(targets), opts.Ports != "")
 
 	// 全局信号量：与 CmdExecutor 共用，限制所有扫描模块并发外部进程数
 	if !acquireProcessSlot(ctx) {

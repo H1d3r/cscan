@@ -155,6 +155,13 @@ func BuildAssetUpdateDoc(newAsset *Asset, existing *Asset, opts AssetWriteOption
 	if newAsset.Title != "" {
 		setFields["title"] = newAsset.Title
 	}
+	if newAsset.FingerprintFindingsCollected || len(newAsset.FingerprintFindings) > 0 {
+		findings := newAsset.FingerprintFindings
+		if findings == nil {
+			findings = FingerprintFindings{}
+		}
+		setFields["fingerprint_findings"] = findings
+	}
 	if newAsset.HttpStatus != "" {
 		setFields["status"] = newAsset.HttpStatus
 	}

@@ -256,15 +256,51 @@ type Fingerprint struct {
 	// 匹配规则 - ARL/自定义格式（简化规则语法）
 	Rule string `bson:"rule" json:"rule"` // ARL格式规则: body="xxx" && title="xxx"
 	// 其他
-	Implies    []string  `bson:"implies" json:"implies"`      // 隐含的其他技术
-	Excludes   []string  `bson:"excludes" json:"excludes"`    // 排除的技术
-	CPE        string    `bson:"cpe" json:"cpe"`              // CPE标识
-	Source     string    `bson:"source" json:"source"`        // 来源: wappalyzer, arl, custom
-	IsBuiltin  bool      `bson:"is_builtin" json:"isBuiltin"` // 是否内置指纹
-	Enabled    bool      `bson:"enabled" json:"enabled"`      // 是否启用
-	CreateTime time.Time `bson:"create_time" json:"createTime"`
-	UpdateTime time.Time `bson:"update_time" json:"updateTime"`
+	Implies       []string  `bson:"implies" json:"implies"`                                  // 隐含的其他技术
+	Excludes      []string  `bson:"excludes" json:"excludes"`                                // 排除的技术
+	ConflictGroup string    `bson:"conflict_group,omitempty" json:"conflictGroup,omitempty"` // 可选互斥组
+	Coexistence   []string  `bson:"coexistence,omitempty" json:"coexistence,omitempty"`      // 可共存技术或分组
+	ExclusiveWith []string  `bson:"exclusive_with,omitempty" json:"exclusiveWith,omitempty"` // 显式互斥技术
+	CPE           string    `bson:"cpe" json:"cpe"`                                          // CPE标识
+	Source        string    `bson:"source" json:"source"`                                    // 来源: wappalyzer, arl, custom
+	IsBuiltin     bool      `bson:"is_builtin" json:"isBuiltin"`                             // 是否内置指纹
+	Enabled       bool      `bson:"enabled" json:"enabled"`                                  // 是否启用
+	CreateTime    time.Time `bson:"create_time" json:"createTime"`
+	UpdateTime    time.Time `bson:"update_time" json:"updateTime"`
 }
+
+// FingerprintEvidence is a bounded, non-sensitive explanation of one matching
+// channel. Pattern is a redacted rule summary and MatchedValueDigest is a
+// one-way digest; raw response, header, and cookie values are never persisted.
+type FingerprintEvidence struct {
+	Channel            string `bson:"channel" json:"channel"`
+	Pattern            string `bson:"pattern,omitempty" json:"pattern,omitempty"`
+	MatchedValueDigest string `bson:"matched_value_digest,omitempty" json:"matchedValueDigest,omitempty"`
+	Strength           string `bson:"strength" json:"strength"`
+	Complete           bool   `bson:"complete" json:"complete"`
+}
+
+// FingerprintFinding records the raw interpreter result and optional metadata
+// used by later confidence and conflict governance. RawMatched deliberately
+// remains separate from Decision so governance cannot rewrite rule truth.
+type FingerprintFinding struct {
+	FingerprintID string                `bson:"fingerprint_id,omitempty" json:"fingerprintId,omitempty"`
+	Name          string                `bson:"name" json:"name"`
+	Source        string                `bson:"source" json:"source"`
+	IsBuiltin     bool                  `bson:"is_builtin,omitempty" json:"isBuiltin,omitempty"`
+	RawMatched    bool                  `bson:"raw_matched" json:"rawMatched"`
+	Decision      string                `bson:"decision,omitempty" json:"decision,omitempty"`
+	Confidence    int                   `bson:"confidence,omitempty" json:"confidence,omitempty"`
+	Evidence      []FingerprintEvidence `bson:"evidence,omitempty" json:"evidence,omitempty"`
+	ConflictGroup string                `bson:"conflict_group,omitempty" json:"conflictGroup,omitempty"`
+	Coexistence   []string              `bson:"coexistence,omitempty" json:"coexistence,omitempty"`
+	ExclusiveWith []string              `bson:"exclusive_with,omitempty" json:"exclusiveWith,omitempty"`
+	ReasonCode    string                `bson:"reason_code,omitempty" json:"reasonCode,omitempty"`
+}
+
+// FingerprintFindings is optional in persisted models. Historical documents
+// that omit it decode to a nil/empty slice without migration.
+type FingerprintFindings []FingerprintFinding
 
 // FingerprintModel 指纹模型
 type FingerprintModel struct {
@@ -310,31 +346,34 @@ func (m *FingerprintModel) Upsert(ctx context.Context, doc *Fingerprint) error {
 	// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
 	update := bson.M{
 		"$set": bson.M{
-			"name":         doc.Name,
-			"category":     doc.Category,
-			"website":      doc.Website,
-			"icon":         doc.Icon,
-			"description":  doc.Description,
-			"type":         doc.Type,
-			"active_paths": doc.ActivePaths,
-			"headers":      doc.Headers,
-			"cookies":      doc.Cookies,
-			"html":         doc.HTML,
-			"scripts":      doc.Scripts,
-			"scriptSrc":    doc.ScriptSrc,
-			"js":           doc.JS,
-			"meta":         doc.Meta,
-			"css":          doc.CSS,
-			"url":          doc.URL,
-			"dom":          doc.Dom,
-			"rule":         doc.Rule,
-			"implies":      doc.Implies,
-			"excludes":     doc.Excludes,
-			"cpe":          doc.CPE,
-			"source":       doc.Source,
-			"is_builtin":   doc.IsBuiltin,
-			"enabled":      doc.Enabled,
-			"update_time":  doc.UpdateTime,
+			"name":           doc.Name,
+			"category":       doc.Category,
+			"website":        doc.Website,
+			"icon":           doc.Icon,
+			"description":    doc.Description,
+			"type":           doc.Type,
+			"active_paths":   doc.ActivePaths,
+			"headers":        doc.Headers,
+			"cookies":        doc.Cookies,
+			"html":           doc.HTML,
+			"scripts":        doc.Scripts,
+			"scriptSrc":      doc.ScriptSrc,
+			"js":             doc.JS,
+			"meta":           doc.Meta,
+			"css":            doc.CSS,
+			"url":            doc.URL,
+			"dom":            doc.Dom,
+			"rule":           doc.Rule,
+			"implies":        doc.Implies,
+			"excludes":       doc.Excludes,
+			"conflict_group": doc.ConflictGroup,
+			"coexistence":    doc.Coexistence,
+			"exclusive_with": doc.ExclusiveWith,
+			"cpe":            doc.CPE,
+			"source":         doc.Source,
+			"is_builtin":     doc.IsBuiltin,
+			"enabled":        doc.Enabled,
+			"update_time":    doc.UpdateTime,
 		},
 		"$setOnInsert": bson.M{"_id": doc.Id, "create_time": doc.CreateTime},
 	}
@@ -599,31 +638,34 @@ func (m *FingerprintModel) BulkUpsert(ctx context.Context, docs []*Fingerprint) 
 		// $set 不能包含 _id，否则已存在文档更新会报错（_id 不可变）
 		update := bson.M{
 			"$set": bson.M{
-				"name":         doc.Name,
-				"category":     doc.Category,
-				"website":      doc.Website,
-				"icon":         doc.Icon,
-				"description":  doc.Description,
-				"type":         doc.Type,
-				"active_paths": doc.ActivePaths,
-				"headers":      doc.Headers,
-				"cookies":      doc.Cookies,
-				"html":         doc.HTML,
-				"scripts":      doc.Scripts,
-				"scriptSrc":    doc.ScriptSrc,
-				"js":           doc.JS,
-				"meta":         doc.Meta,
-				"css":          doc.CSS,
-				"url":          doc.URL,
-				"dom":          doc.Dom,
-				"rule":         doc.Rule,
-				"implies":      doc.Implies,
-				"excludes":     doc.Excludes,
-				"cpe":          doc.CPE,
-				"source":       doc.Source,
-				"is_builtin":   doc.IsBuiltin,
-				"enabled":      doc.Enabled,
-				"update_time":  doc.UpdateTime,
+				"name":           doc.Name,
+				"category":       doc.Category,
+				"website":        doc.Website,
+				"icon":           doc.Icon,
+				"description":    doc.Description,
+				"type":           doc.Type,
+				"active_paths":   doc.ActivePaths,
+				"headers":        doc.Headers,
+				"cookies":        doc.Cookies,
+				"html":           doc.HTML,
+				"scripts":        doc.Scripts,
+				"scriptSrc":      doc.ScriptSrc,
+				"js":             doc.JS,
+				"meta":           doc.Meta,
+				"css":            doc.CSS,
+				"url":            doc.URL,
+				"dom":            doc.Dom,
+				"rule":           doc.Rule,
+				"implies":        doc.Implies,
+				"excludes":       doc.Excludes,
+				"conflict_group": doc.ConflictGroup,
+				"coexistence":    doc.Coexistence,
+				"exclusive_with": doc.ExclusiveWith,
+				"cpe":            doc.CPE,
+				"source":         doc.Source,
+				"is_builtin":     doc.IsBuiltin,
+				"enabled":        doc.Enabled,
+				"update_time":    doc.UpdateTime,
 			},
 			"$setOnInsert": bson.M{"_id": doc.Id, "create_time": doc.CreateTime},
 		}

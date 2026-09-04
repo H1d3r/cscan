@@ -241,7 +241,7 @@ func (e *CmdExecutor) StreamLines(ctx context.Context, args []string, handler fu
 		stderrPipe.Close()
 		err := cmd.Wait()
 		if err != nil && stderrBuf.Len() > 0 {
-			logx.Debugf("[%s] stderr: %s", e.binaryPath, stderrBuf.String())
+			logx.Debugf("[%s] command failed with %d stderr bytes", e.binaryPath, stderrBuf.Len())
 		}
 		done <- err
 	}()
@@ -355,20 +355,10 @@ func (e *CmdExecutor) LogResult(prefix string, result *ExecuteResult, err error)
 			}
 		}
 	}
-	logFn("DEBUG", "[%s] %s: exit=%d duration=%s err=%v",
-		e.binaryPath, prefix, result.ExitCode, result.Duration, err)
-	if result.Stderr != "" {
-		logFn("DEBUG", "[%s] stderr: %s", e.binaryPath, result.Stderr)
-	}
-	if result.Stdout != "" {
-		// 超长输出只截取前后片段，避免刷屏
-		stdout := result.Stdout
-		const maxLen = 2000
-		if len(stdout) > maxLen {
-			stdout = stdout[:maxLen] + "\n...[truncated]"
-		}
-		logFn("DEBUG", "[%s] stdout: %s", e.binaryPath, stdout)
-	}
+	logFn("DEBUG", "[%s] %s: exit=%d duration=%s stdout_bytes=%d stderr_bytes=%d err=%v",
+		e.binaryPath, prefix, result.ExitCode, result.Duration, len(result.Stdout), len(result.Stderr), err)
+	// Do not emit command stdout/stderr contents here: scanner output can contain
+	// response bodies, headers, cookies, credentials, or template material.
 }
 
 // ExecuteResult 执行结果

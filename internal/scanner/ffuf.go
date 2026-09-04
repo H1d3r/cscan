@@ -282,7 +282,7 @@ func (s *FFufScanner) scanTarget(ctx context.Context, target, wordlistFile strin
 
 	args := buildFFufArgs(baseURL, wordlistFile, tmpPath, opts)
 
-	logFn("INFO", "[FFuf] CLI: target=%s wordlist=%s args=%s", target, wordlistFile, strings.Join(args, " "))
+	logFn("INFO", "[FFuf] CLI: target=%s wordlist_configured=%t", target, wordlistFile != "")
 
 	logFn("INFO", "[FFuf] executing ffuf for %s", target)
 

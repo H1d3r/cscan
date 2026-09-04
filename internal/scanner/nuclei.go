@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -113,23 +114,23 @@ func NewNucleiScanner() *NucleiScanner {
 
 // NucleiOptions Nuclei扫描选项
 type NucleiOptions struct {
-	Templates            []string                          `json:"templates"`
-	Tags                 []string                          `json:"tags"`
-	Severity             string                            `json:"severity"`
-	ExcludeTags          []string                          `json:"excludeTags"`
-	ExcludeTemplates     []string                          `json:"excludeTemplates"`
-	RateLimit            int                               `json:"rateLimit"`
-	Concurrency          int                               `json:"concurrency"`
-	Timeout              int                               `json:"timeout"`
-	TargetTimeout        int                               `json:"targetTimeout"`
-	Retries              int                               `json:"retries"`
-	AutoScan             bool                              `json:"autoScan"`
-	AutomaticScan        bool                              `json:"automaticScan"`
-	TagMappings          map[string][]string               `json:"tagMappings"`
-	CustomTemplates      []string                          `json:"customTemplates"`
+	Templates        []string            `json:"templates"`
+	Tags             []string            `json:"tags"`
+	Severity         string              `json:"severity"`
+	ExcludeTags      []string            `json:"excludeTags"`
+	ExcludeTemplates []string            `json:"excludeTemplates"`
+	RateLimit        int                 `json:"rateLimit"`
+	Concurrency      int                 `json:"concurrency"`
+	Timeout          int                 `json:"timeout"`
+	TargetTimeout    int                 `json:"targetTimeout"`
+	Retries          int                 `json:"retries"`
+	AutoScan         bool                `json:"autoScan"`
+	AutomaticScan    bool                `json:"automaticScan"`
+	TagMappings      map[string][]string `json:"tagMappings"`
+	CustomTemplates  []string            `json:"customTemplates"`
 	// TemplateFileRefs 已落盘的模板文件路径（本地模板库内容寻址文件）。
 	// 扫描时硬链接/复制进本次扫描目录，避免模板内容进内存后重复写盘
-	TemplateFileRefs []string                          `json:"templateFileRefs"`
+	TemplateFileRefs     []string                          `json:"templateFileRefs"`
 	CustomPocOnly        bool                              `json:"customPocOnly"`
 	NucleiTemplates      []string                          `json:"nucleiTemplates"`
 	CustomHeaders        []string                          `json:"customHeaders"`
@@ -235,6 +236,16 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		if config.TaskLogger != nil {
 			config.TaskLogger("WARN", "No targets for nuclei scan (all assets were skipped as non-HTTP)")
 		}
+		input := len(config.Assets)
+		if input == 0 {
+			input = len(config.Targets)
+		}
+		result.Diagnostic = &ScanDiagnostic{
+			Phase:        "poc",
+			Status:       PhaseUncovered,
+			Coverage:     Coverage{Input: input, Uncovered: input},
+			WarningCodes: []string{ReasonZeroCoverage},
+		}
 		return result, nil
 	}
 
@@ -275,8 +286,9 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	logFn("INFO", "Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
 
 	type targetResult struct {
-		vuls []*Vulnerability
-		err  error
+		vuls      []*Vulnerability
+		err       error
+		attempted bool
 	}
 	targetChan := make(chan string, len(targets))
 	resultChan := make(chan targetResult, len(targets))
@@ -294,7 +306,7 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 				default:
 				}
 				vuls, err := s.scanSingleTargetCLI(ctx, target, opts, customTemplatePaths, config.TaskLogger)
-				resultChan <- targetResult{vuls: vuls, err: err}
+				resultChan <- targetResult{vuls: vuls, err: err, attempted: true}
 			}
 		}()
 	}
@@ -315,22 +327,74 @@ dispatch:
 	}()
 
 	seen := make(map[string]bool)
-	for res := range resultChan {
-		if res.err != nil {
-			logFn("ERROR", "Nuclei: scan error: %v", res.err)
-			continue
-		}
-		for _, vul := range res.vuls {
+	appendVulnerabilities := func(vuls []*Vulnerability) {
+		for _, vul := range vuls {
+			if vul == nil {
+				continue
+			}
 			vulKey := fmt.Sprintf("%s:%s:%s", vul.Url, vul.PocFile, vul.MatcherName)
-			if !seen[vulKey] {
-				seen[vulKey] = true
-				result.Vulnerabilities = append(result.Vulnerabilities, vul)
-				if opts.OnVulnerabilityFound != nil {
-					opts.OnVulnerabilityFound(vul)
-				}
+			if seen[vulKey] {
+				continue
+			}
+			seen[vulKey] = true
+			result.Vulnerabilities = append(result.Vulnerabilities, vul)
+			if opts.OnVulnerabilityFound != nil {
+				opts.OnVulnerabilityFound(vul)
 			}
 		}
 	}
+	inputCount := len(config.Assets)
+	if inputCount == 0 {
+		inputCount = len(targets)
+	}
+	coverage := Coverage{Input: inputCount}
+	for res := range resultChan {
+		if res.attempted {
+			coverage.Attempted++
+		}
+		if res.err != nil {
+			if errors.Is(res.err, context.DeadlineExceeded) {
+				coverage.TimedOut++
+			} else {
+				coverage.Failed++
+			}
+			logFn("ERROR", "Nuclei: target execution failed (error_type=%T)", res.err)
+			// Preserve findings produced before a process-level failure, but never
+			// count that target as successfully covered.
+			appendVulnerabilities(res.vuls)
+			continue
+		}
+		coverage.Succeeded++
+		appendVulnerabilities(res.vuls)
+	}
+	if remainder := coverage.Input - coverage.Succeeded - coverage.Failed - coverage.TimedOut; remainder > 0 {
+		coverage.Uncovered = remainder
+	}
+
+	status := PhaseComplete
+	warningCodes := make([]string, 0, 2)
+	switch {
+	case ctx.Err() != nil:
+		status = PhaseCanceled
+		warningCodes = append(warningCodes, ReasonCanceled)
+	case coverage.Succeeded >= coverage.Input && coverage.Failed == 0 && coverage.TimedOut == 0:
+		status = PhaseComplete
+	case coverage.Succeeded > 0:
+		status = PhasePartial
+		warningCodes = append(warningCodes, ReasonPartialOutput)
+	case coverage.Attempted == 0:
+		status = PhaseUncovered
+		warningCodes = append(warningCodes, ReasonZeroCoverage)
+	default:
+		status = PhaseFailed
+		if coverage.TimedOut > 0 {
+			warningCodes = append(warningCodes, ReasonTimeout)
+		}
+		if coverage.Failed > 0 {
+			warningCodes = append(warningCodes, ReasonExecutionError)
+		}
+	}
+	result.Diagnostic = &ScanDiagnostic{Phase: "poc", Status: status, Coverage: coverage, WarningCodes: warningCodes}
 
 	logFn("INFO", "Nuclei: Completed, found %d vulnerabilities", len(result.Vulnerabilities))
 	return result, nil
@@ -435,7 +499,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 
 	taskLog("INFO", "Nuclei: scanning %d targets in single process (templates=%d, concurrency=%d, rate=%d, timeout=%v)",
 		len(targets), len(customTemplatePaths), opts.Concurrency, opts.RateLimit, processTimeout)
-	taskLog("INFO", "Nuclei CLI: command: %s", s.executor.CommandLine(args))
+	taskLog("INFO", "Nuclei CLI: execution prepared (arguments redacted)")
 
 	var allVuls []*Vulnerability
 	seen := make(map[string]bool)
@@ -448,7 +512,7 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		}
 		var event NucleiResultEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			taskLog("WARN", "Nuclei CLI: json unmarshal skipped: %v | line=%s", err, line)
+			taskLog("WARN", "Nuclei CLI: invalid_json_line_bytes=%d", len(line))
 			return true, nil
 		}
 		if !event.MatcherStatus {
@@ -481,6 +545,12 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 }
 
 func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, opts *NucleiOptions, templatePaths []string, taskLogger func(level, format string, args ...interface{})) ([]*Vulnerability, error) {
+	if s == nil || s.executor == nil {
+		return nil, fmt.Errorf("nuclei executor unavailable")
+	}
+	if opts == nil {
+		return nil, fmt.Errorf("nuclei options unavailable")
+	}
 	if len(templatePaths) == 0 {
 		return nil, fmt.Errorf("no templates available")
 	}
@@ -498,6 +568,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		}
 	}
 	logFn := taskLogger
+	safeTarget := sanitizedTarget(target)
 
 	templateDir := ""
 	if len(templatePaths) > 0 {
@@ -526,42 +597,65 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	}
 
 	taskLogger("INFO", "Nuclei CLI: scanning %s (templates=%d, concurrency=%d, rate=%d)",
-		target, len(templatePaths), opts.Concurrency, opts.RateLimit)
-	taskLogger("INFO", "Nuclei CLI: command: %s", s.executor.CommandLine(args))
+		safeTarget, len(templatePaths), opts.Concurrency, opts.RateLimit)
+	taskLogger("INFO", "Nuclei CLI: execution prepared (arguments redacted)")
 
 	// 进程超时 = 目标超时 + 30s 缓冲
 	processTimeout := time.Duration(opts.TargetTimeout+30) * time.Second
 	taskLogger("INFO", "Nuclei CLI: ProcessTimeout=%v (target timeout + 30s buffer)", processTimeout)
 
-	res, err := s.executor.Execute(ctx, args, ExecuteOpts{
+	res, execErr := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: processTimeout,
 		LogFn:   logFn,
 	})
-	taskLogger("INFO", "Nuclei CLI: target=%s exitCode=%d stdout_len=%d stderr=%q err=%v",
-		target, res.ExitCode, len(res.Stdout), strings.TrimSpace(res.Stderr), err)
-	if err != nil {
-		taskLogger("WARN", "Nuclei CLI: %s execution error: %v", target, err)
+
+	// Execute implementations are allowed to return a result together with an
+	// error, but a nil result must never be dereferenced or treated as success.
+	if res == nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if execErr == nil {
+			execErr = fmt.Errorf("nuclei executor returned nil result")
+		}
+		taskLogger("WARN", "Nuclei CLI: target=%s outcome=nil_result", safeTarget)
+		return nil, execErr
 	}
-	if len(res.Stderr) > 0 {
-		taskLogger("WARN", "Nuclei CLI: %s stderr detail: %s", target, strings.TrimSpace(res.Stderr))
+
+	var executionErr error
+	if execErr != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		executionErr = execErr
 	}
-	if res.ExitCode != 0 && len(res.Stdout) > 0 {
-		taskLogger("WARN", "Nuclei CLI: %s stdout detail: %s", target, strings.TrimSpace(res.Stdout))
+	if res.ExitCode != 0 && executionErr == nil {
+		executionErr = fmt.Errorf("nuclei exited with code %d", res.ExitCode)
+	}
+	if executionErr != nil {
+		reason := "execution_error"
+		if errors.Is(executionErr, context.DeadlineExceeded) || strings.Contains(strings.ToLower(executionErr.Error()), "timeout") {
+			reason = "timeout"
+			executionErr = context.DeadlineExceeded
+		}
+		taskLogger("WARN", "Nuclei CLI: target=%s outcome=%s exitCode=%d stdout_bytes=%d stderr_bytes=%d",
+			safeTarget, reason, res.ExitCode, len(res.Stdout), len(res.Stderr))
 	}
 
 	var vuls []*Vulnerability
+	outputLines := 0
+	invalidLines := 0
 	scanner := newLineScanner(res.Stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		outputLines++
 		var event NucleiResultEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			taskLogger("WARN", "Nuclei CLI: json unmarshal skipped: %v | line=%s", err, line)
+			invalidLines++
+			taskLogger("WARN", "Nuclei CLI: target=%s invalid_json_line_bytes=%d", safeTarget, len(line))
 			continue
 		}
 		if !event.MatcherStatus {
@@ -574,9 +668,20 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 				event.TemplateID, event.Info.Name, event.Info.Severity)
 		}
 	}
+	if scanner.Err() != nil && executionErr == nil {
+		executionErr = fmt.Errorf("nuclei output read failed: %w", scanner.Err())
+	}
+	if executionErr == nil && outputLines > 0 && invalidLines == outputLines {
+		executionErr = fmt.Errorf("nuclei output parse failed")
+	}
 
-	taskLogger("INFO", "Nuclei: %s -> %d vulnerabilities", target, len(vuls))
-	return vuls, nil
+	taskLogger("INFO", "Nuclei: %s -> %d vulnerabilities outcome=%s", safeTarget, len(vuls), func() string {
+		if executionErr != nil {
+			return "failed"
+		}
+		return "complete"
+	}())
+	return vuls, executionErr
 }
 
 func (s *NucleiScanner) convertCLIResult(event *NucleiResultEvent, target string) *Vulnerability {
