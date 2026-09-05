@@ -23,6 +23,7 @@
                 :src="formatScreenshotUrl(asset.screenshot)"
                 :alt="asset.title"
                 class="detail-screenshot-img"
+                loading="lazy"
               />
               <div v-else class="detail-screenshot-placeholder">
                 {{ t('asset.noScreenshot') }}
@@ -84,6 +85,7 @@
                       v-if="asset.iconHashBytes"
                       :src="'data:image/x-icon;base64,' + asset.iconHashBytes"
                       class="favicon-large"
+                      loading="lazy"
                       @error="(e) => e.target.style.display = 'none'"
                     />
                     <span class="item-value">{{ asset.iconHash }}</span>

@@ -156,6 +156,7 @@
                     v-if="row.iconBase64"
                     :src="`data:image/png;base64,${row.iconBase64}`"
                     class="svc-favicon"
+                    loading="lazy"
                     @error="$event.target.style.display = 'none'"
                   >
                   <a class="service-host" :href="serviceUrl(row)" target="_blank" rel="noopener" @click.stop>{{ row.host }}</a>

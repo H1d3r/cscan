@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,24 +13,32 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const testMongoURI = "mongodb://localhost:27017"
-const testDBName = "cscan_model_test"
-
-// mongoTestDB 连接测试库；若本地无 MongoDB 则跳过（与现有集成测试约定一致）。
+// mongoTestDB uses an explicitly configured MongoDB and an isolated database.
+// This prevents a normal unit-test run from modifying a developer's local data.
 func mongoTestDB(t *testing.T) (*mongo.Database, func()) {
 	t.Helper()
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(testMongoURI))
+	uri := os.Getenv("CSCAN_TEST_MONGO_URI")
+	if uri == "" {
+		t.Skip("CSCAN_TEST_MONGO_URI not set, skip asset inventory DB test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
 	if err != nil {
-		t.Skipf("MongoDB 不可用，跳过 DB 测试: %v", err)
+		t.Fatalf("connect MongoDB: %v", err)
 	}
 	if err := client.Ping(ctx, nil); err != nil {
-		t.Skipf("MongoDB 不可用，跳过 DB 测试: %v", err)
+		_ = client.Disconnect(context.Background())
+		t.Fatalf("ping MongoDB: %v", err)
 	}
-	db := client.Database(testDBName)
+
+	db := client.Database("cscan_test_asset_inventory_" + strings.ReplaceAll(t.Name(), "/", "_"))
 	cleanup := func() {
-		_ = db.Drop(ctx)
-		_ = client.Disconnect(ctx)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_ = db.Drop(cleanupCtx)
+		_ = client.Disconnect(cleanupCtx)
 	}
 	return db, cleanup
 }

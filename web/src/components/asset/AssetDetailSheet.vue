@@ -37,6 +37,7 @@
                     :src="getScreenshotDataUrl(asset.screenshot)"
                     :preview-src-list="[getScreenshotDataUrl(asset.screenshot)]"
                     fit="contain"
+                    lazy
                     preview-teleported
                   />
                 </ScreenshotHoverPreview>

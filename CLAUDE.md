@@ -4,7 +4,7 @@
 
 ### 1.1 项目概述
 
-**cscan** — 企业级分布式网络资产扫描平台（V5.7，以根目录 `VERSION` 为准）
+**cscan** — 企业级分布式网络资产扫描平台（V5.8，以根目录 `VERSION` 为准）
 
 ### 1.2 技术栈
 
@@ -651,7 +651,7 @@ docs/                # 本地文档（已被忽略）
 | `README.md` | 根目录 | 默认中文项目说明、功能特性、快速开始 |
 | `README_EN.md` | 根目录 | 英文项目说明，可由 README.md 顶部切换 |
 | `CLAUDE.md` | 根目录 | AI 编码助手指导文件 |
-| `VERSION` | 根目录 | 当前版本号（V5.7） |
+| `VERSION` | 根目录 | 当前版本号（V5.8） |
 | `LICENSE` | 根目录 | MIT 许可证 |
 
 项目 `docs/` 目录已被 `.gitignore` 忽略（GOZERO_ARCHITECTURE.md / IMPLEMENTATION_SUMMARY.md 已随 go-zero 改造回退删除），无 lint 配置文件（ESLint/Prettier/golangci-lint），无 Makefile。

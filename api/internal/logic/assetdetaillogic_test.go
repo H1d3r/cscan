@@ -2,6 +2,8 @@ package logic
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,21 +18,29 @@ import (
 
 func newTestSvcCtxDB(t *testing.T) (*svc.ServiceContext, func()) {
 	t.Helper()
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
+	uri := os.Getenv("CSCAN_TEST_MONGO_URI")
+	if uri == "" {
+		t.Skip("CSCAN_TEST_MONGO_URI not set, skip asset detail DB test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
 	if err != nil {
-		t.Skipf("MongoDB 不可用，跳过 DB 测试: %v", err)
+		t.Fatalf("connect MongoDB: %v", err)
 	}
 	if err := client.Ping(ctx, nil); err != nil {
-		t.Skipf("MongoDB 不可用，跳过 DB 测试: %v", err)
+		_ = client.Disconnect(context.Background())
+		t.Fatalf("ping MongoDB: %v", err)
 	}
-	db := client.Database("cscan_logic_test")
-	svcCtx := &svc.ServiceContext{
-		MongoDB: db,
-	}
+
+	db := client.Database("cscan_test_asset_detail_" + strings.ReplaceAll(t.Name(), "/", "_"))
+	svcCtx := &svc.ServiceContext{MongoDB: db}
 	cleanup := func() {
-		_ = db.Drop(ctx)
-		_ = client.Disconnect(ctx)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_ = db.Drop(cleanupCtx)
+		_ = client.Disconnect(cleanupCtx)
 	}
 	return svcCtx, cleanup
 }

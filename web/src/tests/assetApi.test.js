@@ -26,7 +26,7 @@ describe('asset API 层', () => {
     expect(res.data.id).toBe('a1')
   })
 
-  test('getAssetInventory 透传 requireRecognitionOrShot 死参数（此前后端从未读取）', async () => {
+  test('getAssetInventory 透传后端消费的 requireRecognitionOrShot 过滤参数', async () => {
     request.mockImplementation(() => Promise.resolve({ code: 0, total: 0, list: [] }))
     await getAssetInventory({ page: 1, pageSize: 10, requireRecognitionOrShot: true })
 

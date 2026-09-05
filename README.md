@@ -13,7 +13,7 @@
 [![Fingerprints](https://img.shields.io/badge/%E6%8C%87%E7%BA%B9-41537%2B-orange)](#平台亮点)
 [![POCs](https://img.shields.io/badge/POC-13412%2B-red)](#平台亮点)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.7-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.8-green)](VERSION)
 
 </div>
 

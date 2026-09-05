@@ -2,6 +2,8 @@ package asset
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,18 +26,7 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Setup test database connection
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
-	require.NoError(t, err)
-	defer client.Disconnect(ctx)
-
-	db := client.Database("cscan_test")
-	workspaceId := "test_workspace"
-
-	// Clean up test data before and after
-	defer cleanupTestData(t, db, workspaceId)
-	cleanupTestData(t, db, workspaceId)
+	ctx, db := setupScanResultIntegrationTest(t)
 
 	// Step 1: Create test asset
 	assetModel := model.NewAssetModel(db)
@@ -50,7 +41,7 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
-	err = assetModel.Insert(ctx, testAsset)
+	err := assetModel.Insert(ctx, testAsset)
 	require.NoError(t, err, "Failed to create test asset")
 
 	// Step 2: Create directory scan results
@@ -123,9 +114,9 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 4: Test AssetService.GetAssetList with scan summaries
 	assetService := svc.NewAssetService(db)
 	assetListReq := &svc.GetAssetListReq{
-		Page:        1,
-		PageSize:    20,
-		SortField:   "update_time",
+		Page:      1,
+		PageSize:  20,
+		SortField: "update_time",
 	}
 	assetListResp, err := assetService.GetAssetList(ctx, assetListReq)
 	require.NoError(t, err, "Failed to get asset list")
@@ -141,11 +132,11 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 	// Step 5: Test ScanResultService.GetDirScanResults
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		Limit:       100,
-		Offset:      0,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		Limit:     100,
+		Offset:    0,
 	}
 	dirScanResp, err := scanResultService.GetDirScanResults(ctx, dirScanReq)
 	require.NoError(t, err, "Failed to get directory scan results")
@@ -154,11 +145,11 @@ func TestIntegration_CompleteFlow(t *testing.T) {
 
 	// Step 6: Test ScanResultService.GetVulnScanResults
 	vulnScanReq := &svc.GetVulnScanResultsReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		Limit:       50,
-		Offset:      0,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		Limit:     50,
+		Offset:    0,
 	}
 	vulnScanResp, err := scanResultService.GetVulnScanResults(ctx, vulnScanReq)
 	require.NoError(t, err, "Failed to get vulnerability scan results")
@@ -180,18 +171,7 @@ func TestIntegration_RescanFlow(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Setup test database connection
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
-	require.NoError(t, err)
-	defer client.Disconnect(ctx)
-
-	db := client.Database("cscan_test")
-	workspaceId := "test_workspace"
-
-	// Clean up test data before and after
-	defer cleanupTestData(t, db, workspaceId)
-	cleanupTestData(t, db, workspaceId)
+	ctx, db := setupScanResultIntegrationTest(t)
 
 	// Step 1: Create test asset
 	assetModel := model.NewAssetModel(db)
@@ -205,7 +185,7 @@ func TestIntegration_RescanFlow(t *testing.T) {
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
-	err = assetModel.Insert(ctx, testAsset)
+	err := assetModel.Insert(ctx, testAsset)
 	require.NoError(t, err, "Failed to create test asset")
 
 	// Step 2: Run first scan - create initial scan results
@@ -238,19 +218,17 @@ func TestIntegration_RescanFlow(t *testing.T) {
 
 	// Step 3: Verify first scan results exist
 	dirScanReq := &svc.GetDirScanResultsReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		Limit:       100,
-		Offset:      0,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		Limit:     100,
+		Offset:    0,
 	}
 	dirScanResp, err := scanResultService.GetDirScanResults(ctx, dirScanReq)
 	require.NoError(t, err, "Failed to get directory scan results after first scan")
 	assert.Equal(t, int64(1), dirScanResp.Total, "Should have 1 directory scan result after first scan")
 
-	// Step 4: Run second scan - this should archive old results and save new ones
-	time.Sleep(1 * time.Second) // Ensure different timestamp
-	secondScanTime := time.Now()
+	secondScanTime := firstScanTime.Add(time.Second)
 	secondScanReq := &svc.SaveScanResultsReq{
 		TargetId:      testAsset.Id.Hex(),
 		Authority:     testAsset.Authority,
@@ -285,9 +263,9 @@ func TestIntegration_RescanFlow(t *testing.T) {
 	// Step 6: Verify historical data is preserved
 	historyService := svc.NewHistoryService(db)
 	historyReq := &svc.GetResultHistoryReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
 	}
 	historyResp, err := historyService.GetResultHistory(ctx, historyReq)
 	require.NoError(t, err, "Failed to get result history")
@@ -304,18 +282,7 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Setup test database connection
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
-	require.NoError(t, err)
-	defer client.Disconnect(ctx)
-
-	db := client.Database("cscan_test")
-	workspaceId := "test_workspace"
-
-	// Clean up test data before and after
-	defer cleanupTestData(t, db, workspaceId)
-	cleanupTestData(t, db, workspaceId)
+	ctx, db := setupScanResultIntegrationTest(t)
 
 	// Create test asset with scan results
 	assetModel := model.NewAssetModel(db)
@@ -328,7 +295,7 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
-	err = assetModel.Insert(ctx, testAsset)
+	err := assetModel.Insert(ctx, testAsset)
 	require.NoError(t, err)
 
 	// Create 5 directory scan results
@@ -354,9 +321,9 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	// Query from AssetService (inventory view)
 	assetService := svc.NewAssetService(db)
 	assetListReq := &svc.GetAssetListReq{
-		Page:        1,
-		PageSize:    20,
-		SortField:   "update_time",
+		Page:      1,
+		PageSize:  20,
+		SortField: "update_time",
 	}
 	assetListResp, err := assetService.GetAssetList(ctx, assetListReq)
 	require.NoError(t, err)
@@ -366,11 +333,11 @@ func TestIntegration_CrossViewConsistency(t *testing.T) {
 	// Query from ScanResultService (screenshot dialog view)
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		Limit:       100,
-		Offset:      0,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		Limit:     100,
+		Offset:    0,
 	}
 	dirScanResp, err := scanResultService.GetDirScanResults(ctx, dirScanReq)
 	require.NoError(t, err)
@@ -391,18 +358,7 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Setup test database connection
-	ctx := context.Background()
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://localhost:27017"))
-	require.NoError(t, err)
-	defer client.Disconnect(ctx)
-
-	db := client.Database("cscan_test")
-	workspaceId := "test_workspace"
-
-	// Clean up test data before and after
-	defer cleanupTestData(t, db, workspaceId)
-	cleanupTestData(t, db, workspaceId)
+	ctx, db := setupScanResultIntegrationTest(t)
 
 	// Create test asset
 	assetModel := model.NewAssetModel(db)
@@ -415,7 +371,7 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 		CreateTime: time.Now(),
 		UpdateTime: time.Now(),
 	}
-	err = assetModel.Insert(ctx, testAsset)
+	err := assetModel.Insert(ctx, testAsset)
 	require.NoError(t, err)
 
 	// Create legacy directory scan result (without version and scan_time fields)
@@ -439,11 +395,11 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	// Query legacy data through ScanResultService
 	scanResultService := svc.NewScanResultService(db)
 	dirScanReq := &svc.GetDirScanResultsReq{
-		Authority:   testAsset.Authority,
-		Host:        testAsset.Host,
-		Port:        testAsset.Port,
-		Limit:       100,
-		Offset:      0,
+		Authority: testAsset.Authority,
+		Host:      testAsset.Host,
+		Port:      testAsset.Port,
+		Limit:     100,
+		Offset:    0,
 	}
 	dirScanResp, err := scanResultService.GetDirScanResults(ctx, dirScanReq)
 	require.NoError(t, err, "Should successfully query legacy data")
@@ -454,6 +410,36 @@ func TestIntegration_BackwardCompatibility(t *testing.T) {
 	result := dirScanResp.Results[0]
 	assert.Equal(t, int64(1), result.Version, "Legacy data should be assigned version 1")
 	assert.Equal(t, "", result.Title, "Missing optional field should default to empty string")
+}
+
+// setupScanResultIntegrationTest requires an explicit MongoDB URI and gives each
+// test an isolated database. It prevents default test runs from mutating local data.
+func setupScanResultIntegrationTest(t *testing.T) (context.Context, *mongo.Database) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	uri := os.Getenv("CSCAN_TEST_MONGO_URI")
+	if uri == "" {
+		t.Skip("CSCAN_TEST_MONGO_URI not set, skip scan result integration test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
+	require.NoError(t, err)
+	require.NoError(t, client.Ping(ctx, nil))
+
+	db := client.Database("cscan_test_scan_result_" + strings.ReplaceAll(t.Name(), "/", "_"))
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		cleanupTestData(t, db, "")
+		_ = db.Drop(cleanupCtx)
+		_ = client.Disconnect(cleanupCtx)
+		cancel()
+	})
+	return ctx, db
 }
 
 // cleanupTestData removes all test data from the database

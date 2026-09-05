@@ -13,7 +13,7 @@
 [![Fingerprints](https://img.shields.io/badge/Fingerprints-41537%2B-orange)](#highlights)
 [![POCs](https://img.shields.io/badge/POCs-13412%2B-red)](#highlights)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.7-green)](VERSION)
+[![Version](https://img.shields.io/badge/Version-5.8-green)](VERSION)
 
 </div>
 
