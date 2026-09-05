@@ -351,11 +351,6 @@ type AssetStatReq struct {
 	TargetId string `json:"targetId,optional"`
 }
 
-type AttackSurfaceScope struct {
-	Type     string `json:"type"`
-	TargetId string `json:"targetId"`
-}
-
 type AttackSurfaceDrilldown struct {
 	Tab     string                 `json:"tab"`
 	Filters map[string]interface{} `json:"filters"`
@@ -365,35 +360,30 @@ type AttackSurfaceMetric struct {
 	Key        string                 `json:"key"`
 	LabelKey   string                 `json:"labelKey"`
 	Value      int                    `json:"value"`
-	Category   string                 `json:"category"`
 	Tone       string                 `json:"tone"`
 	Applicable bool                   `json:"applicable"`
 	Drilldown  AttackSurfaceDrilldown `json:"drilldown"`
 }
 
+type AttackSurfaceTarget struct {
+	Id           string   `json:"id"`
+	TargetValue  string   `json:"targetValue"`
+	Labels       []string `json:"labels"`
+	Memo         string   `json:"memo"`
+	ColorTag     string   `json:"colorTag"`
+	ScanStatus   string   `json:"scanStatus"`
+	LastScanTime int64    `json:"lastScanTime"`
+}
+
 type AttackSurfaceStatData struct {
-	Scope     AttackSurfaceScope    `json:"scope"`
-	Target    *AssetTargetListItem  `json:"target"`
-	Metrics   []AttackSurfaceMetric `json:"metrics"`
-	UpdatedAt int64                 `json:"updatedAt"`
+	Target  *AttackSurfaceTarget  `json:"target"`
+	Metrics []AttackSurfaceMetric `json:"metrics"`
 }
 
 type AssetStatResp struct {
-	Code         int                `json:"code"`
-	Msg          string             `json:"msg"`
-	TotalAsset   int                `json:"totalAsset"`
-	TotalHost    int                `json:"totalHost"`
-	PortCount    int                `json:"portCount"`
-	NewCount     int                `json:"newCount"`
-	UpdatedCount int                `json:"updatedCount"`
-	TopPorts     []StatItem         `json:"topPorts"`
-	TopService   []StatItem         `json:"topService"`
-	TopApp       []StatItem         `json:"topApp"`
-	TopTitle     []StatItem         `json:"topTitle"`
-	TopIconHash  []IconHashStatItem `json:"topIconHash,omitempty"`
-	// 新增字段 - 风险等级分布
-	RiskDistribution map[string]int        `json:"riskDistribution,omitempty"`
-	Data             AttackSurfaceStatData `json:"data"`
+	Code int                   `json:"code"`
+	Msg  string                `json:"msg"`
+	Data AttackSurfaceStatData `json:"data"`
 }
 
 type StatItem struct {

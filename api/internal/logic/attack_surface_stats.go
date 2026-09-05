@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"cscan/api/internal/svc"
 	"cscan/api/internal/types"
@@ -16,30 +15,27 @@ import (
 type attackSurfaceMetricDefinition struct {
 	key      string
 	labelKey string
-	category string
 	tone     string
 	tab      string
 	filters  map[string]interface{}
 }
 
 var attackSurfaceMetricRegistry = []attackSurfaceMetricDefinition{
-	{key: "exposure.subdomains", labelKey: "asset.metrics.subdomains", category: "exposure", tone: "info", tab: "service", filters: map[string]interface{}{}},
-	{key: "exposure.ips", labelKey: "asset.metrics.ips", category: "exposure", tone: "info", tab: "service", filters: map[string]interface{}{}},
-	{key: "exposure.ports", labelKey: "asset.metrics.ports", category: "exposure", tone: "info", tab: "service", filters: map[string]interface{}{}},
-	{key: "exposure.sites", labelKey: "asset.metrics.sites", category: "exposure", tone: "info", tab: "service", filters: map[string]interface{}{"webOnly": true}},
-	{key: "exposure.dirs", labelKey: "asset.metrics.dirs", category: "exposure", tone: "info", tab: "dir", filters: map[string]interface{}{}},
-	{key: "exposure.js", labelKey: "asset.metrics.js", category: "exposure", tone: "info", tab: "js", filters: map[string]interface{}{}},
-	{key: "exposure.screenshots", labelKey: "asset.metrics.screenshots", category: "exposure", tone: "info", tab: "service", filters: map[string]interface{}{"hasScreenshot": true}},
-	{key: "risk.sensitiveInfo", labelKey: "asset.metrics.sensitiveInfo", category: "risk", tone: "warning", tab: "sensitive", filters: map[string]interface{}{"aiResult": "risk", "aiStatus": "completed"}},
-	{key: "risk.vulnTotal", labelKey: "asset.metrics.vulnTotal", category: "risk", tone: "danger", tab: "vuln", filters: map[string]interface{}{}},
+	{key: "exposure.subdomains", labelKey: "asset.metrics.subdomains", tone: "info", tab: "service", filters: map[string]interface{}{}},
+	{key: "exposure.ips", labelKey: "asset.metrics.ips", tone: "info", tab: "service", filters: map[string]interface{}{}},
+	{key: "exposure.ports", labelKey: "asset.metrics.ports", tone: "info", tab: "service", filters: map[string]interface{}{}},
+	{key: "exposure.sites", labelKey: "asset.metrics.sites", tone: "info", tab: "service", filters: map[string]interface{}{"webOnly": true}},
+	{key: "exposure.dirs", labelKey: "asset.metrics.dirs", tone: "info", tab: "dir", filters: map[string]interface{}{}},
+	{key: "exposure.js", labelKey: "asset.metrics.js", tone: "info", tab: "js", filters: map[string]interface{}{}},
+	{key: "exposure.screenshots", labelKey: "asset.metrics.screenshots", tone: "info", tab: "service", filters: map[string]interface{}{"hasScreenshot": true}},
+	{key: "risk.sensitiveInfo", labelKey: "asset.metrics.sensitiveInfo", tone: "warning", tab: "sensitive", filters: map[string]interface{}{"aiResult": "risk", "aiStatus": "completed"}},
+	{key: "risk.vulnTotal", labelKey: "asset.metrics.vulnTotal", tone: "danger", tab: "vuln", filters: map[string]interface{}{}},
 }
 
 func buildAttackSurfaceStatData(ctx context.Context, svcCtx *svc.ServiceContext, targetID string) (types.AttackSurfaceStatData, error) {
 	targetID = strings.TrimSpace(targetID)
 	data := types.AttackSurfaceStatData{
-		Scope:     types.AttackSurfaceScope{Type: "global"},
-		Metrics:   make([]types.AttackSurfaceMetric, 0, len(attackSurfaceMetricRegistry)),
-		UpdatedAt: time.Now().UnixMilli(),
+		Metrics: make([]types.AttackSurfaceMetric, 0, len(attackSurfaceMetricRegistry)),
 	}
 
 	assetFilter := bson.M{}
@@ -51,15 +47,18 @@ func buildAttackSurfaceStatData(ctx context.Context, svcCtx *svc.ServiceContext,
 		}
 		hostFilter = hostFilterForTarget(targetType, targetValue)
 		assetFilter["host"] = hostFilter
-		data.Scope = types.AttackSurfaceScope{Type: "target", TargetId: targetID}
 
-		target := types.AssetTargetListItem{Id: targetID, TargetType: string(targetType), TargetValue: targetValue}
+		target := types.AttackSurfaceTarget{
+			Id:          targetID,
+			TargetValue: targetValue,
+			Labels:      []string{},
+		}
 		meta, err := svcCtx.GetAssetTargetMetaModel().FindByID(ctx, targetID)
 		if err != nil {
 			return data, fmt.Errorf("find target metadata: %w", err)
 		}
 		if meta != nil {
-			target = metaToItem(*meta)
+			target = attackSurfaceTargetFromMeta(*meta)
 		}
 		data.Target = &target
 	}
@@ -152,7 +151,6 @@ func buildAttackSurfaceStatData(ctx context.Context, svcCtx *svc.ServiceContext,
 			Key:        definition.key,
 			LabelKey:   definition.labelKey,
 			Value:      values[definition.key],
-			Category:   definition.category,
 			Tone:       definition.tone,
 			Applicable: true,
 			Drilldown: types.AttackSurfaceDrilldown{
@@ -162,6 +160,22 @@ func buildAttackSurfaceStatData(ctx context.Context, svcCtx *svc.ServiceContext,
 		})
 	}
 	return data, nil
+}
+
+func attackSurfaceTargetFromMeta(meta model.AssetTargetMeta) types.AttackSurfaceTarget {
+	labels := meta.Labels
+	if labels == nil {
+		labels = []string{}
+	}
+	return types.AttackSurfaceTarget{
+		Id:           meta.Id,
+		TargetValue:  meta.TargetValue,
+		Labels:       labels,
+		Memo:         meta.Memo,
+		ColorTag:     meta.ColorTag,
+		ScanStatus:   meta.ScanStatus,
+		LastScanTime: tsMilli(meta.LastScanTime),
+	}
 }
 
 func cloneBSONFilter(source bson.M) bson.M {

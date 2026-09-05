@@ -28,6 +28,13 @@ func GetRootDomain(domain string) string {
 		return domain
 	}
 
+	// 反向 DNS 区的每一层标签都表示地址的一部分，不能按可注册域名归并。
+	// 例如 18.180.159.139.in-addr.arpa 必须完整保留，不能缩短为 139.in-addr.arpa。
+	// IPv6 反向区同样适用该规则。
+	if strings.HasSuffix(domain, ".in-addr.arpa") || strings.HasSuffix(domain, ".ip6.arpa") {
+		return domain
+	}
+
 	// 使用 publicsuffix 获取有效TLD+1（即根域名）
 	// EffectiveTLDPlusOne 返回公共后缀加上一级，例如：
 	// - test.com.cn -> test.com.cn (com.cn 是公共后缀)

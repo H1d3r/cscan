@@ -11,9 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl libpcap-dev gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# 国内网络优先用 goproxy.cn，回落到 direct，避免容器内访问 proxy.golang.org 失败
-ENV GOPROXY=https://goproxy.cn,direct
-ENV GOSUMDB=off
+# GitHub Runner 和海外网络优先使用 Go 官方代理；代理异常时回退到源码直连。
+ENV GOPROXY=https://proxy.golang.org|direct
 
 # 复制依赖文件并下载
 COPY go.mod go.sum ./

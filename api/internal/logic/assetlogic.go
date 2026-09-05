@@ -472,106 +472,15 @@ func (l *AssetStatLogic) AssetStat(req *types.AssetStatReq) (resp *types.AssetSt
 }
 
 func (l *AssetStatLogic) loadAssetStat(targetID string) (*types.AssetStatResp, error) {
-	var totalAsset, totalHost, newCount, updatedCount, portCount int64
-	var topPorts, topService, topApp, topTitle []types.StatItem
-	var topIconHash []types.IconHashStatItem
-	var riskDistribution map[string]int
-
-	assetModel := l.svcCtx.GetAssetModel()
-
-	// 概览统计（总数/新资产/更新资产）
-	overview, _ := assetModel.AggregateOverviewStats(l.ctx)
-	if overview != nil {
-		totalAsset = overview.TotalAsset
-		totalHost = overview.TotalAsset
-		newCount = overview.NewCount
-		updatedCount = overview.UpdatedCount
-	}
-
-	// 去重端口数（与端口页面 AggregatePortList 口径一致）
-	portCount, _ = assetModel.DistinctPortCount(l.ctx)
-
-	// Top端口（返回top50，前端默认展示top10）
-	portStats, _ := assetModel.AggregatePort(l.ctx, 50)
-	topPorts = make([]types.StatItem, 0, len(portStats))
-	for _, s := range portStats {
-		topPorts = append(topPorts, types.StatItem{
-			Name:  strconv.Itoa(s.Port),
-			Count: s.Count,
-		})
-	}
-
-	// Top服务
-	serviceStats, _ := assetModel.Aggregate(l.ctx, "service", 50)
-	topService = make([]types.StatItem, 0, len(serviceStats))
-	for _, s := range serviceStats {
-		topService = append(topService, types.StatItem{
-			Name:  s.Field,
-			Count: s.Count,
-		})
-	}
-
-	// Top应用（使用专门的AggregateApp方法展开数组）
-	appStats, _ := assetModel.AggregateApp(l.ctx, 50)
-	topApp = make([]types.StatItem, 0, len(appStats))
-	for _, s := range appStats {
-		topApp = append(topApp, types.StatItem{
-			Name:  s.Field,
-			Count: s.Count,
-		})
-	}
-
-	// Top标题
-	titleStats, _ := assetModel.Aggregate(l.ctx, "title", 50)
-	topTitle = make([]types.StatItem, 0, len(titleStats))
-	for _, s := range titleStats {
-		if s.Field != "" {
-			topTitle = append(topTitle, types.StatItem{
-				Name:  s.Field,
-				Count: s.Count,
-			})
-		}
-	}
-
-	// Top IconHash
-	iconHashStats, _ := assetModel.AggregateIconHash(l.ctx, 50)
-	topIconHash = make([]types.IconHashStatItem, 0, len(iconHashStats))
-	for _, s := range iconHashStats {
-		iconData := ""
-		if len(s.IconData) > 0 && isValidImageBytes(s.IconData) {
-			iconData = base64.StdEncoding.EncodeToString(s.IconData)
-		}
-		topIconHash = append(topIconHash, types.IconHashStatItem{
-			IconHash:      s.IconHash,
-			IconData:      iconData,
-			IconHashBytes: iconData,
-			Count:         s.Count,
-		})
-	}
-
-	// 风险等级分布
-	riskDistribution, _ = assetModel.AggregateRiskLevel(l.ctx)
-
 	attackSurfaceData, err := buildAttackSurfaceStatData(l.ctx, l.svcCtx, targetID)
 	if err != nil {
 		return nil, err
 	}
 
 	return &types.AssetStatResp{
-		Code:             0,
-		Msg:              "success",
-		TotalAsset:       int(totalAsset),
-		TotalHost:        int(totalHost),
-		PortCount:        int(portCount),
-		NewCount:         int(newCount),
-		UpdatedCount:     int(updatedCount),
-		TopPorts:         topPorts,
-		TopService:       topService,
-		TopApp:           topApp,
-		TopTitle:         topTitle,
-		TopIconHash:      topIconHash,
-		RiskDistribution: riskDistribution,
-		Data:             attackSurfaceData,
+		Code: 0,
+		Msg:  "success",
+		Data: attackSurfaceData,
 	}, nil
 }
 

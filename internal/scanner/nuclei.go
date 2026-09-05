@@ -54,6 +54,13 @@ func CollectEvidence(request, response, matcherName string, extractedResults, cu
 // MaxResponseSize 响应内容最大存储大小 (10KB)
 const MaxResponseSize = 10 * 1024
 
+const (
+	// DefaultNucleiRequestTimeoutSeconds 是 nuclei 单次网络请求的默认等待时间。
+	DefaultNucleiRequestTimeoutSeconds = 10
+	// DefaultNucleiTargetTimeoutSeconds 是单个目标完整漏洞扫描的默认硬上限。
+	DefaultNucleiTargetTimeoutSeconds = 600
+)
+
 // NucleiResultEvent 对应 nuclei CLI -jsonl 输出的 JSON 行结构
 type NucleiResultEvent struct {
 	TemplateID       string             `json:"template-id"`
@@ -121,8 +128,8 @@ type NucleiOptions struct {
 	ExcludeTemplates []string            `json:"excludeTemplates"`
 	RateLimit        int                 `json:"rateLimit"`
 	Concurrency      int                 `json:"concurrency"`
-	Timeout          int                 `json:"timeout"`
-	TargetTimeout    int                 `json:"targetTimeout"`
+	Timeout          int                 `json:"timeout"`       // nuclei 单次请求超时（秒），传给 CLI -timeout
+	TargetTimeout    int                 `json:"targetTimeout"` // 单个目标完整扫描硬上限（秒）
 	Retries          int                 `json:"retries"`
 	AutoScan         bool                `json:"autoScan"`
 	AutomaticScan    bool                `json:"automaticScan"`
@@ -182,8 +189,8 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		Severity:      "critical,high,medium",
 		RateLimit:     150,
 		Concurrency:   25,
-		Timeout:       600,
-		TargetTimeout: 600,
+		Timeout:       DefaultNucleiRequestTimeoutSeconds,
+		TargetTimeout: DefaultNucleiTargetTimeoutSeconds,
 		Retries:       1,
 	}
 	if config.Options != nil {
@@ -199,10 +206,10 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 		opts.RateLimit = 150
 	}
 	if opts.TargetTimeout <= 0 {
-		opts.TargetTimeout = 600
+		opts.TargetTimeout = DefaultNucleiTargetTimeoutSeconds
 	}
 	if opts.Timeout <= 0 {
-		opts.Timeout = opts.TargetTimeout
+		opts.Timeout = DefaultNucleiRequestTimeoutSeconds
 	}
 	if opts.Retries <= 0 {
 		opts.Retries = 1
@@ -426,10 +433,10 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		opts.RateLimit = 150
 	}
 	if opts.TargetTimeout <= 0 {
-		opts.TargetTimeout = 600
+		opts.TargetTimeout = DefaultNucleiTargetTimeoutSeconds
 	}
 	if opts.Timeout <= 0 {
-		opts.Timeout = opts.TargetTimeout
+		opts.Timeout = DefaultNucleiRequestTimeoutSeconds
 	}
 	if opts.Retries <= 0 {
 		opts.Retries = 1
@@ -472,13 +479,21 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	if totalSeconds > 43200 { // 12h
 		totalSeconds = 43200
 	}
+	// 无调用方 deadline 时使用保守估算兜底；调用方显式设置了总 timeout 时，
+	// 必须以调用方预算为准，不能再被内部估算值提前截断。
 	processTimeout := time.Duration(totalSeconds) * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		processTimeout = time.Until(deadline)
+		if processTimeout <= 0 {
+			return nil, ctx.Err()
+		}
+	}
 
 	args := []string{
 		"-list", targetFilePath,
 		"-jsonl",
 		"-silent",
-		"-timeout", fmt.Sprintf("%d", opts.TargetTimeout),
+		"-timeout", fmt.Sprintf("%d", opts.Timeout),
 		"-retries", fmt.Sprintf("%d", opts.Retries),
 		"-rate-limit", fmt.Sprintf("%d", opts.RateLimit),
 		"-concurrency", fmt.Sprintf("%d", opts.Concurrency),
@@ -578,7 +593,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		"-target", target,
 		"-jsonl",
 		"-silent",
-		"-timeout", fmt.Sprintf("%d", opts.TargetTimeout),
+		"-timeout", fmt.Sprintf("%d", opts.Timeout),
 		"-retries", fmt.Sprintf("%d", opts.Retries),
 		"-rate-limit", fmt.Sprintf("%d", opts.RateLimit),
 		"-concurrency", fmt.Sprintf("%d", opts.Concurrency),
@@ -595,12 +610,15 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		args = append(args, "-header", header)
 	}
 
-	// 进程超时 = 目标超时 + 30s 缓冲
-	processTimeout := time.Duration(opts.TargetTimeout+30) * time.Second
+	// TargetTimeout 是单目标完整扫描的硬边界；从进入执行器前开始计时，
+	// 因此等待全局进程槽的时间也计入预算。CLI -timeout 只控制单次请求。
+	targetTimeout := time.Duration(opts.TargetTimeout) * time.Second
+	targetCtx, targetCancel := context.WithTimeout(ctx, targetTimeout)
+	defer targetCancel()
 	taskLogger("INFO", "系统执行命令：%s", s.executor.CommandLine(args))
 
-	res, execErr := s.executor.Execute(ctx, args, ExecuteOpts{
-		Timeout: processTimeout,
+	res, execErr := s.executor.Execute(targetCtx, args, ExecuteOpts{
+		Timeout: targetTimeout,
 		LogFn:   logFn,
 	})
 
@@ -609,6 +627,9 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	if res == nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if targetCtx.Err() != nil {
+			return nil, targetCtx.Err()
 		}
 		if execErr == nil {
 			execErr = fmt.Errorf("nuclei executor returned nil result")
@@ -622,10 +643,21 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		executionErr = execErr
+		if errors.Is(targetCtx.Err(), context.DeadlineExceeded) {
+			executionErr = context.DeadlineExceeded
+		} else {
+			executionErr = execErr
+		}
 	}
 	if res.ExitCode != 0 && executionErr == nil {
-		executionErr = fmt.Errorf("nuclei exited with code %d", res.ExitCode)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(targetCtx.Err(), context.DeadlineExceeded) {
+			executionErr = context.DeadlineExceeded
+		} else {
+			executionErr = fmt.Errorf("nuclei exited with code %d", res.ExitCode)
+		}
 	}
 	if executionErr != nil {
 		if errors.Is(executionErr, context.DeadlineExceeded) || strings.Contains(strings.ToLower(executionErr.Error()), "timeout") {

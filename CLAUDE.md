@@ -4,29 +4,31 @@
 
 ### 1.1 项目概述
 
-**cscan** — 企业级分布式网络资产扫描平台（V5.3）
+**cscan** — 企业级分布式网络资产扫描平台（V5.7，以根目录 `VERSION` 为准）
 
 ### 1.2 技术栈
 
-| 层级 | 技术 | 版本 |
-|------|------|------|
+| 层级 | 技术 | 当前版本/范围 |
+|------|------|---------------|
 | 后端框架 | Go + go-zero 微服务框架 | Go 1.26 / go-zero v1.10.2 |
-| 前端框架 | Vue 3 + Vite + Element Plus | Vue 3.4 / Vite 5 / Element Plus 2.4 |
+| 前端框架 | Vue 3 + Vite + Element Plus | 声明范围 Vue ^3.4 / Vite ^5.0 / Element Plus ^2.4；精确构建版本以 `web/package-lock.json` 为准 |
 | 数据库 | MongoDB + Redis | MongoDB 6 / Redis 7 |
-| 驱动 | mongo-driver v1.17.9 / go-redis v9.19.0 | |
-| Worker 通信 | gobwas/ws（WebSocket） | gobwas v1.4 |
-| 扫描引擎 | ProjectDiscovery + Nmap/Masscan | nuclei v3.8 / httpx v1.9 / naabu v2.6 / subfinder v2.14 / ffuf / fingerprintx / dnsx |
-| 截图引擎 | Chromedp (Chrome 无头浏览器) | chromedp v0.15 |
+| 驱动 | mongo-driver / go-redis | v1.17.9 / v9.19.0 |
+| Worker 通信 | gobwas/ws（WebSocket） | v1.4 |
+| 扫描引擎 | ProjectDiscovery + Nmap/Masscan | nuclei v3.11.1 / httpx v1.10.0 / naabu v2.6.1 / subfinder v2.15.0 / ffuf v2.2.1 / fingerprintx v1.1.19 / dnsx v1.3.0；另含 ksubdomain、feroxbuster |
+| 截图引擎 | Chromedp（Chrome 无头浏览器） | chromedp v0.15 |
 | 资源采集 | gopsutil（CPU/内存/磁盘） | gopsutil v3.24 |
 | IP 定位 | ip2region | lionsoul2014/ip2region |
-| 任务调度 | robfig/cron (秒级) + Redis Sorted Set | cron/v3 |
-| 认证 | JWT (golang-jwt/v4) + PAT 令牌 | jwt/v4 v4.5.2 |
-| 前端状态管理 | Pinia | v2.1 |
-| 国际化 | vue-i18n | v11 |
-| 图表 | ECharts | v5.4 |
-| CSS 预处理 | SCSS (modern-compiler API) | sass v1.97 |
-| 测试 (Go) | testify + gopter (属性测试) | testify v1.11 / gopter v0.2 |
-| 测试 (前端) | Vitest + happy-dom + fast-check | vitest v4 |
+| 任务调度 | robfig/cron（秒级）+ Redis Sorted Set | cron/v3 |
+| 认证 | JWT（golang-jwt/v4）+ PAT 令牌 | jwt/v4 v4.5.2 |
+| 前端状态管理 | Pinia | ^2.1.7 |
+| 国际化 | vue-i18n | ^11.0.2 |
+| 图表 | ECharts | ^5.4.3 |
+| CSS 预处理 | SCSS（modern-compiler API） | sass v1.97.2 |
+| 测试（Go） | testify + gopter（属性测试） | testify v1.11 / gopter v0.2 |
+| 测试（前端） | Vitest + happy-dom + fast-check | vitest v4.0.17 |
+
+> `docker/Dockerfile.worker` 中 ProjectDiscovery CLI 固定了版本，但 ksubdomain 使用 `@latest`、feroxbuster 使用 latest release；`docker/Dockerfile.api` 的 Nuclei Templates 也跟随上游 main。涉及可重现构建时应先固定这些浮动输入。
 
 ### 1.3 系统架构图
 
@@ -47,7 +49,7 @@
                   [Scheduler (internal/scheduler/)]
                   │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复
                   │
-            [Worker nodes (worker/)]  ← Install Key 认证，WebSocket 长连接 + REST + 直连 MongoDB
+            [Worker nodes (worker/)]  ← Install Key 认证；WebSocket + REST；直连 MongoDB；可选直连 Redis
                   │
             [Scanner modules (internal/scanner/)]
                   │
@@ -57,12 +59,12 @@
 
 ### 1.4 核心架构模式
 
-- **任务流**: MainTask → ChunkManager 分块（默认 30 目标/片，范围 10-100）→ 每片生成 TaskInfo 入 Redis Sorted Set → Worker 通过 `ZPOPMIN` 原子竞争拉取（纯 Pull 模型，任务不预绑定 Worker）→ 阶段化执行 → REST 上报
-- **优先级调度**: ZSet score = `createTime.UnixMicro() - priority * 1_000_000`（小者先出）；5 级优先级 Background/Low/Normal/High/Urgent；可选的 5 桶分队列模式 `cscan:task:queue:p{0..4}`（默认关闭）
-- **负载均衡**: 任务统一进公共队列，空闲 Worker 竞争获取；`cscan:worker:load` Hash 记录各 Worker 负载（心跳上报），可用性筛选（心跳 >30s 超时 / 槽位满 / CPU>90 / Mem>90 剔除），负载评分 = 任务占用量×0.5 + CPU×0.3 + Mem×0.2
-- **孤儿恢复**: 后台每 30s 检查 `cscan:task:processing`，Worker 离线或执行超时（CPU≤4 核 20min / ≤8 核 15min / 其余 10min，自适应）的任务重置重排；MaxRetries=3，Lua 脚本原子"重入队 → 刷新 info → 摘除 processing"，杜绝丢失窗口
+- **任务流**: MainTask → ChunkManager 分块（默认 30 目标/片，范围 10-100）→ 每片生成 TaskInfo 入 Redis Sorted Set → Worker 通过 REST `/api/v1/worker/task/check` 长轮询拉取 → API 使用 Lua/ZPOPMIN 先检查 Worker 专属队列再检查公共队列 → 阶段化执行 → REST 上报
+- **优先级调度**: ZSet score = `createTime.UnixMicro() - priority * 1_000_000`（小者先出）；服务端 5 级优先级 Background/Low/Normal/High/Urgent；可选 5 桶分队列 `cscan:task:queue:p{0..4}`（默认关闭）。Worker 本地队列仅有 Low/Normal/High/Urgent 4 级
+- **负载与连接**: `cscan:worker:load` Hash 保存 Worker 心跳负载；Scheduler 提供基于任务占用量×0.5 + CPU×0.3 + Mem×0.2 的可用 Worker 选择能力。Worker 使用 REST/WebSocket 连接 API、MongoDB 双连接池直写结果，并可选直连 Redis；Redis 不可用时回退 HTTP 调度
+- **孤儿恢复**: API 启动 `startOrphanedTaskRecovery`，每 5 分钟检查一次：Redis processing 超过 10 分钟的任务恢复入队，MongoDB STARTED 超过 30 分钟作为兜底。`internal/scheduler/task_recovery.go` 的自适应 RecoveryManager 当前未发现 `Start()` 调用，不应视为主恢复链路；Worker 启动时还会执行本地孤儿任务恢复
 - **定时调度**: robfig/cron v3 秒级表达式；CronTask 主存 MongoDB、`cscan:cron:tasks` Hash 缓存；到点 PUBLISH `cscan:cron:execute_scan`（扫描）或 `cscan:cron:execute_space`（空间引擎）；控制频道 `reload/remove/runnow`
-- **Worker 通信**: Install Key 认证注册 → WebSocket（`/api/v1/worker/ws`）长连接（AUTH/PING/LOG/LOG_BATCH/CONTROL/LOG_SYNC 消息）+ REST 回传结果；断网时结果落本地 `log/result_queue` 自动重放；日志以 Worker 本地 JSONL 为事实源，游标式增量同步到 API 落盘
+- **Worker 通信**: Install Key 认证注册 → WebSocket（`/api/v1/worker/ws`）长连接（AUTH/PING/LOG/LOG_BATCH/CONTROL/LOG_SYNC 消息）+ REST 拉取/回传；断网时结果落本地 `log/result_queue` 自动重放；日志以 Worker 本地 JSONL 为事实源，游标式增量同步到 API 落盘
 - **认证体系（5 级）**: 无认证 → Worker Key（`X-Worker-Key` Install Key）→ JWT 或 PAT（`cscan_pat_*`，scope 校验）→ JWT+管理员 → 开放 API（PAT readonly scope + 每 token 限流 120 次/分，超频 429）
 
 ---
@@ -83,7 +85,7 @@ cscan/
 │       │   ├── asset/ task/ vul/ worker/ fingerprint/ poc/ onlineapi/ user/
 │       │   ├── organization/ blacklist/ dirscan/ subdomain/ subfinder/
 │       │   ├── notify/ report/ ai/ cert/ container/ dashboard/ jsfinder/
-│       │   └── weakpass/ openapi/
+│       │   └── weakpass/ openapi/ role/ techicon/
 │       ├── logic/                # 业务逻辑层（平铺，{动作}{实体}logic.go）
 │       ├── middleware/           # 中间件
 │       │   ├── authmiddleware.go # JWT + PAT 双路径认证、GetUserId/GetRole、RequireAdmin
@@ -102,7 +104,7 @@ cscan/
 ├── worker/                       # Worker 服务（go-zero consumer 布局）
 │   ├── main.go                   # Worker 服务入口（package main，-s/-n/-c/-k）
 │   └── internal/
-│       └── worker/               # package worker（31 个 .go）
+│       └── worker/               # package worker（31 个生产 .go + 15 个 _test.go）
 │           ├── worker.go         # 核心逻辑（结构体/启动/任务分发）
 │           ├── wsclient.go       # WebSocket 客户端（4 泵：读/写/心跳/日志）
 │           ├── httpclient.go     # REST 客户端（X-Worker-Key，3 次重试）
@@ -119,16 +121,16 @@ cscan/
 │           └── *_test.go         # 单元测试
 ├── internal/                     # 工程内部公共模块
 │   ├── model/                    # MongoDB 数据模型（全局单集合）
-│   │   ├── asset.go / asset_history.go / vul.go / task.go / scanresult.go
-│   │   ├── scan_diff.go（变化基线）
+│   │   ├── asset.go / asset_history.go / asset_target_meta.go / vul.go / task.go / scanresult.go
+│   │   ├── scan_diff.go（变化基线）/ workspace_baseline.go
 │   │   ├── cert.go / jsfinder.go / dirscan.go / dirscan_result.go
 │   │   ├── crontask.go / scantemplate.go / task_profile.go
-│   │   ├── user.go / user_token.go（PAT）/ organization.go
-│   │   ├── fingerprint.go / httpservice.go / active_fingerprint.go
-│   │   ├── poc.go / nuclei_template.go / tag_mapping.go
+│   │   ├── user.go / user_token.go（PAT）/ role.go / organization.go
+│   │   ├── fingerprint.go / httpservice.go / active_fingerprint.go / techicon.go
+│   │   ├── poc.go（CustomPoc、NucleiTemplate）/ tag_mapping.go
 │   │   ├── blacklist.go / notifyconfig.go / subdomain_dict.go / weakpass_dict.go
-│   │   ├── subfinderconfig.go / apiconfig.go / commandhistory.go
-│   │   ├── indexes.go / base.go / errors.go
+│   │   ├── subfinderconfig.go / apiconfig.go / commandhistory.go / worker_log.go
+│   │   └── indexes.go / base.go / errors.go 及各类 write service
 │   ├── scanner/                  # 扫描模块
 │   │   ├── target.go / target_preprocessor.go # 目标解析与预处理
 │   │   ├── subfinder.go / subdomain_bruteforce.go
@@ -143,7 +145,7 @@ cscan/
 │   │   ├── chunk_manager.go      # 任务分块（分片信息/进度/清理）
 │   │   ├── splitter.go           # 目标拆分（CIDR/IP 范围展开、分片优先级、耗时预估）
 │   │   ├── cron.go               # CronManager 定时任务（Mongo 主存 + Redis 缓存）
-│   │   └── task_recovery.go      # 孤儿任务恢复（30s 检查 + Lua 原子重排队）
+│   │   └── task_recovery.go      # 自适应恢复管理器实现（当前主链路未调用 Start）
 │   └── onlineapi/                # 在线资产搜索（fofa.go / hunter.go / quake.go）
 ├── pkg/                          # 对外公共模块
 │   ├── xerr/                     # 业务错误码体系（errcode.go + errors.go）
@@ -157,14 +159,15 @@ cscan/
 │   ├── template/parser.go        # Nuclei 模板 YAML 解析（分类/元数据）
 │   ├── utils/                    # 通用工具函数
 │   └── logfilter.go              # logx 包装器：过滤高频轮询 access log
-├── rules/                        # 默认规则与字典（12 个文件，7 类）
+├── rules/                        # 默认规则与字典（8 个目录，12 个已跟踪规则文件；pocs 当前为空）
 │   ├── blacklist/                # default-blacklist.txt
-│   ├── fingerprint/              # 指纹规则（active-paths.yaml、custom-fingerprints-*.yml）
-│   ├── http-service/             # HTTP 服务映射（http-port-mapping.txt 等）
-│   ├── scan-template/            # 扫描模板（quick-scan.json、standard-scan.json）
-│   ├── subdomain/                # 子域名默认字典（subnames.txt）
-│   ├── url/                      # URL 字典（dic.txt、backup.txt、springboot.txt）
-│   └── weakpass/                 # 弱口令默认字典（default-weakpass.txt）
+│   ├── fingerprint/              # 自定义指纹与主动探测路径
+│   ├── http-service/             # HTTP 服务映射
+│   ├── pocs/                     # 自定义 Nuclei POC（当前为空）
+│   ├── scan-template/            # 扫描模板
+│   ├── subdomain/                # 子域名字典
+│   ├── url/                      # URL 字典
+│   └── weakpass/                 # 弱口令字典
 ├── docker/                       # Docker 配置
 │   ├── Dockerfile.api / Dockerfile.worker
 │   ├── cscan-api.yaml            # 容器内配置
@@ -183,12 +186,13 @@ cscan/
 │   │   └── tests/                # Vitest 测试
 │   ├── vite.config.js            # Vite 配置（代理、分包、SCSS、test）
 │   └── package.json
+├── data/                         # ip2region IPv4/IPv6 数据库
 ├── docker-compose.yaml           # 生产全栈（redis/mongodb/api/web/worker + 资源限制）
-├── docker-compose.dev.yaml       # 本地开发全栈（MongoDB + Redis，本地构建 API/Worker/Web）
+├── docker-compose.dev.yaml       # 仅启动本地开发依赖（MongoDB + Redis）
 ├── docker-compose-worker.yaml    # 独立 Worker 探针部署
-├── scripts/dev.ps1 / dev.sh / dev.bat   # 一键启动开发环境
+├── dev.sh / dev.ps1              # 宿主机一键启动 API/Worker/Web 与开发依赖
 ├── .github/workflows/build-images.yml   # CI/CD（3 个镜像并行构建推送）
-├── go.mod / go.sum / VERSION / cscan.sh / cscan.bat
+├── go.mod / go.sum / VERSION
 └── README.md / README_EN.md / CLAUDE.md
 ```
 
@@ -212,6 +216,8 @@ cscan/
 | 弱口令 | `handler/weakpass` | 任务创建页内 | 弱口令字典管理（导入/导出/服务统计） |
 | 目录扫描 | `handler/dirscan` | `DirectoryManagement.vue` | 字典管理/扫描结果/AI 研判 |
 | 用户管理 | `handler/user` | `settings/UserManagement.vue`, `Profile.vue` | CRUD/登录/密码重置/头像/PAT/onboarding/scanConfig |
+| 角色管理 | `handler/role` | 设置页相关组件 | 角色与权限配置 |
+| 技术图标 | `handler/techicon` | 指纹/资产相关组件 | 技术栈图标查询与管理 |
 | 组织管理 | `handler/organization` | `settings/OrganizationManagement.vue` | 组织 CRUD/状态切换 |
 | 黑名单 | `handler/blacklist` | `Blacklist.vue` | 全局黑名单规则配置（下发 Worker） |
 | 通知/主题/品牌 | `handler/notify` | `settings/NotifyConfig.vue`, `settings/BrandingConfig.vue`, `HighRiskFilter.vue` | 通知配置/高危过滤器/主题/品牌 |
@@ -219,9 +225,11 @@ cscan/
 | 扫描模板 | `handler/task` | `ScanTemplate.vue` | 扫描配置模板管理（task/template） |
 | 开放平台 | `handler/openapi` | — | `/api/open/v1` 只读 API（PAT + 限流） |
 
-### 2.3 MongoDB 集合清单（全局单集合，33 个）
+### 2.3 MongoDB 集合清单（全局单集合，36 个）
 
-`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`
+`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`、`tech_icon`、`worker_log`、`workspace_baseline`
+
+> 集合名称以 `internal/model` 的构造器和索引定义为准；新增模型时同步更新本清单。
 
 ---
 
@@ -289,7 +297,8 @@ svcCtx := svc.NewServiceContext(config)
 // 模型工厂（集合为全局单集合）
 assetModel := svcCtx.GetAssetModel()    // 集合: asset
 taskModel := svcCtx.GetMainTaskModel()  // 集合: maintask
-vulModel := svcCtx.GetVulModel()        // 集合: vul```
+vulModel := svcCtx.GetVulModel()        // 集合: vul
+```
 
 **服务构造器模式**：
 ```go
@@ -485,54 +494,57 @@ test: {
 
 **一键启动完整本地栈（推荐）**：
 ```bash
-# Windows PowerShell:
-./scripts/dev.ps1
-# Linux/macOS / Git Bash:
-./scripts/dev.sh
+# Windows PowerShell
+./dev.ps1
+# macOS / Linux
+./dev.sh
 ```
+
+脚本先通过 `docker-compose.dev.yaml` 启动 MongoDB 与 Redis，再在宿主机分别运行 API、Worker 和 Vite；该 Compose 文件本身不包含应用服务。
 
 **关键配置文件**：
 | 文件 | 说明 |
 |------|------|
-| `api/etc/cscan.yaml` | API 配置：端口 8888，超时 300s，MaxBytes 100MB，JWT 24h |
-| `docker/cscan-api.yaml` | 容器内 API 配置 |
+| `api/etc/cscan.yaml` | 本地 API 配置：监听 127.0.0.1:8888，超时 300s，MaxBytes 100MB，JWT 24h |
+| `docker/cscan-api.yaml` | 容器 API 配置：监听 0.0.0.0:8888 |
 
-**MongoDB 连接池**：MaxPoolSize=100, MinPoolSize=10, ConnectTimeout=10s
+**MongoDB 连接池**：MaxPoolSize=100, MinPoolSize=5, ConnectTimeout=10s
 
 **Redis 连接池**：PoolSize=100, MinIdleConns=10, MaxRetries=3
 
-**Worker 并发推导**：`worker/main.go`
+**Worker 自动并发**：由 `worker/main.go` 根据系统资源推导，并限制在 1-5；显式配置值需按代码中的独立校验逻辑处理。
 
 ### 5.2 构建命令
 
 ```bash
-# Go 后端
-go build -o cscan ./api/cscan.go       # 构建 API 服务
-go build -o worker ./worker/            # 构建 Worker
-go mod download && go mod tidy          # 依赖管理
+# Go 后端（仓库根目录）
+mkdir -p bin
+go build -o bin/cscan-api ./api/cscan.go
+go build -o bin/cscan-worker ./worker/main.go
+go mod download                         # 下载依赖；仅维护依赖时运行 go mod tidy
 
 # Vue 前端
 cd web
-npm install                             # 安装依赖
+npm ci                                  # 按 package-lock.json 安装
 npm run build                           # 生产构建（terser 压缩，移除 console）
-npm run dev                             # 开发服务器
+npm run dev                             # 开发服务器（长驻命令）
 ```
 
 ### 5.3 测试命令
 
 ```bash
 # Go 测试
-go test ./...                                        # 运行所有测试
-go test -v ./api/internal/svc/ -run TestFunctionName # 指定测试函数
-go test -v -run TestProperty1 ./api/internal/svc/    # 属性测试
-go test -cover ./...                                  # 覆盖率
-go test -race ./...                                   # 竞态检测
+go test ./...                                           # 运行所有测试
+go test -v ./api/internal/svc/... -run TestFunctionName # 指定测试函数（替换占位名称）
+go test -cover ./...                                    # 覆盖率
+go test -race ./...                                     # 竞态检测
 
 # Vue 前端测试
 cd web
-npm run test                                          # vitest
-npx vitest run src/tests/MyComponent.test.js          # 单个测试文件
-npm run test:coverage                                 # 覆盖率
+npm run test -- --run                                   # Vitest 单次运行
+npx vitest run src/tests/MyComponent.test.js             # 单文件（替换占位路径）
+npm run test:coverage -- --run                          # 覆盖率单次运行
+npm run test:e2e                                        # Playwright E2E
 ```
 
 ### 5.4 生产部署
@@ -547,13 +559,9 @@ CSCAN_SERVER=http://your-server:8888 CSCAN_KEY=your-key \
   CSCAN_MONGO_URI=mongodb://user:pass@host:27017/cscan?authSource=admin \
   CSCAN_REDIS_ADDR=host:6379 CSCAN_REDIS_PASSWORD=pass \
   docker compose -f docker-compose-worker.yaml up -d
-
-# 一键启动脚本
-./cscan.sh        # Linux/macOS
-.\cscan.bat       # Windows
 ```
 
-访问 `https://ip:7777`（web 容器 443→7777，80→3000）；首次部署按页面引导注册第一个管理员账号（首个注册用户自动获得超级管理员权限，无内置默认账号）。
+生产全栈包含 redis、mongodb、cscan-api、cscan-web、cscan-worker 五个服务。访问 `https://ip:7777`（容器 443→宿主机 7777）或 `http://ip:3000`（容器 80→宿主机 3000）；首次部署按页面引导注册第一个管理员账号（首个注册用户自动获得超级管理员权限，无内置默认账号）。
 配置全部经环境变量注入（见 `.env.example`）：`CSCAN_JWT_SECRET` / `CSCAN_MONGO_ROOT_*` / `CSCAN_REDIS_PASSWORD` / `CSCAN_WORKER_KEY`。Mongo URI 必须带 `?authSource=admin`（root 用户位于 admin 库）。
 
 ### 5.5 本地编译与浏览器/接口验证
@@ -572,17 +580,16 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 #### 5.5.2 一键启动完整本地栈
 
 ```powershell
-./scripts/dev.ps1   # 等价于 docker-compose -f docker-compose.dev.yaml up -d --build
+./dev.ps1
 ```
 
-> 脚本容器化启动全部服务（MongoDB + Redis + API + Web + Worker），本地代码自动构建；
-> 确认上一步的编译没有问题之后即可运行（首次构建需拉取基础镜像并编译，耗时较长）。
+macOS/Linux 使用 `./dev.sh`。脚本通过 Compose 启动 MongoDB/Redis，并在宿主机用 `go run` 启动 API、Worker，再用 Vite 启动 Web；退出脚本时停止应用和依赖栈，开发卷默认保留。
 
-健康检查：`curl http://127.0.0.1:8888/health` → `OK`。前端如需浏览器验证：直接访问 `http://localhost:7777`，或 `cd web && npm run dev`（:7777，代理 /api → :8888）。
+健康检查：`curl http://127.0.0.1:8888/health`，成功响应为 `{"code":0,"msg":"healthy","data":{"status":"ok"}}`；依赖异常时返回 HTTP 503。前端访问 `http://localhost:7777`。
 
 #### 5.5.3 接口冒烟（免登录）
 
-**业务码约定**：本项目 HTTP 状态恒为 200，业务结果放在响应体 `code` 字段（`0`=成功、`400/500`=业务错误）。冒烟断言**必须解析 body 的 `code`**，不能只看 HTTP 状态。
+**响应约定**：多数业务逻辑同时返回统一 body（`code=0` 表示成功），但中间件、健康检查、静态资源和开放 API 会使用 401、403、404、429、500、503 等真实 HTTP 状态。冒烟测试必须同时断言 HTTP status 与响应体 `code`，不能假定所有响应均为 200。
 
 全新 MongoDB 无内置用户。自测方式：
 1. **自签 JWT**（推荐，免改库）：用 `CSCAN_JWT_SECRET` 以 HS256 签发含 `userId/username/role` 的 token，`Authorization: Bearer <token>` 调用鉴权路由；
@@ -593,7 +600,7 @@ go build ./... 2>&1 | Out-File -Encoding ascii build.log
 前端国际化检查用 Headless Chrome 遍历 `web/src/router/index.js` 全路由，切英文 locale 采集硬编码中文：
 - 遍历脚本预注入 console/network/JS error + `overflowX` 采集钩子，期望 `netErr=0 / jsErr=0 / overflowX=0`；
 - i18n 遍历切 `en-US`，命中未翻译中文即定位到源码 `$t()` 缺失处；
-- 文案接入规范：模板 `{{ $t('section.key') }}`、`<script setup>` 内 `const { t } = useI18n()` 后 `t('section.key')`；语言文件 `web/src/i18n/locales/{zh-CN,en-US}.json` 按 section 嵌套，改完用 `python scripts/verify_json.py` 校验 JSON 合法性。
+- 文案接入规范：模板 `{{ $t('section.key') }}`、`<script setup>` 内 `const { t } = useI18n()` 后 `t('section.key')`；语言文件 `web/src/i18n/locales/{zh-CN,en-US}.json` 按 section 嵌套。修改后使用 `python3 -m json.tool web/src/i18n/locales/zh-CN.json >/dev/null && python3 -m json.tool web/src/i18n/locales/en-US.json >/dev/null` 校验 JSON。
 
 ---
 
@@ -641,10 +648,10 @@ docs/                # 本地文档（已被忽略）
 
 | 文件 | 位置 | 说明 |
 |------|------|------|
-| `README.md` | 根目录 | 中文项目说明、功能特性、快速开始 |
-| `README_EN.md` | 根目录 | 英文项目说明 |
+| `README.md` | 根目录 | 默认中文项目说明、功能特性、快速开始 |
+| `README_EN.md` | 根目录 | 英文项目说明，可由 README.md 顶部切换 |
 | `CLAUDE.md` | 根目录 | AI 编码助手指导文件 |
-| `VERSION` | 根目录 | 当前版本号（V5.0） |
+| `VERSION` | 根目录 | 当前版本号（V5.7） |
 | `LICENSE` | 根目录 | MIT 许可证 |
 
 项目 `docs/` 目录已被 `.gitignore` 忽略（GOZERO_ARCHITECTURE.md / IMPLEMENTATION_SUMMARY.md 已随 go-zero 改造回退删除），无 lint 配置文件（ESLint/Prettier/golangci-lint），无 Makefile。

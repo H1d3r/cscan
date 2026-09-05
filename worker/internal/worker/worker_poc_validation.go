@@ -407,7 +407,6 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	nucleiOpts := &scanner.NucleiOptions{
 		RateLimit:       150,
 		Concurrency:     25,
-		Timeout:         int(timeout),
 		CustomTemplates: templates,
 		CustomPocOnly:   true,
 		OnVulnerabilityFound: func(vul *scanner.Vulnerability) {
@@ -418,9 +417,12 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 
 	w.taskLog(task.TaskId, LevelInfo, "[%s] Starting batch scan: %d targets, timeout %ds", task.TaskId, len(urls), int(timeout))
 
-	vuls, err := nucleiScanner.ScanBatch(ctx, urls, nucleiOpts, func(level, format string, args ...interface{}) {
+	// 任务 timeout 控制整个批量扫描进程，不得复用为 nuclei 的单请求 -timeout。
+	batchCtx, batchCancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	vuls, err := nucleiScanner.ScanBatch(batchCtx, urls, nucleiOpts, func(level, format string, args ...interface{}) {
 		w.taskLog(task.TaskId, level, "[%s] "+format, append([]interface{}{task.TaskId}, args...)...)
 	})
+	batchCancel()
 
 	duration := time.Since(startTime).Seconds()
 

@@ -2995,7 +2995,7 @@ portScanDone:
 							targetTimeout = 600 // 默认600秒
 						}
 
-						// 无阶段总预算：单目标超时由每个 nuclei 进程的 ProcessTimeout(targetTimeout+30s) 保证，
+						// 无阶段总预算：单目标超时由每个 nuclei 进程的 TargetTimeout 硬边界保证，
 						// 阶段 context 仅作取消信号，避免多组串行扫描被整体 deadline 截断后剩余分组全部瞬间失败
 						pocCtx, pocCancel := context.WithCancel(ctx)
 
@@ -3090,7 +3090,7 @@ portScanDone:
 						pocTargetTimeout = 600
 					}
 
-					// 无阶段总预算：单目标超时由每个 nuclei 进程的 ProcessTimeout(pocTargetTimeout+30s) 保证，
+					// 无阶段总预算：单目标超时由每个 nuclei 进程的 TargetTimeout 硬边界保证，
 					// 阶段 context 仅作取消信号，避免批量目标被整体 deadline 截断后剩余目标全部瞬间失败
 					pocCtx, pocCancel := context.WithCancel(ctx)
 
