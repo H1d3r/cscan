@@ -205,10 +205,10 @@ func (l *JSFinderLogic) SaveJSFinderResult(req *types.SaveJSFinderResultReq) err
 
 // GetJSFinderList 获取 JSFinder 结果列表（带 30s 缓存）
 func (l *JSFinderLogic) GetJSFinderList(req *types.JSFinderListReq) (*types.JSFinderListResp, error) {
-	// L-2 修复：分页参数钳制（page>=1, 1<=pageSize<=100）
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("jsfinder_list:%d:%d:%s:%s:%s:%s:%s:%s:%s",
-		req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, req.TagsAny)
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
+	tagsKey, _ := json.Marshal(req.TagsAny)
+	cacheKey := fmt.Sprintf("jsfinder_list:%d:%d:%s:%s:%s:%s:%s:%s:%s:%s",
+		req.Page, req.PageSize, req.Query, req.Severity, req.Tags, req.MatcherName, req.AIStatus, req.AIResult, string(tagsKey), req.TargetId)
 
 	cached, cerr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, jsfinderListCacheTTL, func() (interface{}, error) {
 		return l.getJSFinderListUncached(req)
@@ -228,6 +228,13 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 	// 使用 $and 数组组合所有条件，避免多个 $or 互相覆盖
 	var andConditions []bson.M
 
+	if req.TargetId != "" {
+		targetType, targetValue, err := model.DecodeTargetID(req.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		andConditions = append(andConditions, bson.M{"host": hostFilterForTarget(targetType, targetValue)})
+	}
 	if req.Query != "" {
 		andConditions = append(andConditions, bson.M{"$or": []bson.M{
 			{"url": primitive.Regex{Pattern: req.Query, Options: "i"}},
@@ -298,7 +305,7 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 	opt := options.Find().
 		SetSkip(int64((req.Page - 1) * req.PageSize)).
 		SetLimit(int64(req.PageSize)).
-		SetSort(bson.D{{Key: "create_time", Value: -1}}).
+		SetSort(bson.D{{Key: "create_time", Value: -1}, {Key: "_id", Value: -1}}).
 		SetProjection(jsfinderListProjection)
 
 	allResults, err = m.Find(l.ctx, filter, opt)
@@ -339,10 +346,12 @@ func (l *JSFinderLogic) getJSFinderListUncached(req *types.JSFinderListReq) (*ty
 	}
 
 	return &types.JSFinderListResp{
-		Code:  0,
-		Msg:   "success",
-		Total: total,
-		List:  respList,
+		Code:     0,
+		Msg:      "success",
+		Page:     req.Page,
+		PageSize: req.PageSize,
+		Total:    total,
+		List:     respList,
 	}, nil
 }
 

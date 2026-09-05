@@ -153,11 +153,11 @@ const filteredMenuData = computed(() => {
 
   return menu.value
     .map(group => group.type === 'submenu'
-      ? { ...group, items: group.items.filter(item => permitted.includes(item.index)) }
+      ? { ...group, items: group.items.filter(item => userStore.canAccess(item.index)) }
       : group)
     .filter(group => {
       if (group.type === 'divider') return true
-      if (group.type === 'item') return permitted.includes(group.index)
+      if (group.type === 'item') return userStore.canAccess(group.index)
       return group.items.length > 0
     })
 })

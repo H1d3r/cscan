@@ -5,6 +5,14 @@ import { login as loginApi, getUserList, getUserProfile, syncRoleMenus } from '@
 // 默认头像路径
 export const DEFAULT_AVATAR = '/default-avatar.jpg'
 
+const ATTACK_SURFACE_PATH = '/asset-management/space-search'
+const LEGACY_ATTACK_SURFACE_PATHS = [
+  '/asset-management/exposure/dir',
+  '/asset-management/exposure/js',
+  '/asset-management/risk/sensitive-info',
+  '/asset-management/risk/vuln'
+]
+
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || '')
   const userId = ref(localStorage.getItem('userId') || '')
@@ -158,6 +166,10 @@ export const useUserStore = defineStore('user', () => {
     if (!routePath) return true
     if (!managedPaths.value.includes(routePath)) return true
     if (!menuPaths.value || menuPaths.value.length === 0) return true
+    if (routePath === ATTACK_SURFACE_PATH) {
+      return menuPaths.value.includes(ATTACK_SURFACE_PATH) ||
+        LEGACY_ATTACK_SURFACE_PATHS.some(path => menuPaths.value.includes(path))
+    }
     return menuPaths.value.includes(routePath)
   }
 

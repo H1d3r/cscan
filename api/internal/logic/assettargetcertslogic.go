@@ -15,8 +15,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const assetTargetCertsLimit = 500
-
 type AssetTargetCertsLogic struct {
 	logx.Logger
 	ctx    context.Context
@@ -31,15 +29,15 @@ func NewAssetTargetCertsLogic(ctx context.Context, svcCtx *svc.ServiceContext) *
 	}
 }
 
-// AssetTargetCerts 目标关联的 TLS 证书列表（cert 集合按 host 过滤），
-// 支撑详情页 Inventory 的 TLS 子 Tab 与 Services 列的证书徽章。
+// AssetTargetCerts 目标或全局 TLS 证书分页列表（cert 集合按可选 host 范围过滤）。
 func (l *AssetTargetCertsLogic) AssetTargetCerts(req *types.AssetTargetCertsReq) (*types.AssetTargetCertsResp, error) {
-	if req.TargetId == "" {
-		return nil, xerr.NewParamError("targetId is empty")
-	}
-	tType, tValue, err := model.DecodeTargetID(req.TargetId)
-	if err != nil {
-		return nil, err
+	filter := bson.M{}
+	if strings.TrimSpace(req.TargetId) != "" {
+		tType, tValue, err := model.DecodeTargetID(req.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		filter["host"] = hostFilterForTarget(tType, tValue)
 	}
 
 	certModel := l.svcCtx.GetCertModel()
@@ -47,7 +45,6 @@ func (l *AssetTargetCertsLogic) AssetTargetCerts(req *types.AssetTargetCertsReq)
 		return nil, xerr.NewServerError("cert model not available")
 	}
 
-	filter := bson.M{"host": hostFilterForTarget(tType, tValue)}
 	if q := strings.TrimSpace(req.Query); q != "" {
 		filter["$or"] = bson.A{
 			bson.M{"host": bson.M{"$regex": ".*" + regexpEscape(q) + ".*", "$options": "i"}},
@@ -55,10 +52,17 @@ func (l *AssetTargetCertsLogic) AssetTargetCerts(req *types.AssetTargetCertsReq)
 			bson.M{"issuer_dn": bson.M{"$regex": ".*" + regexpEscape(q) + ".*", "$options": "i"}},
 		}
 	}
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 
+	total, err := certModel.Count(l.ctx, filter)
+	if err != nil {
+		l.Logger.Errorf("[AssetTargetCerts] Count fail: %v", err)
+		return nil, xerr.NewServerError("")
+	}
 	opts := options.Find().
-		SetSort(bson.D{{Key: "not_after", Value: -1}}).
-		SetLimit(assetTargetCertsLimit)
+		SetSort(bson.D{{Key: "not_after", Value: -1}, {Key: "_id", Value: -1}}).
+		SetSkip(int64((req.Page - 1) * req.PageSize)).
+		SetLimit(int64(req.PageSize))
 	docs, err := certModel.Find(l.ctx, filter, opts)
 	if err != nil {
 		l.Logger.Errorf("[AssetTargetCerts] Find fail: %v", err)
@@ -97,5 +101,7 @@ func (l *AssetTargetCertsLogic) AssetTargetCerts(req *types.AssetTargetCertsReq)
 			CreateTime: tsMilli(c.CreateTime),
 		})
 	}
-	return &types.AssetTargetCertsResp{Code: 0, Msg: "success", List: list}, nil
+	return &types.AssetTargetCertsResp{
+		Code: 0, Msg: "success", Page: req.Page, PageSize: req.PageSize, Total: total, List: list,
+	}, nil
 }

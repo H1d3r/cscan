@@ -189,8 +189,10 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			return
 		}
 		switch level {
-		case "ERROR", "WARN":
+		case "ERROR":
 			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Slowf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
 		default:
@@ -375,9 +377,6 @@ func (s *NaabuScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return &ScanResult{MainTaskId: config.MainTaskId, Assets: []*Asset{}}, nil
 	}
 
-	logFn("INFO", "Naabu(CLI): targetTimeout=%ds probeTimeout=%dms targets=%d",
-		opts.TargetTimeout, opts.ProbeTimeoutMs, len(cleanTargets))
-
 	assets, thresholdExceeded, diagnostic := s.runNaabuCLI(ctx, config, opts, logFn)
 	result := &ScanResult{
 		MainTaskId:   config.MainTaskId,
@@ -512,7 +511,6 @@ dispatch:
 	if diagnostic.Status == PhaseFailed && diagnostic.Coverage.Attempted > 0 {
 		diagnostic.WarningCodes = appendUniqueReason(diagnostic.WarningCodes, ReasonNoOutput)
 	}
-	logFn("INFO", "Naabu(CLI): completed, found %d open ports across %d targets (%s)", len(allAssets), totalTargets, diagnostic.Status)
 	return allAssets, anyThresholdExceeded, diagnostic
 }
 
@@ -576,6 +574,7 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 
 	tmpFile, err := os.CreateTemp("", "naabu-*.json")
 	if err != nil {
+		logFn("ERROR", "Naabu(CLI)：目标=%s 创建输出文件失败：%v", target, err)
 		result.diagnostic = NaabuTargetDiagnostic{Source: NaabuParseSourceNone, ProcessOutcome: "exit_error", OutputFileEmpty: true}
 		return result
 	}
@@ -584,7 +583,7 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	defer os.Remove(tmpPath)
 
 	args := buildNaabuArgs(target, portsStr, tmpPath, opts)
-	logFn("INFO", "[Naabu] CLI: target=%s targetTimeout=%s probeTimeout=%dms retries=%d", target, targetTimeout, opts.ProbeTimeoutMs, opts.Retries)
+	logFn("INFO", "系统执行命令：%s", s.executor.CommandLine(args))
 
 	execResult, execErr := s.executor.Execute(targetCtx, args, ExecuteOpts{Timeout: targetTimeout, LogFn: logFn})
 	if execResult == nil {
@@ -597,18 +596,24 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		return result
 	}
 	if processOutcome == "timeout" {
-		logFn("WARN", "Naabu(CLI): target %s reached targetTimeout=%s; attempting to parse partial output", target, targetTimeout)
+		logFn("WARN", "Naabu(CLI)：目标=%s 扫描超时（%s），尝试解析部分结果", target, targetTimeout)
 	} else if processOutcome == "exit_error" {
-		logFn("WARN", "Naabu(CLI): %s execution ended early: %v", target, execErr)
+		if execErr != nil {
+			logFn("ERROR", "Naabu(CLI)：目标=%s 启动或执行失败，exitCode=%d：%v", target, execResult.ExitCode, execErr)
+		} else {
+			logFn("ERROR", "Naabu(CLI)：目标=%s 非零退出，exitCode=%d", target, execResult.ExitCode)
+		}
 	}
-	s.executor.LogResult("Naabu(CLI): "+target, execResult, execErr)
 
 	fileContent, readErr := os.ReadFile(tmpPath)
 	if readErr != nil {
-		logFn("WARN", "[WARN] Naabu(CLI): failed to read output file: %v", readErr)
+		logFn("ERROR", "Naabu(CLI)：目标=%s 输出文件读取失败：%v", target, readErr)
 		fileContent = nil
 	}
 	assets, stats, source := parseNaabuOutput(target, fileContent, []byte(execResult.Stdout), processOutcome)
+	if stats.InvalidLines > 0 {
+		logFn("ERROR", "Naabu(CLI)：目标=%s 输出解析失败记录=%d，总记录=%d", target, stats.InvalidLines, stats.TotalLines)
+	}
 	result.diagnostic = NaabuTargetDiagnostic{
 		Source:          source,
 		ProcessOutcome:  processOutcome,
@@ -621,7 +626,7 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 	}
 	result.thresholdExceeded = exceedsNaabuPortThreshold(stats, opts.PortThreshold)
 	if result.thresholdExceeded {
-		logFn("WARN", "Naabu(CLI): target %s exceeded port threshold %d with %d accepted ports", target, opts.PortThreshold, stats.AcceptedPorts)
+		logFn("WARN", "Naabu(CLI)：目标=%s 开放端口数 %d 超过阈值 %d", target, stats.AcceptedPorts, opts.PortThreshold)
 		// 保持既有阈值语义：被跳过的目标不产出部分资产，但诊断保留完整计数。
 		return result
 	}
@@ -632,17 +637,8 @@ func (s *NaabuScanner) scanTargetCLI(ctx context.Context, target, portsStr strin
 		for _, asset := range assets {
 			ports = append(ports, strconv.Itoa(asset.Port))
 		}
-		logFn("INFO", "Naabu(CLI): %s -> %s", target, strings.Join(ports, ","))
-	} else if source == NaabuParseSourceNone {
-		logFn("INFO", "Naabu(CLI): no output from file or stdout, returning empty result")
-	} else {
-		logFn("INFO", "Naabu(CLI): %s -> no open ports found", target)
+		logFn("INFO", "开放端口：%s -> %s", target, strings.Join(ports, ","))
 	}
-
-	if processOutcome != "success" {
-		logFn("WARN", "Naabu(CLI): %s ended with exit code %d; parsing partial output source=%s parsed_bytes=%d", target, execResult.ExitCode, source, stats.ParsedBytes)
-	}
-	logFn("DEBUG", "Naabu(CLI): parse complete target=%s source=%s file_bytes=%d stdout_bytes=%d parsed_bytes=%d total_lines=%d valid_lines=%d invalid_lines=%d duplicate_lines=%d accepted_ports=%d process_outcome=%s exit_code=%d", target, source, stats.FileBytes, stats.StdoutBytes, stats.ParsedBytes, stats.TotalLines, stats.ValidLines, stats.InvalidLines, stats.DuplicateLines, stats.AcceptedPorts, processOutcome, execResult.ExitCode)
 	return result
 }
 

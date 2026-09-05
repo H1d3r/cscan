@@ -1,5 +1,19 @@
 <template>
   <div class="dashboard-pd" :class="[{ 'is-dark': themeStore.isDark }, `style-${themeStore.themeStyle}`]">
+    <div class="version-bar">
+      <span>{{ t('dashboard.currentVersion') }} <strong>{{ currentVersion }}</strong></span>
+      <span class="version-divider"></span>
+      <span>
+        {{ t('dashboard.latestVersion') }}
+        <a :href="VERSION_SOURCE_URL" target="_blank" rel="noopener noreferrer">
+          {{ versionLoading ? t('dashboard.versionLoading') : (latestVersion || t('dashboard.versionUnavailable')) }}
+        </a>
+      </span>
+      <el-tag v-if="!versionLoading && latestVersion" :type="updateAvailable ? 'warning' : 'success'" size="small">
+        {{ updateAvailable ? t('dashboard.versionUpdateAvailable') : t('dashboard.versionUpToDate') }}
+      </el-tag>
+    </div>
+
     <!-- ===== 上区：2列布局（左栏堆叠 / 右栏资产概览跨行）===== -->
     <div class="layout-top">
       <!-- 左列：开放漏洞 + 暴露面总览 -->
@@ -210,7 +224,7 @@
                 </span>
               </div>
             </div>
-            <div class="security-score" @click="$router.push('/asset-management/risk/vuln')">
+            <div class="security-score" @click="$router.push({ path: '/asset-management/space-search', query: { view: 'global', tab: 'vuln' } })">
               <div class="score-ring" :class="scoreLevel">
                 <span class="score-num">{{ securityScore }}</span>
               </div>
@@ -343,6 +357,51 @@ const router = useRouter()
 const themeStore = useThemeStore()
 const { t } = useI18n()
 
+const VERSION_SOURCE_URL = 'https://raw.githubusercontent.com/tangxiaofeng7/cscan/main/VERSION'
+const currentVersion = __APP_VERSION__
+const latestVersion = ref('')
+const versionLoading = ref(true)
+let versionAbortController = null
+
+function compareVersions(left, right) {
+  const normalize = value => String(value || '')
+    .replace(/^[^0-9]*/, '')
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map(Number)
+  const a = normalize(left)
+  const b = normalize(right)
+  const length = Math.max(a.length, b.length)
+  for (let i = 0; i < length; i += 1) {
+    const diff = (a[i] || 0) - (b[i] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+const updateAvailable = computed(() => compareVersions(latestVersion.value, currentVersion) > 0)
+
+async function loadLatestVersion() {
+  versionAbortController?.abort()
+  versionAbortController = new AbortController()
+  const timeout = setTimeout(() => versionAbortController?.abort(), 5000)
+  versionLoading.value = true
+  try {
+    const response = await fetch(VERSION_SOURCE_URL, {
+      cache: 'no-store',
+      signal: versionAbortController.signal
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    latestVersion.value = (await response.text()).trim()
+  } catch (err) {
+    if (err?.name !== 'AbortError') console.warn('[Dashboard] latest version unavailable:', err)
+    latestVersion.value = ''
+  } finally {
+    clearTimeout(timeout)
+    versionLoading.value = false
+  }
+}
+
 // === 安全评分（加权风险密度 + 资产归一化 + 修复率加成）===
 // 仅计入待处理（open）漏洞，已修复/已忽略的漏洞不再扣分
 const securityScore = computed(() => {
@@ -473,11 +532,11 @@ function rightCurvePath(i) {
 
 // === 暴露面总览数据 ===
 const exposureSources = computed(() => [
-  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.portCount, color: '#3b82f6', route: '/asset-management/space-search' },
-  { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: '/asset-management/space-search' },
-  { key: 'dirs', label: t('dashboard.sensitiveDirs'), value: stats.dirScans, color: '#ef4444', route: '/asset-management/exposure/dir' },
-  { key: 'vulns', label: t('dashboard.knownVulns'), value: stats.vulns, color: '#f97316', route: '/asset-management/risk/vuln' },
-  { key: 'critical', label: t('dashboard.criticalRisks'), value: stats.vulnOpenCritical + stats.vulnOpenHigh, color: '#dc2626', route: '/asset-management/risk/vuln' }
+  { key: 'ports', label: t('dashboard.exposedPorts'), value: stats.portCount, color: '#3b82f6', route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'service' } } },
+  { key: 'sites', label: t('dashboard.exposedSites'), value: stats.sites, color: '#8b5cf6', route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'service' } } },
+  { key: 'dirs', label: t('dashboard.sensitiveDirs'), value: stats.dirScans, color: '#ef4444', route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'dir' } } },
+  { key: 'vulns', label: t('dashboard.knownVulns'), value: stats.vulns, color: '#f97316', route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'vuln' } } },
+  { key: 'critical', label: t('dashboard.criticalRisks'), value: stats.vulnOpenCritical + stats.vulnOpenHigh, color: '#dc2626', route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'vuln' } } }
 ])
 
 const exposureRings = computed(() => {
@@ -485,8 +544,8 @@ const exposureRings = computed(() => {
   const unresolved = stats.vulnOpenCritical + stats.vulnOpenHigh + stats.vulnOpenMedium
   return [
     { key: 'scanned', label: t('dashboard.ringScanned'), value: taskStats.completed, color: '#22c55e', pct: Math.min(100, Math.round((taskStats.completed / totalTasks) * 100)), route: '/task' },
-    { key: 'vulns', label: t('dashboard.ringVulns'), value: stats.vulns, color: '#f97316', pct: stats.vulns > 0 ? 100 : 0, route: '/asset-management/risk/vuln' },
-    { key: 'open', label: t('dashboard.ringOpen'), value: unresolved, color: '#ef4444', pct: stats.vulns > 0 ? Math.min(100, Math.round((unresolved / stats.vulns) * 100)) : 0, route: '/asset-management/risk/vuln' }
+    { key: 'vulns', label: t('dashboard.ringVulns'), value: stats.vulns, color: '#f97316', pct: stats.vulns > 0 ? 100 : 0, route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'vuln' } } },
+    { key: 'open', label: t('dashboard.ringOpen'), value: unresolved, color: '#ef4444', pct: stats.vulns > 0 ? Math.min(100, Math.round((unresolved / stats.vulns) * 100)) : 0, route: { path: '/asset-management/space-search', query: { view: 'global', tab: 'vuln' } } }
   ]
 })
 
@@ -537,16 +596,16 @@ let refreshInterval = null
 const exposureRouteMap = {
   domain: '/asset-management/space-search',
   ip: '/asset-management/space-search',
-  port: '/asset-management/space-search',
-  site: '/asset-management/space-search',
-  dirscan: '/asset-management/exposure/dir',
+  port: { path: '/asset-management/space-search', query: { view: 'global', tab: 'service' } },
+  site: { path: '/asset-management/space-search', query: { view: 'global', tab: 'service' } },
+  dirscan: { path: '/asset-management/space-search', query: { view: 'global', tab: 'dir' } },
 }
 function goAsset(type) {
   const route = exposureRouteMap[type]
   if (route) router.push(route)
 }
 function goInventory() {
-  router.push('/asset-management/space-search')
+  router.push({ path: '/asset-management/space-search', query: { view: 'global', tab: 'service' } })
 }
 
 // === 辅助方法 ===
@@ -799,6 +858,7 @@ watch(() => themeStore.isDark, () => {
 
 onMounted(() => {
   isComponentAlive = true
+  loadLatestVersion()
   window.addEventListener('resize', handleResize)
 
   // 1) 挂载后立刻同步测量一次锚点：此时 DOM 已就绪，getBoundingClientRect()
@@ -829,6 +889,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   isComponentAlive = false
+  versionAbortController?.abort()
   clearInterval(refreshInterval)
   refreshInterval = null
   Object.values(charts).forEach(chart => chart?.dispose())
@@ -844,6 +905,37 @@ onUnmounted(() => {
   min-height: calc(100vh - 60px);
   color: hsl(var(--foreground));
   transition: background-color 0.2s ease;
+}
+
+.version-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  margin-bottom: 12px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+
+  strong {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+
+  a {
+    margin-left: 4px;
+    color: hsl(var(--primary));
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+  }
+
+  .version-divider {
+    width: 1px;
+    height: 14px;
+    background: hsl(var(--border));
+  }
 }
 
 // === 安全评分 ===

@@ -70,53 +70,39 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 		hostAssets[asset.Host] = append(hostAssets[asset.Host], asset)
 	}
 
-	// 计算总超时时间：单主机超时 × 主机数 / 并发数
-	concurrency := config.Concurrency
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	totalTimeout := timeout * len(hostPorts) / concurrency
-	if totalTimeout < 60 {
-		totalTimeout = 60
-	}
-	w.taskLog(task.TaskId, LevelInfo, "Port identify(nmap): timeout=%ds (single=%ds, hosts=%d, concurrency=%d)",
-		totalTimeout, timeout, len(hostPorts), concurrency)
-
-	// 使用分离的 Context 以避免前面模块的超时拖累此独立模块
-	// 同时使用一个 goroutine 定期检查整个任务有没有被用户下发全局 STOP 命令
-	identifyCtx, identifyCancel := context.WithTimeout(context.Background(), time.Duration(totalTimeout)*time.Second)
-	defer identifyCancel()
-
-	// 监听父上下文取消或主动停止信号
-	w.safeGoTask(task.TaskId, "nmap-cancel-watch", func() {
-		select {
-		case <-identifyCtx.Done():
-		case <-ctx.Done(): // 接收任务全局退出（异常停滞等）
-			identifyCancel()
+	portCount := 0
+	maxPortsPerHost := 0
+	for _, ports := range hostPorts {
+		portCount += len(ports)
+		if len(ports) > maxPortsPerHost {
+			maxPortsPerHost = len(ports)
 		}
-	})
+	}
+	configuredConcurrency := config.Concurrency
+	if configuredConcurrency <= 0 {
+		configuredConcurrency = 1
+	}
+	nmapConcurrency := configuredConcurrency
+	if nmapConcurrency > 5 {
+		nmapConcurrency = 5
+	}
+	if nmapConcurrency > maxPortsPerHost {
+		nmapConcurrency = maxPortsPerHost
+	}
+	w.taskLog(task.TaskId, LevelInfo, "端口识别开始：Nmap，主机 %d 个，端口 %d 个，单命令超时 %d 秒，实际并发 %d",
+		len(hostPorts), portCount, timeout, nmapConcurrency)
+
+	// 编排层不设置阶段总超时，只继承任务取消；每条 Nmap 命令由 scanner
+	// 按用户配置的 timeout 独立控制。
+	identifyCtx, identifyCancel := context.WithCancel(ctx)
+	defer identifyCancel()
 
 	var identifyResults []scanner.PortIdentifyResult
 	nmapScanner := w.scanners["nmap"]
 
-	// Nmap 内部并发数（nmap 本身已有并发控制，这里限制同时扫描的端口数）
-	nmapConcurrency := concurrency
-	if nmapConcurrency > 5 {
-		nmapConcurrency = 5
-	}
-
 	for host, ports := range hostPorts {
-		// 检查是否被停止或超时
-		if identifyCtx.Err() == context.DeadlineExceeded {
-			w.taskLog(task.TaskId, LevelWarn, "Port identify timeout, retaining unconfirmed discovered assets")
-			timedOut := portIdentifyResultsForAssets(hostAssets[host], scanner.PortTimeout, scanner.NmapReasonTimeout)
-			identifyResults = append(identifyResults, timedOut...)
-			mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], timedOut, config.ExcludeClosed)
-			w.saveAssetResultWithFallback(ctx, task.MainTaskId, orgId, mergedHost.Assets)
-			continue
-		}
 		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+			w.taskLog(task.TaskId, LevelInfo, "任务已停止")
 			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
 			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
 		}
@@ -157,7 +143,7 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 
 		// 检查是否被停止
 		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
-			w.taskLog(task.TaskId, LevelInfo, "Task stopped")
+			w.taskLog(task.TaskId, LevelInfo, "任务已停止")
 			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
 			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
 		}
@@ -175,6 +161,11 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 		if nmapResult != nil {
 			hostResults = nmapResult.PortIdentifyResults
 		}
+		for _, identify := range hostResults {
+			if identify.Outcome == scanner.PortTimeout {
+				w.taskLog(task.TaskId, LevelWarn, "端口识别超时：%s:%d，不再进入指纹、截图、证书与漏洞扫描", identify.Host, identify.Port)
+			}
+		}
 		identifyResults = append(identifyResults, hostResults...)
 		mergedHost := mergeNmapPortIdentifyResults(hostAssets[host], hostResults, config.ExcludeClosed)
 		// 流式入库：保存以发现资产为基线的合并结果，而不是仅保存 OPEN 投影。
@@ -182,9 +173,9 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 	}
 
 	merged := mergeNmapPortIdentifyResults(assets, identifyResults, config.ExcludeClosed)
-	w.taskLog(task.TaskId, LevelInfo, "Port identify completed: %d assets, status=%s, succeeded=%d, timed_out=%d, failed=%d, unconfirmed=%d",
-		len(merged.Assets), merged.Phase.Status, merged.Phase.Coverage.Succeeded, merged.Phase.Coverage.TimedOut,
-		merged.Phase.Coverage.Failed, merged.Phase.Coverage.Unconfirmed)
+	w.taskLog(task.TaskId, LevelInfo, "端口识别完成：资产 %d，可继续扫描 %d，成功 %d，超时 %d，失败 %d，未确认 %d，状态 %s",
+		len(merged.Assets), len(merged.EligibleAssets), merged.Phase.Coverage.Succeeded, merged.Phase.Coverage.TimedOut,
+		merged.Phase.Coverage.Failed, merged.Phase.Coverage.Unconfirmed, merged.Phase.Status)
 	return merged
 }
 

@@ -31,10 +31,10 @@ const (
 //   - auto:info-leak   敏感信息泄露（jsfinder/dirscan 产出，T3.4 复验）
 //   - auto:takeover    子域接管（subdomain_bruteforce 产出）
 const (
-	VulRiskSourceWeakPass    = "auto:weakpass"
+	VulRiskSourceWeakPass   = "auto:weakpass"
 	VulRiskSourceCertExpiry = "auto:cert-expiry"
-	VulRiskSourceInfoLeak    = "auto:info-leak"
-	VulRiskSourceTakeover    = "auto:takeover"
+	VulRiskSourceInfoLeak   = "auto:info-leak"
+	VulRiskSourceTakeover   = "auto:takeover"
 )
 
 type Vul struct {
@@ -78,12 +78,12 @@ type Vul struct {
 	// 缺失字段视为 false（暴露面视角默认）；risk 层查询显式 filter is_risk=true
 	IsRisk         bool      `bson:"is_risk,omitempty" json:"isRisk,omitempty"`
 	RiskAssessedAt time.Time `bson:"risk_assessed_at,omitempty" json:"riskAssessedAt,omitempty"`
-	RiskSource    string     `bson:"risk_source,omitempty" json:"riskSource,omitempty"` // manual / auto:cvss / auto:weakpass / auto:info-leak
+	RiskSource     string    `bson:"risk_source,omitempty" json:"riskSource,omitempty"` // manual / auto:cvss / auto:weakpass / auto:info-leak
 
 	// 漏洞生命周期状态机（T1.3）：status 缺失视为 open（待修复）
-	Status           string    `bson:"status,omitempty" json:"status,omitempty"`       // open / fixed / ignored
-	FixedAt          time.Time `bson:"fixed_at,omitempty" json:"fixedAt,omitempty"`   // 标记已修复的时间
-	LastVerifiedAt   time.Time `bson:"last_verified_at,omitempty" json:"lastVerifiedAt,omitempty"` // 最近一次复验确认时间
+	Status           string    `bson:"status,omitempty" json:"status,omitempty"`                       // open / fixed / ignored
+	FixedAt          time.Time `bson:"fixed_at,omitempty" json:"fixedAt,omitempty"`                    // 标记已修复的时间
+	LastVerifiedAt   time.Time `bson:"last_verified_at,omitempty" json:"lastVerifiedAt,omitempty"`     // 最近一次复验确认时间
 	FixConfirmSource string    `bson:"fix_confirm_source,omitempty" json:"fixConfirmSource,omitempty"` // auto:rescan / auto:probe / manual
 
 	// 复验待确认标记（T3.3）：复验时目标不可达（连不上）时置位，表示"无法确认是否已修复"，
@@ -103,23 +103,23 @@ type Vul struct {
 	//   "reachable_untested"  = 目标可达但无可用复测模板，无法确认是否修复
 	ReverifyConclusion string    `bson:"reverify_conclusion,omitempty" json:"reverifyConclusion,omitempty"`
 	ReverifyMessage    string    `bson:"reverify_message,omitempty" json:"reverifyMessage,omitempty"`
-	ReverifyAt         time.Time `bson:"reverify_at,omitempty" json:"reverifyAt,omitempty"`     // 最近一次复验时间（下发或完成）
-	ReverifyBy         string    `bson:"reverify_by,omitempty" json:"reverifyBy,omitempty"`     // 复验发起/执行人
-	LastReverifyTime   time.Time `bson:"last_reverify_time,omitempty" json:"lastReverifyTime,omitempty"` // FindOpenByRiskSourceOrdered 轮转排序用
+	ReverifyAt         time.Time `bson:"reverify_at,omitempty" json:"reverifyAt,omitempty"`              // 最近一次复验时间（下发或完成）
+	ReverifyBy         string    `bson:"reverify_by,omitempty" json:"reverifyBy,omitempty"`              // 复验发起/执行人
+	LastReverifyTime   time.Time `bson:"last_reverify_time,omitempty" json:"lastReverifyTime,omitempty"` // 最近一次人工复验时间
 }
 
 // 单条漏洞复验状态（reverify_status）常量
 const (
-	ReverifyStatusIdle       = "" // 未复验
+	ReverifyStatusIdle        = "" // 未复验
 	ReverifyStatusReverifying = "reverifying"
 	ReverifyStatusDone        = "done"
 )
 
 // 单条漏洞复验结论（reverify_conclusion）常量
 const (
-	ReverifyConclusionFixed           = "fixed"
-	ReverifyConclusionStillVuln       = "still_vuln"
-	ReverifyConclusionUnreachable     = "unreachable"
+	ReverifyConclusionFixed             = "fixed"
+	ReverifyConclusionStillVuln         = "still_vuln"
+	ReverifyConclusionUnreachable       = "unreachable"
 	ReverifyConclusionReachableUntested = "reachable_untested"
 )
 
@@ -385,12 +385,16 @@ func (m *VulModel) AggregateChangesStats(ctx context.Context, cutoff time.Time) 
 	result := &VulChangeStats{BySeverity: map[string]int64{}}
 	if cursor.Next(ctx) {
 		var facet struct {
-			Open     []struct{ C int64 `bson:"c"` } `bson:"open"`
+			Open []struct {
+				C int64 `bson:"c"`
+			} `bson:"open"`
 			NewBySev []struct {
 				ID    string `bson:"_id"`
 				Count int64  `bson:"count"`
 			} `bson:"newBySev"`
-			Fixed []struct{ C int64 `bson:"c"` } `bson:"fixed"`
+			Fixed []struct {
+				C int64 `bson:"c"`
+			} `bson:"fixed"`
 		}
 		if err := cursor.Decode(&facet); err != nil {
 			return nil, err
@@ -499,7 +503,7 @@ func (m *VulModel) Upsert(ctx context.Context, doc *Vul) (*mongo.UpdateResult, e
 		"$setOnInsert": bson.M{
 			"_id":             primitive.NewObjectID(),
 			"create_time":     now,
-			"first_seen_time": now, // 新增：首次发现时间
+			"first_seen_time": now,           // 新增：首次发现时间
 			"status":          VulStatusOpen, // T1.3: 新增漏洞默认 open
 		},
 	}
@@ -555,43 +559,6 @@ func (m *VulModel) MarkIgnored(ctx context.Context, ids []string) (int64, error)
 	}
 	res, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}}, bson.M{
 		"$set": bson.M{"status": VulStatusIgnored},
-	})
-	if err != nil {
-		return 0, err
-	}
-	return res.ModifiedCount, nil
-}
-
-// MarkReverified 复验确认：凭据仍有效（弱口令/风险依然存在），前移 last_verified_at 与
-// last_seen_time，并清除待确认标记（T3.3）。
-func (m *VulModel) MarkReverified(ctx context.Context, ids []string) (int64, error) {
-	oids := toObjectIDs(ids)
-	if len(oids) == 0 {
-		return 0, nil
-	}
-	now := time.Now()
-	res, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}}, bson.M{
-		"$set": bson.M{
-			"last_verified_at": now,
-			"last_seen_time":   now,
-			"verify_pending":   false,
-		},
-	})
-	if err != nil {
-		return 0, err
-	}
-	return res.ModifiedCount, nil
-}
-
-// MarkVerifyUnreachable 复验时目标不可达（连不上）：保持 open，仅标记待确认，
-// 不误判为已修复（T3.3 验收标准 5）。仅对仍 open 的记录生效。
-func (m *VulModel) MarkVerifyUnreachable(ctx context.Context, ids []string) (int64, error) {
-	oids := toObjectIDs(ids)
-	if len(oids) == 0 {
-		return 0, nil
-	}
-	res, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}, "status": VulStatusOpen}, bson.M{
-		"$set": bson.M{"verify_pending": true},
 	})
 	if err != nil {
 		return 0, err
@@ -678,43 +645,6 @@ func (m *VulModel) CountByStatus(ctx context.Context, status string) (int64, err
 		filter["status"] = status
 	}
 	return m.coll.CountDocuments(ctx, filter)
-}
-
-// FindOpenByRiskSource 返回指定 risk_source 且状态为 open 的漏洞（供 T3.3/T3.4 复验）。
-func (m *VulModel) FindOpenByRiskSource(ctx context.Context, riskSource string) ([]Vul, error) {
-	filter := bson.M{"risk_source": riskSource, "status": VulStatusOpen}
-	return m.Find(ctx, filter, 0, 0)
-}
-
-// FindOpenByRiskSourceOrdered 返回指定 risk_source 且状态为 open 的漏洞，按 last_reverify_time 升序排序。
-// 修复 M-11：MaxTargetsPerRun 场景下轮转目标，避免最早创建的漏洞长期饥饿得不到复验。
-// limit > 0 时限制返回条数（供单次复验上限使用），limit <= 0 返回全部。
-func (m *VulModel) FindOpenByRiskSourceOrdered(ctx context.Context, riskSource string, limit int) ([]Vul, error) {
-	filter := bson.M{"risk_source": riskSource, "status": VulStatusOpen}
-	opts := options.Find()
-	// 按上次复验时间升序：从未复验过的（零值）最优先，复验时间越早越优先
-	opts.SetSort(bson.D{
-		{Key: "last_reverify_time", Value: 1},
-		{Key: "create_time", Value: 1},
-	})
-	if limit > 0 {
-		opts.SetLimit(int64(limit))
-	}
-	opts.SetProjection(bson.D{
-		{Key: "request", Value: 0},
-		{Key: "response", Value: 0},
-		{Key: "curl_command", Value: 0},
-	})
-	cursor, err := m.coll.Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-	var vuls []Vul
-	if err = cursor.All(ctx, &vuls); err != nil {
-		return nil, err
-	}
-	return vuls, nil
 }
 
 // toObjectIDs 将字符串 ID 列表转换为 ObjectID，跳过非法值。

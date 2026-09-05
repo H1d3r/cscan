@@ -144,52 +144,6 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 	}, nil
 }
 
-// WorkerDeleteLogic Worker删除逻辑
-type WorkerDeleteLogic struct {
-	logx.Logger
-	ctx    context.Context
-	svcCtx *svc.ServiceContext
-}
-
-func NewWorkerDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *WorkerDeleteLogic {
-	return &WorkerDeleteLogic{
-		Logger: logx.WithContext(ctx),
-		ctx:    ctx,
-		svcCtx: svcCtx,
-	}
-}
-
-func (l *WorkerDeleteLogic) WorkerDelete(req *types.WorkerDeleteReq) (resp *types.WorkerDeleteResp, err error) {
-	if req.Name == "" {
-		return &types.WorkerDeleteResp{Code: 400, Msg: "Worker名称不能为空"}, nil
-	}
-
-	rdb := l.svcCtx.RedisClient
-
-	// 1. 设置控制命令到 Redis（Worker 心跳时会读取）
-	ctrlKey := fmt.Sprintf("cscan:worker:control:%s", req.Name)
-	controlData := map[string]bool{"stop": true}
-	controlJson, _ := json.Marshal(controlData)
-	rdb.Set(l.ctx, ctrlKey, controlJson, 5*time.Minute) // 5分钟过期
-	l.Logger.Infof("[WorkerDelete] Set stop command for worker: %s", req.Name)
-
-	// 2. 同时通过 WebSocket 发送停止命令（如果 Worker 已连接）
-	// 这会在下次心跳前立即通知 Worker
-	stopMsg, _ := json.Marshal(map[string]interface{}{"action": "stop", "workerName": req.Name})
-	rdb.Publish(l.ctx, "cscan:worker:control", stopMsg)
-
-	// 3. 删除Worker状态数据
-	workerKey := fmt.Sprintf("cscan:worker:%s", req.Name)
-	rdb.Del(l.ctx, workerKey)
-
-	// 4. 从Worker集合中移除
-	rdb.SRem(l.ctx, "cscan:workers", req.Name)
-
-	l.Logger.Infof("[WorkerDelete] Deleted worker data: %s", req.Name)
-
-	return &types.WorkerDeleteResp{Code: 0, Msg: "Worker已删除，停止信号已发送"}, nil
-}
-
 // WorkerRenameLogic Worker重命名逻辑
 type WorkerRenameLogic struct {
 	logx.Logger

@@ -64,7 +64,7 @@ func (w *Worker) initGeolocation() {
 }
 
 // loadHttpServiceMappings 从 HTTP 接口加载HTTP服务设置（端口配置+服务映射）
-func (w *Worker) loadHttpServiceMappings() {
+func (w *Worker) loadHttpServiceMappings() (httpPorts, httpsPorts, nonHTTPPorts, mappings int) {
 	// 添加 panic 恢复机制
 	defer func() {
 		if r := recover(); r != nil {
@@ -78,12 +78,12 @@ func (w *Worker) loadHttpServiceMappings() {
 	resp, err := w.loadHttpServiceSettings(ctx)
 	if err != nil {
 		w.logger.Error("GetHttpServiceSettings HTTP failed: %v, using default settings", err)
-		return
+		return 0, 0, 0, 0
 	}
 
 	if !resp.Success {
 		w.logger.Error("GetHttpServiceSettings failed: %s, using default settings", resp.Msg)
-		return
+		return 0, 0, 0, 0
 	}
 
 	// 创建检查器
@@ -92,27 +92,22 @@ func (w *Worker) loadHttpServiceMappings() {
 	// 设置端口配置
 	if len(resp.Config.HttpPorts) > 0 {
 		checker.SetHttpPorts(resp.Config.HttpPorts)
-		w.logger.Info("Loaded %d HTTP ports from database", len(resp.Config.HttpPorts))
 	}
 	if len(resp.Config.HttpsPorts) > 0 {
 		checker.SetHttpsPorts(resp.Config.HttpsPorts)
-		w.logger.Info("Loaded %d HTTPS ports from database", len(resp.Config.HttpsPorts))
 	}
 	if len(resp.Config.NonHttpPorts) > 0 {
 		checker.SetNonHttpPorts(resp.Config.NonHttpPorts)
-		w.logger.Info("Loaded %d non-HTTP ports from database", len(resp.Config.NonHttpPorts))
 	}
 
 	// 设置服务映射
 	for _, mapping := range resp.Mappings {
 		checker.SetMapping(mapping.ServiceName, mapping.IsHttp)
 	}
-	if len(resp.Mappings) > 0 {
-		w.logger.Info("Loaded %d HTTP service mappings from database", len(resp.Mappings))
-	}
 
 	// 设置全局检查器
 	scanner.SetHttpServiceChecker(checker)
+	return len(resp.Config.HttpPorts), len(resp.Config.HttpsPorts), len(resp.Config.NonHttpPorts), len(resp.Mappings)
 }
 
 // getBlacklistMatcher 获取黑名单匹配器

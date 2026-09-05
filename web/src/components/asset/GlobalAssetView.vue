@@ -1,6 +1,5 @@
 <template>
   <div class="global-asset-view">
-    <!-- Toolbar -->
     <div class="toolbar">
       <div class="toolbar-left">
         <el-input
@@ -84,27 +83,52 @@
       </div>
     </div>
 
-    <!-- Table -->
-    <el-table :data="list" v-loading="loading" class="global-table">
-      <el-table-column :label="$t('asset.globalView.colService')" min-width="300">
+    <el-alert
+      v-if="requestStatus === 'forbidden'"
+      :title="$t('asset.attackSurface.dataForbidden')"
+      type="warning"
+      show-icon
+      :closable="false"
+    />
+    <el-alert
+      v-else-if="requestStatus === 'error'"
+      :title="$t('asset.attackSurface.loadFailed')"
+      type="error"
+      show-icon
+      :closable="false"
+    >
+      <template #default>
+        <el-button link type="primary" @click="fetchData">{{ $t('asset.attackSurface.retry') }}</el-button>
+      </template>
+    </el-alert>
+
+    <el-table
+      :data="list"
+      v-loading="loading"
+      class="global-table row-clickable"
+      @row-click="openAssetDetail"
+    >
+      <el-table-column :label="$t('asset.globalView.colSubdomain')" min-width="220">
         <template #default="{ row }">
-          <div class="service-cell">
-            <div class="service-main">
-              <a class="service-host" :href="serviceUrl(row)" target="_blank" rel="noopener">{{ row.host }}</a>
-              <span class="service-separator">:</span>
-              <span class="service-port">{{ row.port }}</span>
-              <span
-                v-if="getStatusCodeText(row.status)"
-                class="status-badge"
-                :class="getStatusCodeClass(row.status)"
-              >{{ getStatusCodeText(row.status) }}</span>
-            </div>
-            <div v-if="row.title" class="service-title">{{ row.title }}</div>
+          <div class="endpoint-cell">
+            <a class="endpoint-host" :href="serviceUrl(row)" target="_blank" rel="noopener" @click.stop>{{ row.host || '-' }}</a>
+            <div v-if="row.title" class="endpoint-title">{{ row.title }}</div>
+            <div v-if="row.domain && row.domain !== row.host" class="endpoint-meta">{{ row.domain }}</div>
+            <div v-if="row.cname" class="endpoint-meta">CNAME: {{ row.cname }}</div>
           </div>
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('asset.globalView.colIp')" min-width="150">
+      <el-table-column :label="$t('asset.globalView.colPort')" width="115">
+        <template #default="{ row }">
+          <div class="port-cell">
+            <strong>{{ row.port || '-' }}</strong>
+            <span>{{ row.service || '-' }}</span>
+          </div>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="$t('asset.globalView.colIp')" min-width="160">
         <template #default="{ row }">
           <div v-if="row.ips && row.ips.length" class="ip-list">
             <span v-for="ip in row.ips.slice(0, 2)" :key="ip" class="ip-badge">{{ ip }}</span>
@@ -114,7 +138,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('asset.targetView.columnTechnologies')" min-width="220">
+      <el-table-column :label="$t('asset.globalView.colApplication')" min-width="200">
         <template #default="{ row }">
           <div v-if="row.technologies && row.technologies.length" class="tech-list">
             <TechTag v-for="tech in row.technologies.slice(0, 4)" :key="tech" :tech="tech" class="tech-tag" />
@@ -124,7 +148,55 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('asset.targetView.labels')" min-width="160">
+      <el-table-column :label="$t('asset.globalView.colStatus')" width="100" align="center">
+        <template #default="{ row }">
+          <span
+            v-if="getStatusCodeText(row.status)"
+            class="status-badge"
+            :class="getStatusCodeClass(row.status)"
+          >{{ getStatusCodeText(row.status) }}</span>
+          <span v-else class="muted">-</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="$t('asset.globalView.colTls')" min-width="220">
+        <template #default="{ row }">
+          <div v-if="row.tls" class="tls-cell">
+            <div class="tls-heading">
+              <el-tag :type="tlsTagType(row.tls.status)" size="small">{{ tlsStatusLabel(row.tls.status) }}</el-tag>
+              <el-button link type="primary" @click.stop="showCertificates(row)">{{ $t('asset.globalView.viewCertificate') }}</el-button>
+            </div>
+            <div class="tls-subject">{{ row.tls.subjectCn || '-' }}</div>
+            <div v-if="row.tls.issuerOrg" class="tls-meta">{{ row.tls.issuerOrg }}</div>
+            <div v-if="row.tls.notAfter" class="tls-meta">{{ $t('asset.globalView.tlsExpires', { date: formatCertificateExpiry(row.tls.notAfter) }) }}</div>
+          </div>
+          <span v-else class="muted">-</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="$t('asset.globalView.colScreenshot')" width="112" align="center">
+        <template #default="{ row }">
+          <ScreenshotHoverPreview
+            v-if="row.screenshot"
+            :src="formatScreenshotUrl(row.screenshot)"
+            :alt="row.title || row.host"
+          >
+            <el-image
+              :src="formatScreenshotUrl(row.screenshot)"
+              fit="cover"
+              lazy
+              class="screenshot-thumb"
+            >
+              <template #error>
+                <div class="screenshot-fallback"><el-icon><Picture /></el-icon></div>
+              </template>
+            </el-image>
+          </ScreenshotHoverPreview>
+          <span v-else class="muted">-</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column :label="$t('asset.targetView.labels')" min-width="150">
         <template #default="{ row }">
           <div v-if="row.labels && row.labels.length" class="tech-list">
             <el-tag v-for="label in row.labels.slice(0, 4)" :key="label" size="small" class="label-tag">{{ label }}</el-tag>
@@ -145,12 +217,41 @@
       </template>
     </el-table>
 
-    <!-- Pagination -->
+    <el-drawer
+      v-model="certDrawerVisible"
+      :title="$t('asset.globalView.certificateDrawer', { target: certTarget })"
+      size="58%"
+    >
+      <el-table :data="certList" v-loading="certLoading">
+        <el-table-column :label="$t('asset.globalView.colService')" min-width="180">
+          <template #default="{ row }">
+            <span class="mono">{{ row.host }}:{{ row.port }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="$t('asset.globalView.certificateSubject')" min-width="220">
+          <template #default="{ row }">{{ row.subject?.commonName || row.subjectDN || '-' }}</template>
+        </el-table-column>
+        <el-table-column :label="$t('asset.globalView.certificateIssuer')" min-width="220">
+          <template #default="{ row }">{{ row.issuer?.organization || row.issuerDN || '-' }}</template>
+        </el-table-column>
+        <el-table-column :label="$t('asset.globalView.certificateExpiry')" min-width="170" prop="notAfter" />
+        <template #empty>
+          <div class="empty-wrap">{{ $t('asset.globalView.certificateEmpty') }}</div>
+        </template>
+      </el-table>
+    </el-drawer>
+
+    <AssetDetailSheet
+      v-model="assetSheetOpen"
+      :asset-id="assetSheetId"
+      :target-id="targetId"
+    />
+
     <div v-if="total > 0" class="pagination-wrap">
       <el-pagination
         :current-page="page"
         :page-size="pageSize"
-        :page-sizes="[20, 50, 100]"
+        :page-sizes="[10, 20, 50, 100]"
         :total="total"
         layout="total, sizes, prev, pager, next"
         @current-change="handlePageChange"
@@ -164,60 +265,102 @@
 import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Search, Refresh, Download } from '@element-plus/icons-vue'
+import { Search, Refresh, Download, Picture } from '@element-plus/icons-vue'
 import { getAssetInventory, getAssetFilterOptions } from '@/api/asset'
+import { getCertList } from '@/api/cert'
 import { getStatusCodeClass, getStatusCodeText } from './targetViewUtils'
+import { formatScreenshotUrl } from '@/utils/screenshot'
+import ScreenshotHoverPreview from '@/components/common/ScreenshotHoverPreview.vue'
+import AssetDetailSheet from './AssetDetailSheet.vue'
 import TechTag from '@/components/common/TechTag.vue'
 
 const { t } = useI18n()
+
+const props = defineProps({
+  scopeQuery: {
+    type: String,
+    default: ''
+  },
+  targetId: {
+    type: String,
+    default: ''
+  },
+  metricFilters: {
+    type: Object,
+    default: () => ({})
+  }
+})
 
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
+const requestStatus = ref('idle')
 
-const filters = reactive({ query: '', ports: [], statusCodes: [], technologies: [], labels: [] })
+const filters = reactive({ query: props.scopeQuery, ports: [], statusCodes: [], technologies: [], labels: [] })
 const filterOptions = ref({ ports: [], statusCodes: [], technologies: [], labels: [] })
 
 const exporting = ref(false)
 const exportProgress = ref(0)
+const certDrawerVisible = ref(false)
+const certLoading = ref(false)
+const certTarget = ref('')
+const certList = ref([])
+const assetSheetOpen = ref(false)
+const assetSheetId = ref('')
 
 let queryDebounce = null
+let dataRequestSeq = 0
+let filterOptionsRequestSeq = 0
+let certRequestSeq = 0
 
-// 构建 /asset/inventory 请求参数（全部目标，无 targetId 限定）
-function buildParams(page, pageSize) {
+function buildParams(requestPage, requestPageSize) {
   return {
-    page,
-    pageSize,
+    page: requestPage,
+    pageSize: requestPageSize,
+    targetId: props.targetId || undefined,
     query: filters.query || undefined,
     ports: filters.ports.length ? filters.ports : undefined,
     statusCodes: filters.statusCodes.length ? filters.statusCodes : undefined,
     technologies: filters.technologies.length ? filters.technologies : undefined,
     labels: filters.labels.length ? filters.labels : undefined,
+    ...(props.metricFilters || {}),
   }
 }
 
+function isForbidden(error) {
+  return error?.response?.status === 403 || Number(error?.status || error?.code) === 403
+}
+
 async function fetchData() {
+  const seq = ++dataRequestSeq
   loading.value = true
+  requestStatus.value = 'loading'
   try {
     const res = await getAssetInventory(buildParams(page.value, pageSize.value))
+    if (seq !== dataRequestSeq) return
     const payload = res?.data ?? res
     list.value = payload?.list || []
     total.value = payload?.total || 0
+    requestStatus.value = 'success'
   } catch (err) {
+    if (seq !== dataRequestSeq) return
     console.error('[GlobalAssetView] fetchData error:', err)
+    requestStatus.value = isForbidden(err) ? 'forbidden' : 'error'
   } finally {
-    loading.value = false
+    if (seq === dataRequestSeq) loading.value = false
   }
 }
 
 async function fetchFilterOptions() {
+  const seq = ++filterOptionsRequestSeq
   try {
-    const res = await getAssetFilterOptions({})
+    const res = await getAssetFilterOptions({ targetId: props.targetId || undefined })
+    if (seq !== filterOptionsRequestSeq) return
     filterOptions.value = res?.data || res || {}
   } catch (err) {
-    console.error('[GlobalAssetView] filterOptions error:', err)
+    if (seq === filterOptionsRequestSeq) console.error('[GlobalAssetView] filterOptions error:', err)
   }
 }
 
@@ -251,7 +394,44 @@ function serviceUrl(row) {
   return `${scheme}://${row.host}:${row.port}`
 }
 
-// CSV 单元格转义：含逗号/引号/换行时用双引号包裹并转义内部引号
+function openAssetDetail(row) {
+  if (!row?.id) return
+  assetSheetId.value = row.id
+  assetSheetOpen.value = true
+}
+
+function tlsTagType(status) {
+  if (status === 'expired') return 'danger'
+  if (status === 'expiring') return 'warning'
+  return 'success'
+}
+
+function tlsStatusLabel(status) {
+  return t(`asset.globalView.tlsStatus.${status || 'valid'}`)
+}
+
+function formatCertificateExpiry(value) {
+  const date = new Date(Number(value))
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString()
+}
+
+async function showCertificates(row) {
+  const seq = ++certRequestSeq
+  certTarget.value = `${row.host}:${row.port}`
+  certDrawerVisible.value = true
+  certLoading.value = true
+  certList.value = []
+  try {
+    const res = await getCertList({ host: row.host, port: row.port, page: 1, pageSize: 100 })
+    if (seq !== certRequestSeq) return
+    certList.value = res?.list || res?.data?.list || []
+  } catch (err) {
+    if (seq === certRequestSeq) console.error('[GlobalAssetView] certificate query error:', err)
+  } finally {
+    if (seq === certRequestSeq) certLoading.value = false
+  }
+}
+
 function csvCell(value) {
   const s = value == null ? '' : String(value)
   if (/[",\n]/.test(s)) {
@@ -276,7 +456,6 @@ function rowToCsv(row) {
   ].join(',')
 }
 
-// 按当前过滤条件翻页拉取全量资产并导出 CSV（前端生成，无需后端改动）
 async function handleExport() {
   if (total.value === 0) return
   exporting.value = true
@@ -287,7 +466,6 @@ async function handleExport() {
     let curPage = 1
     let fetched = 0
     let grandTotal = total.value
-    // 循环拉取直到覆盖全量；grandTotal 以首页响应为准，防止导出期间数据增长导致死循环
     while (true) {
       const res = await getAssetInventory(buildParams(curPage, exportPageSize))
       const payload = res?.data ?? res
@@ -320,7 +498,6 @@ async function handleExport() {
     ].join(',')
 
     const csv = [header, ...rows.map(rowToCsv)].join('\n')
-    // \uFEFF BOM 让 Excel 正确识别 UTF-8，避免中文乱码
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -340,6 +517,29 @@ async function handleExport() {
   }
 }
 
+watch(() => props.scopeQuery, value => {
+  if (filters.query === value) return
+  filters.query = value || ''
+  page.value = 1
+})
+
+watch(
+  () => [props.targetId, props.metricFilters],
+  () => {
+    page.value = 1
+    fetchFilterOptions()
+    fetchData()
+  },
+  { deep: true }
+)
+
+watch(certDrawerVisible, visible => {
+  if (!visible) {
+    certRequestSeq += 1
+    certLoading.value = false
+  }
+})
+
 watch(() => filters.query, () => {
   if (queryDebounce) clearTimeout(queryDebounce)
   queryDebounce = setTimeout(handleFilterChange, 500)
@@ -352,6 +552,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (queryDebounce) clearTimeout(queryDebounce)
+  dataRequestSeq += 1
+  filterOptionsRequestSeq += 1
+  certRequestSeq += 1
 })
 </script>
 
@@ -395,43 +598,56 @@ onUnmounted(() => {
   width: 200px;
 }
 
-.service-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.global-table {
+  width: 100%;
+}
 
-  .service-main {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-
-    .service-host {
-      font-weight: 500;
-      font-size: 14px;
-      color: var(--el-color-primary);
-      text-decoration: none;
-
-      &:hover {
-        text-decoration: underline;
-      }
-    }
-
-    .service-separator {
-      color: var(--el-text-color-secondary);
-    }
-
-    .service-port {
-      font-weight: 600;
-      font-size: 14px;
-    }
+.row-clickable {
+  :deep(.el-table__body tr) {
+    cursor: pointer;
   }
 
-  .service-title {
-    font-size: 12px;
+  :deep(.el-table__body tr:hover > td.el-table__cell) {
+    background: var(--el-fill-color-light);
+  }
+}
+
+.endpoint-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.endpoint-host {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  word-break: break-all;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.endpoint-title,
+.endpoint-meta,
+.tls-meta {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  span {
     color: var(--el-text-color-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 12px;
   }
 }
 
@@ -480,6 +696,56 @@ onUnmounted(() => {
   }
 }
 
+.tls-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tls-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tls-subject {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screenshot-thumb {
+  width: 72px;
+  height: 48px;
+  cursor: default;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+}
+
+.screenshot-fallback,
+.screenshot-hover-error {
+  display: grid;
+  color: var(--el-text-color-secondary);
+  place-items: center;
+  background: var(--el-fill-color-light);
+}
+
+.screenshot-fallback {
+  width: 72px;
+  height: 48px;
+}
+
+.screenshot-hover-preview,
+.screenshot-hover-error {
+  width: min(50vw, 960px);
+  height: min(50vh, 620px);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
+
 .label-tag {
   max-width: 120px;
   overflow: hidden;
@@ -489,6 +755,10 @@ onUnmounted(() => {
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+
+.mono {
+  font-family: var(--el-font-family-mono, monospace);
 }
 
 .empty-wrap {

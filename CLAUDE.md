@@ -45,7 +45,7 @@
                      / Worker 负载 Hash / Pub/Sub 唤醒与 Cron 频道]
                     │
                   [Scheduler (internal/scheduler/)]
-                  │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复 / 资产复核
+                  │  分块 / 优先级 / 负载均衡 / 定时 / 孤儿恢复
                   │
             [Worker nodes (worker/)]  ← Install Key 认证，WebSocket 长连接 + REST + 直连 MongoDB
                   │
@@ -62,7 +62,6 @@
 - **负载均衡**: 任务统一进公共队列，空闲 Worker 竞争获取；`cscan:worker:load` Hash 记录各 Worker 负载（心跳上报），可用性筛选（心跳 >30s 超时 / 槽位满 / CPU>90 / Mem>90 剔除），负载评分 = 任务占用量×0.5 + CPU×0.3 + Mem×0.2
 - **孤儿恢复**: 后台每 30s 检查 `cscan:task:processing`，Worker 离线或执行超时（CPU≤4 核 20min / ≤8 核 15min / 其余 10min，自适应）的任务重置重排；MaxRetries=3，Lua 脚本原子"重入队 → 刷新 info → 摘除 processing"，杜绝丢失窗口
 - **定时调度**: robfig/cron v3 秒级表达式；CronTask 主存 MongoDB、`cscan:cron:tasks` Hash 缓存；到点 PUBLISH `cscan:cron:execute_scan`（扫描）或 `cscan:cron:execute_space`（空间引擎）；控制频道 `reload/remove/runnow`
-- **资产复核（持续复验）**: 对已发现的弱口令漏洞（T3.3）与敏感信息暴露（T3.4）周期复核确认是否修复；Scheduler 侧仅查询目标并入队，探测由 Worker 执行，结果经 `/api/v1/worker/reverify/result` 批量回传后完成状态流转与通知；默认每日 03:00，每分钟 sweep 检查 `NextRunTime`（入队即推进，避免重复下发）；结果状态 resolved/verified/pending
 - **Worker 通信**: Install Key 认证注册 → WebSocket（`/api/v1/worker/ws`）长连接（AUTH/PING/LOG/LOG_BATCH/CONTROL/LOG_SYNC 消息）+ REST 回传结果；断网时结果落本地 `log/result_queue` 自动重放；日志以 Worker 本地 JSONL 为事实源，游标式增量同步到 API 落盘
 - **认证体系（5 级）**: 无认证 → Worker Key（`X-Worker-Key` Install Key）→ JWT 或 PAT（`cscan_pat_*`，scope 校验）→ JWT+管理员 → 开放 API（PAT readonly scope + 每 token 限流 120 次/分，超频 429）
 
@@ -96,7 +95,6 @@ cscan/
 │       │   ├── asset_service.go  # 资产列表 + 扫描结果集成
 │       │   ├── docker_service.go # Docker SDK 容器管理（cscan 容器识别/日志）
 │       │   ├── log_collector.go  # 容器日志采集（15s 轮询 tail → 本地按日分片文件）
-│       │   ├── reverifynotify.go # 复验修复确认通知（T3.3 / T3.4 共用）
 │       │   ├── worker_log_writer.go # Worker 日志落盘（有界队列 + flushLoop，JSONL 按日）
 │       │   ├── scanresult_service.go / history_service.go
 │       │   └── sync/             # 同步服务（模板/指纹/POC 同步）
@@ -116,7 +114,6 @@ cscan/
 │           ├── worker_port_identify.go / worker_brute_scan.go
 │           ├── worker_dir_scan.go / worker_js_finder.go
 │           ├── worker_target_parse.go / worker_auto_tag.go / worker_utility.go
-│           ├── worker_reverify.go    # 持续复验执行（弱口令凭据验证 / 敏感 URL 探测，批量回传）
 │           ├── filelogger.go / logsync.go / logwriter.go # 本地日志事实源 + 游标同步
 │           ├── mapper.go / sysinfo.go / loadavg_*.go / restart_*.go
 │           └── *_test.go         # 单元测试
@@ -131,7 +128,6 @@ cscan/
 │   │   ├── poc.go / nuclei_template.go / tag_mapping.go
 │   │   ├── blacklist.go / notifyconfig.go / subdomain_dict.go / weakpass_dict.go
 │   │   ├── subfinderconfig.go / apiconfig.go / commandhistory.go
-│   │   ├── reverify_config.go
 │   │   ├── indexes.go / base.go / errors.go
 │   ├── scanner/                  # 扫描模块
 │   │   ├── target.go / target_preprocessor.go # 目标解析与预处理
@@ -143,14 +139,11 @@ cscan/
 │   │   ├── certcheck.go / charsetutil.go / utils.go
 │   ├── scheduler/                # 任务调度器
 │   │   ├── scheduler.go          # Redis Sorted Set 优先级队列（Lua 原子弹入弹、死信）
-│   │   ├── service.go            # SchedulerService 门面（cron + 复验注入 + 同步）
+│   │   ├── service.go            # SchedulerService 门面（cron + 同步）
 │   │   ├── chunk_manager.go      # 任务分块（分片信息/进度/清理）
 │   │   ├── splitter.go           # 目标拆分（CIDR/IP 范围展开、分片优先级、耗时预估）
 │   │   ├── cron.go               # CronManager 定时任务（Mongo 主存 + Redis 缓存）
-│   │   ├── task_recovery.go      # 孤儿任务恢复（30s 检查 + Lua 原子重排队）
-│   │   ├── reverify_common.go    # 复验共享（默认每日 03:00、目标上限 200、NextRunTime 计算）
-│   │   ├── reverify_weakpass.go  # 弱口令周期复验下发（查询目标 + 入队，探测由 Worker 执行）
-│   │   └── reverify_exposure.go  # 敏感信息暴露复验下发（同上）
+│   │   └── task_recovery.go      # 孤儿任务恢复（30s 检查 + Lua 原子重排队）
 │   └── onlineapi/                # 在线资产搜索（fofa.go / hunter.go / quake.go）
 ├── pkg/                          # 对外公共模块
 │   ├── xerr/                     # 业务错误码体系（errcode.go + errors.go）
@@ -207,7 +200,7 @@ cscan/
 | 资产管理 | `handler/asset` | `AssetManagement.vue` + `components/asset/` + `AssetManagement/*.vue` | 端口/站点/域名/IP/截图/图标/应用/历史/diff/标签/目标（AssetTarget） |
 | 资产空间搜索 | `handler/asset` | `AssetSpaceSearch.vue` | 聚合卡片视图检索（AssetInventoryCardView） |
 | 任务管理 | `handler/task` | `Task.vue`, `TaskCreate.vue`, `TaskDetail.vue`, `CronTask.vue`, `CronTaskCreate.vue`, `ScanTemplate.vue` | 创建/分块/暂停/恢复/停止/重试/定时/模板/快速创建 |
-| 漏洞管理 | `handler/vul` | `VulnerabilityManagement.vue` | 列表/详情/统计/状态/复验配置与触发 |
+| 漏洞管理 | `handler/vul` | `VulnerabilityManagement.vue` | 列表/详情/统计/状态/人工复验触发 |
 | Worker 管理 | `handler/worker` | `Worker.vue`, `WorkerLogs.vue` | 注册/心跳/WebSocket/日志流 |
 | 容器管理 | `handler/container` | 控制台内 | cscan 容器列表/实时日志/历史日志（本地文件） |
 | 指纹管理 | `handler/fingerprint` | `Fingerprint.vue` | 指纹 CRUD/分类/同步/主动指纹/HTTP 服务映射 |
@@ -222,14 +215,13 @@ cscan/
 | 组织管理 | `handler/organization` | `settings/OrganizationManagement.vue` | 组织 CRUD/状态切换 |
 | 黑名单 | `handler/blacklist` | `Blacklist.vue` | 全局黑名单规则配置（下发 Worker） |
 | 通知/主题/品牌 | `handler/notify` | `settings/NotifyConfig.vue`, `settings/BrandingConfig.vue`, `HighRiskFilter.vue` | 通知配置/高危过滤器/主题/品牌 |
-| 资产复核 | `handler/vul` + `handler/worker/reverifybatchhandler.go` + `internal/scheduler/reverify_*` | `settings/ReverifyConfig.vue` | 弱口令/暴露面持续复验配置、下发与结果回传 |
 | 报告 | `handler/report` | `Report.vue` | 报告详情/导出/周期报告 |
 | 扫描模板 | `handler/task` | `ScanTemplate.vue` | 扫描配置模板管理（task/template） |
 | 开放平台 | `handler/openapi` | — | `/api/open/v1` 只读 API（PAT + 限流） |
 
-### 2.3 MongoDB 集合清单（全局单集合，34 个）
+### 2.3 MongoDB 集合清单（全局单集合，33 个）
 
-`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`、`reverify_config`
+`asset`、`asset_history`、`scanresult`、`scan_diff`、`scan_template`、`maintask`、`executor_task`、`cron_task`、`task_profile`、`vul`、`cert`、`jsfinder`、`jsfinder_config`、`dirscan_dict`、`dirscan_result`、`fingerprint`、`active_fingerprint`、`http_service_config`、`http_service_mapping`、`custom_poc`、`nuclei_template`、`tag_mapping`、`user`、`user_tokens`、`command_history`、`organization`、`blacklist_config`、`notify_config`、`subdomain_dict`、`weakpass_dict`、`subfinder_provider`、`api_config`、`system_config`
 
 ---
 
@@ -471,8 +463,7 @@ properties.TestingRun(t)
 - `middleware/authmiddleware_pat_test.go`、`middleware/openapi_scope_test.go`、`middleware/ratelimit_test.go`、`middleware/scopes_test.go` — PAT/scope/限流测试
 - `internal/scheduler/scheduler_bucket_test.go` — 分桶队列测试；`internal/scheduler/benchmark_test.go` — 入队/出队/分片基准（Redis 不可用自动 skip）
 - `worker/internal/worker/task_queue_manager_test.go`、`worker/internal/worker/concurrency_test.go` — 优先级队列与并发调整测试
-- `worker/internal/worker/worker_reverify_test.go` — 敏感信息复验探测分类测试
-- `internal/model/*_test.go`、`pkg/executor/executor_test.go`、`api/internal/logic/reverifylogic_test.go` 等
+- `internal/model/*_test.go`、`pkg/executor/executor_test.go` 等
 
 ### 4.3 前端测试
 

@@ -393,13 +393,13 @@ func (l *AssetListLogic) AssetList(req *types.AssetListReq) (resp *types.AssetLi
 		}
 
 		list = append(list, types.Asset{
-			Id:                   a.Id.Hex(),
-			Authority:            a.Authority,
-			Host:                 a.Host,
-			Port:                 a.Port,
-			Category:             a.Category,
-			Service:              a.Service,
-			Title:                a.Title,
+			Id:        a.Id.Hex(),
+			Authority: a.Authority,
+			Host:      a.Host,
+			Port:      a.Port,
+			Category:  a.Category,
+			Service:   a.Service,
+			Title:     a.Title,
 			// 同一技术的来源后缀变体折叠为一条展示（前端 TechTag 再做归一化展示）
 			App:                  model.MergeAppsDedup(nil, a.App),
 			HttpStatus:           a.HttpStatus,
@@ -450,21 +450,28 @@ func NewAssetStatLogic(ctx context.Context, svcCtx *svc.ServiceContext) *AssetSt
 	}
 }
 
-func (l *AssetStatLogic) AssetStat() (resp *types.AssetStatResp, err error) {
+func (l *AssetStatLogic) AssetStat(req *types.AssetStatReq) (resp *types.AssetStatResp, err error) {
+	if req == nil {
+		req = &types.AssetStatReq{}
+	}
+	targetID := strings.TrimSpace(req.TargetId)
 	cacheKey := "asset_stat"
+	if targetID != "" {
+		cacheKey += ":" + targetID
+	}
 	cached, cacheErr := l.svcCtx.QueryCache.GetOrSetWithTTL(cacheKey, 60*time.Second, func() (interface{}, error) {
-		return l.loadAssetStat()
+		return l.loadAssetStat(targetID)
 	})
 	if cacheErr != nil {
-		return l.loadAssetStat()
+		return l.loadAssetStat(targetID)
 	}
 	if r, ok := cached.(*types.AssetStatResp); ok {
 		return r, nil
 	}
-	return l.loadAssetStat()
+	return l.loadAssetStat(targetID)
 }
 
-func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
+func (l *AssetStatLogic) loadAssetStat(targetID string) (*types.AssetStatResp, error) {
 	var totalAsset, totalHost, newCount, updatedCount, portCount int64
 	var topPorts, topService, topApp, topTitle []types.StatItem
 	var topIconHash []types.IconHashStatItem
@@ -545,6 +552,11 @@ func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
 	// 风险等级分布
 	riskDistribution, _ = assetModel.AggregateRiskLevel(l.ctx)
 
+	attackSurfaceData, err := buildAttackSurfaceStatData(l.ctx, l.svcCtx, targetID)
+	if err != nil {
+		return nil, err
+	}
+
 	return &types.AssetStatResp{
 		Code:             0,
 		Msg:              "success",
@@ -559,6 +571,7 @@ func (l *AssetStatLogic) loadAssetStat() (*types.AssetStatResp, error) {
 		TopTitle:         topTitle,
 		TopIconHash:      topIconHash,
 		RiskDistribution: riskDistribution,
+		Data:             attackSurfaceData,
 	}, nil
 }
 

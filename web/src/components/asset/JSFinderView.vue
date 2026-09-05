@@ -10,6 +10,7 @@
       :searchItems="jsfinderSearchItems"
       :extra-params="props.extraParams"
       :transform-payload="transformListPayload"
+      :sync-url="props.syncUrl"
 
       
       selection
@@ -82,7 +83,7 @@
           <el-icon><Refresh /></el-icon>
           {{ $t('common.refresh') }}
         </el-button>
-        <el-button type="danger" plain @click="handleClear">{{ $t('asset.clearData') || '清空数据' }}</el-button>
+        <el-button v-if="props.mode === 'js'" type="danger" plain @click="handleClear">{{ $t('asset.clearData') || '清空数据' }}</el-button>
       </template>
 
       
@@ -227,6 +228,7 @@ import { ArrowDown, Refresh } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { getJSFinderDetail, analyzeJSByAI, batchAnalyzeJSByAI, getBatchAnalyzeProgress, stopBatchAnalyze } from '@/api/jsfinder'
 import ProTable from '@/components/common/ProTable.vue'
+import { fetchAllPages } from '@/utils/pagedRequest'
 
 // localStorage key for batch task persistence
 const BATCH_TASK_STORAGE_KEY = 'cscan_jsfinder_batch_task'
@@ -237,6 +239,10 @@ const props = defineProps({
   extraParams: {
     type: Object,
     default: () => ({})
+  },
+  syncUrl: {
+    type: Boolean,
+    default: true
   },
   // 组件模式: 'js'(JS菜单,默认) 或 'sensitive'(敏感信息页面)
   mode: {
@@ -649,6 +655,12 @@ async function showDetail(row) {
 async function handleExport(command) {
   let data = []
   let filename = ''
+  const fetchExportRows = () => fetchAllPages('/jsfinder/list', (page, pageSize) => transformListPayload({
+    ...(proTableRef.value?.searchForm || {}),
+    ...(props.extraParams || {}),
+    page,
+    pageSize,
+  }))
 
   if (command === 'selected-url') {
     if (selectedRows.value.length === 0) {
@@ -660,10 +672,7 @@ async function handleExport(command) {
   } else if (command === 'csv') {
     ElMessage.info(t('asset.gettingAllData'))
     try {
-      const res = await request.post('/jsfinder/list', {
-        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
+      data = await fetchExportRows()
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
 
     if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
@@ -696,10 +705,7 @@ async function handleExport(command) {
   } else {
     ElMessage.info(t('asset.gettingAllData'))
     try {
-      const res = await request.post('/jsfinder/list', {
-        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
+      data = await fetchExportRows()
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
     filename = 'jsfinder_urls_all.txt'
   }

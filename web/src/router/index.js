@@ -51,43 +51,33 @@ const routes = [
         meta: { title: 'menu.Dashboard', icon: 'Odometer' }
       },
 
-      // ===== 资产管理 =====
-      // 重复的暴露面子页已合并进资产空间搜索的目标详情 Tab：
-      // 子域名/IP/端口/站点/应用/截图/Icon/证书 → Inventory 子 Tab；目录/JS/敏感信息保留独立页
+      // ===== 攻击面管理 =====
+      // 单一入口提供目标视图与带分类 Tab 的全局视图；旧地址重定向到对应 Tab。
       {
         path: 'asset-management',
         redirect: 'asset-management/space-search',
         children: [
-          // 子页面：资产空间搜索（目标列表 + 详情 + inventory/vuln）
           {
             path: 'space-search',
             name: 'AssetSpaceSearch',
             component: lazyLoad(() => import('@/views/AssetSpaceSearch.vue')),
-            meta: { title: 'menu.AssetSpaceSearch', icon: 'Search' }
+            meta: { title: 'menu.AssetSpaceSearch', icon: 'Monitor' }
           },
           {
             path: 'exposure/dir',
-            name: 'ExposureDir',
-            component: lazyLoad(() => import('@/views/DirectoryManagement.vue')),
-            meta: { title: 'menu.ExposureDir', icon: 'Folder' }
+            redirect: to => ({ path: '/asset-management/space-search', query: { ...to.query, view: 'global', tab: 'dir' } })
           },
           {
             path: 'exposure/js',
-            name: 'ExposureJs',
-            component: lazyLoad(() => import('@/views/AssetManagement/JSFinderPage.vue')),
-            meta: { title: 'menu.ExposureJs', icon: 'Files' }
+            redirect: to => ({ path: '/asset-management/space-search', query: { ...to.query, view: 'global', tab: 'js' } })
           },
           {
             path: 'risk/sensitive-info',
-            name: 'RiskSensitiveInfo',
-            component: lazyLoad(() => import('@/views/AssetManagement/SensitiveInfoPage.vue')),
-            meta: { title: 'menu.RiskSensitiveInfo', icon: 'Lock' }
+            redirect: to => ({ path: '/asset-management/space-search', query: { ...to.query, view: 'global', tab: 'sensitive' } })
           },
           {
             path: 'risk/vuln',
-            name: 'RiskVuln',
-            component: lazyLoad(() => import('@/views/VulnerabilityManagement.vue')),
-            meta: { title: 'menu.RiskVuln', icon: 'Warning' }
+            redirect: to => ({ path: '/asset-management/space-search', query: { ...to.query, view: 'global', tab: 'vuln' } })
           },
         ]
       },
@@ -216,12 +206,6 @@ const routes = [
         name: 'NotifyConfig',
         component: lazyLoad(() => import('@/views/settings/NotifyConfig.vue')),
         meta: { title: 'menu.notifyConfig', icon: 'Bell' }
-      },
-      {
-        path: 'settings-reverify',
-        name: 'ReverifyConfig',
-        component: lazyLoad(() => import('@/views/settings/ReverifyConfig.vue')),
-        meta: { title: 'menu.reverifyConfig', icon: 'Timer' }
       },
       {
         path: 'high-risk-filter',

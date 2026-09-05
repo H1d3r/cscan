@@ -1,7 +1,7 @@
 <template>
   <div class="targets-view">
     <!-- defer：目标 .header-search 由同一页面树渲染，需等整树挂载后再解析，否则目标为 null 会中断挂载 -->
-    <Teleport defer to=".asset-space-search .header-search">
+    <Teleport v-if="headerSearchTargetExists" to=".asset-space-search .header-search">
       <el-input
         v-model="searchQuery"
         :placeholder="$t('asset.targetView.searchPlaceholder')"
@@ -175,7 +175,7 @@
       <el-pagination
         :current-page="page"
         :page-size="pageSize"
-        :page-sizes="[5, 10, 20, 50, 100]"
+        :page-sizes="[10, 20, 50, 100]"
         :total="total"
         layout="total, sizes, prev, pager, next"
         @current-change="handlePageChange"
@@ -204,11 +204,12 @@ const props = defineProps({
 const emit = defineEmits(['create-target', 'start-scan', 'view-target', 'edit-target'])
 
 const { t } = useI18n()
+const headerSearchTargetExists = ref(false)
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const selectedRows = ref([])
 
 const searchQuery = ref('')
@@ -313,7 +314,10 @@ watch([typeFilter, statusFilter, scopeFilter], () => {
   fetchData()
 })
 
-onMounted(fetchData)
+onMounted(() => {
+  headerSearchTargetExists.value = !!document.querySelector('.asset-space-search .header-search')
+  fetchData()
+})
 
 onUnmounted(() => {
   if (searchDebounce) clearTimeout(searchDebounce)

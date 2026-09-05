@@ -114,7 +114,6 @@ var ExpectedEndpoints = []APIEndpoint{
 
 	// Worker management
 	{Method: http.MethodPost, Path: "/api/v1/worker/list"},
-	{Method: http.MethodPost, Path: "/api/v1/worker/delete"},
 	{Method: http.MethodPost, Path: "/api/v1/worker/rename"},
 	{Method: http.MethodPost, Path: "/api/v1/worker/restart"},
 
@@ -173,11 +172,6 @@ var ExpectedEndpoints = []APIEndpoint{
 	{Method: http.MethodPost, Path: "/api/v1/ct/config/get"},
 	{Method: http.MethodPost, Path: "/api/v1/ct/config/save"},
 	{Method: http.MethodPost, Path: "/api/v1/ct/pull/status"},
-
-	// 弱口令/敏感信息持续复验（T3.3 / T3.4）
-	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/get"},
-	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/save"},
-	{Method: http.MethodPost, Path: "/api/v1/vul/reverify/runNow"},
 
 	// 新资产自动深度扫描策略（T3.5）
 	{Method: http.MethodPost, Path: "/api/v1/task/autoPolicy/list"},
@@ -472,9 +466,9 @@ func TestProperty7_APIEndpointBackwardCompatibility(t *testing.T) {
 			if len(endpoint.Path) >= 8 && endpoint.Path[:8] == "/api/v1/" {
 				valid = true
 			}
-		if len(endpoint.Path) >= 13 && endpoint.Path[:13] == "/api/open/v1/" {
-			valid = true
-		}
+			if len(endpoint.Path) >= 13 && endpoint.Path[:13] == "/api/open/v1/" {
+				valid = true
+			}
 			if !valid {
 				return false
 			}

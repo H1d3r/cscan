@@ -63,6 +63,13 @@ func (l *VulListLogic) VulList(req *types.VulListReq) (resp *types.VulListResp, 
 	if req.Host != "" {
 		filter["host"] = req.Host
 	}
+	if req.TargetId != "" {
+		targetType, targetValue, decodeErr := model.DecodeTargetID(req.TargetId)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		appendBSONAndCondition(filter, bson.M{"host": hostFilterForTarget(targetType, targetValue)})
+	}
 	if req.Port > 0 {
 		filter["port"] = req.Port
 	}
@@ -90,6 +97,9 @@ func (l *VulListLogic) VulList(req *types.VulListReq) (resp *types.VulListResp, 
 	if req.VerifyPending {
 		filter["verify_pending"] = true
 	}
+	if req.HighRiskOnly {
+		appendBSONAndCondition(filter, bson.M{"$or": highRiskVulnerabilityClause()})
+	}
 	if len(req.KeywordAny) > 0 {
 		orClauses := make([]bson.M, 0, len(req.KeywordAny)*2)
 		for _, kw := range req.KeywordAny {
@@ -114,7 +124,7 @@ func (l *VulListLogic) VulList(req *types.VulListReq) (resp *types.VulListResp, 
 	var total int64
 	var vuls []model.Vul
 
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 	vulModel := l.svcCtx.GetVulModel()
 
 	// 查询总数
@@ -173,10 +183,12 @@ func (l *VulListLogic) VulList(req *types.VulListReq) (resp *types.VulListResp, 
 	}
 
 	return &types.VulListResp{
-		Code:  0,
-		Msg:   "success",
-		Total: int(total),
-		List:  list,
+		Code:     0,
+		Msg:      "success",
+		Page:     req.Page,
+		PageSize: req.PageSize,
+		Total:    int(total),
+		List:     list,
 	}, nil
 }
 

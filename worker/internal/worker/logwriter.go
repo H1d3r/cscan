@@ -175,13 +175,9 @@ func (l *TaskLoggerWS) Error(format string, args ...interface{}) {
 	l.log(LevelError, format, args...)
 }
 
-// Event preserves the normal console/text message while attaching optional
-// structured fields to the MongoDB document.
+// Event intentionally discards structured scanner/phase data. User-facing
+// task logs continue through Debug/Info/Warn/Error.
 func (l *TaskLoggerWS) Event(level, msg, event, phase, outcome string, fields map[string]interface{}) {
-	logConsole(level, l.taskId, msg)
-	if globalMongoLogger != nil {
-		globalMongoLogger.WriteEvent(level, l.taskId, msg, event, phase, outcome, fields)
-	}
 }
 
 // ==================== 全局 MongoLogger 实例 ====================

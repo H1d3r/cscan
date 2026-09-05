@@ -111,20 +111,6 @@ func main() {
 	schedulerSvc := scheduler.NewSchedulerService(svcCtx.Scheduler, svcCtx.RedisClient, svcCtx.SyncMethods, &cronTaskSourceAdapter{model: svcCtx.CronTaskModel})
 	go schedulerSvc.Start()
 
-	// T3.3：注入弱口令持续复验器
-	reverifier := scheduler.NewWeakPassReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
-	schedulerSvc.SetWeakPassReverifier(reverifier, "")
-	svcCtx.RunWeakPassReverify = func(ctx context.Context) error {
-		return reverifier.RunNow(ctx)
-	}
-
-	// T3.4：注入敏感信息（暴露面）持续复验器
-	exposureReverifier := scheduler.NewExposureReverifier(svcCtx.MongoDB, svcCtx.Scheduler)
-	schedulerSvc.SetExposureReverifier(exposureReverifier, "")
-	svcCtx.RunExposureReverify = func(ctx context.Context) error {
-		return exposureReverifier.RunNow(ctx)
-	}
-
 	// 启动定时任务执行消息订阅
 	go startCronExecuteSubscriber(svcCtx, schedulerSvc.GetScheduler())
 

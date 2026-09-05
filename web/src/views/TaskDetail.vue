@@ -495,6 +495,7 @@ function getStatusText(row) {
     PENDING: t('task.pendingExec'),
     STARTED: t('task.executing'),
     PAUSED: t('task.paused'),
+    PARTIAL: t('task.completed'),
     SUCCESS: t('task.completed'),
     FAILURE: t('task.execFailed'),
     STOPPED: t('task.stopped'),

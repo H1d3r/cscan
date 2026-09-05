@@ -410,6 +410,13 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 	if req.TaskId != "" {
 		andConditions = append(andConditions, bson.M{"main_task_id": req.TaskId})
 	}
+	if req.TargetId != "" {
+		targetType, targetValue, err := model.DecodeTargetID(req.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		andConditions = append(andConditions, bson.M{"host": hostFilterForTarget(targetType, targetValue)})
+	}
 	if req.Authority != "" {
 		andConditions = append(andConditions, bson.M{"authority": bson.M{"$regex": regexp.QuoteMeta(req.Authority), "$options": "i"}})
 	}
@@ -460,13 +467,7 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 		filter["$and"] = andConditions
 	}
 
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	if req.PageSize < 1 {
-		req.PageSize = 20
-	}
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 
 	m := l.getModel()
 
@@ -528,7 +529,7 @@ func (l *DirScanLogic) GetDirScanList(req *types.DirScanResultListReq) (*types.D
 	}
 
 	return &types.DirScanResultListResp{
-		Code: 0, Msg: "success", Total: total, List: respList,
+		Code: 0, Msg: "success", Page: req.Page, PageSize: req.PageSize, Total: total, List: respList,
 	}, nil
 }
 

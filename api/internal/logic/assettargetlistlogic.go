@@ -41,13 +41,7 @@ func NewAssetTargetListLogic(ctx context.Context, svcCtx *svc.ServiceContext) *A
 
 // AssetTargetList 顶层资产（IP/主域名）分页列表。
 func (l *AssetTargetListLogic) AssetTargetList(req *types.AssetTargetListReq) (*types.AssetTargetListResp, error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
-	if req.PageSize <= 0 || req.PageSize > 200 {
-		req.PageSize = 20
-	}
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 
 	cacheKey := buildAssetTargetListCacheKey(req)
 	// 手动刷新：清掉该 key 的缓存再走 GetOrSet 重建，
@@ -108,7 +102,9 @@ func (l *AssetTargetListLogic) buildList(req *types.AssetTargetListReq) (*types.
 		}
 		list = append(list, metaToItem(*d))
 	}
-	return &types.AssetTargetListResp{Code: 0, Msg: "success", Total: total, List: list}, nil
+	return &types.AssetTargetListResp{
+		Code: 0, Msg: "success", Page: req.Page, PageSize: req.PageSize, Total: total, List: list,
+	}, nil
 }
 
 // refreshDenormalized 复用 detail logic 的 computeExposure/computeRisk 重新算,
@@ -163,19 +159,19 @@ func metaToItem(m model.AssetTargetMeta) types.AssetTargetListItem {
 		labels = []string{}
 	}
 	return types.AssetTargetListItem{
-		Id:                  m.Id,
-		TargetType:          m.TargetType,
-		TargetValue:         m.TargetValue,
-		Labels:              labels,
-		Memo:                m.Memo,
-		ColorTag:            m.ColorTag,
-		ScanStatus:          m.ScanStatus,
-		Source:              m.Source,
-		InternalNetworkId:   m.InternalNetworkId,
-		TotalAssetServices:  m.TotalAssetServices,
-		LastScanTime:        tsMilli(m.LastScanTime),
-		FirstSeen:           tsMilli(m.FirstSeenTime),
-		TaskCount:           m.TaskCount,
+		Id:                 m.Id,
+		TargetType:         m.TargetType,
+		TargetValue:        m.TargetValue,
+		Labels:             labels,
+		Memo:               m.Memo,
+		ColorTag:           m.ColorTag,
+		ScanStatus:         m.ScanStatus,
+		Source:             m.Source,
+		InternalNetworkId:  m.InternalNetworkId,
+		TotalAssetServices: m.TotalAssetServices,
+		LastScanTime:       tsMilli(m.LastScanTime),
+		FirstSeen:          tsMilli(m.FirstSeenTime),
+		TaskCount:          m.TaskCount,
 
 		ExposureSubdomains:  m.ExposureSubdomains,
 		ExposureIps:         m.ExposureIps,
@@ -339,7 +335,7 @@ func (l *AssetTargetListLogic) buildScanStatusByTarget() map[string]string {
 }
 
 // mapTaskStatusToScan 把 maintask 状态映射为 meta 的 scanStatus
-//（pending/in_progress/completed/failed/cancelled）。
+// （pending/in_progress/completed/failed/cancelled）。
 func mapTaskStatusToScan(status string) string {
 	switch status {
 	case model.TaskStatusCreated, model.TaskStatusPending, model.TaskStatusPaused:

@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,9 +107,164 @@ func (e *CmdExecutor) withPresetArgs(args []string) []string {
 	return merged
 }
 
-// CommandLine 返回实际执行的完整命令行（含自动注入的 preset 参数），用于日志排障
+// CommandLine 返回实际执行的完整命令行（含自动注入的 preset 参数）。
+// 每个 argv 均按 POSIX shell 规则引用，并在引用前按参数语义脱敏。
 func (e *CmdExecutor) CommandLine(args []string) string {
-	return e.binaryPath + " " + strings.Join(e.withPresetArgs(args), " ")
+	if e == nil {
+		return ""
+	}
+	return FormatCommandLine(e.binaryPath, e.withPresetArgs(args))
+}
+
+// FormatCommandLine 将 binary 与 argv 格式化为可复现、可安全复制的 shell 命令。
+// 它理解 flag/value、--flag=value、header 和 URL，不会把敏感值写入日志。
+func FormatCommandLine(binary string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, shellQuote(redactURLSecrets(binary)))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if flag, value, ok := splitFlagValue(arg); ok {
+			if isHeaderFlag(flag) {
+				arg = flag + "=" + redactHeaderValue(value)
+			} else if isSensitiveFlag(flag) {
+				arg = flag + "=<redacted>"
+			} else {
+				arg = flag + "=" + redactURLSecrets(value)
+			}
+		} else if strings.HasPrefix(arg, "-") && i+1 < len(args) {
+			if isHeaderFlag(arg) {
+				parts = append(parts, shellQuote(arg), shellQuote(redactHeaderValue(args[i+1])))
+				i++
+				continue
+			}
+			if isSensitiveFlag(arg) {
+				parts = append(parts, shellQuote(arg), shellQuote("<redacted>"))
+				i++
+				continue
+			}
+		}
+		arg = redactStandaloneSecrets(arg)
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func splitFlagValue(arg string) (string, string, bool) {
+	if !strings.HasPrefix(arg, "-") {
+		return "", "", false
+	}
+	index := strings.IndexByte(arg, '=')
+	if index <= 0 {
+		return "", "", false
+	}
+	return arg[:index], arg[index+1:], true
+}
+
+func normalizedFlagName(flag string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimLeft(strings.TrimSpace(flag), "-")), "_", "-")
+}
+
+func isHeaderFlag(flag string) bool {
+	trimmed := strings.TrimSpace(flag)
+	if trimmed == "-H" {
+		return true
+	}
+	switch normalizedFlagName(flag) {
+	case "header", "headers":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSensitiveName(name string) bool {
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
+	if normalized == "auth" || strings.HasPrefix(normalized, "auth-") || strings.HasSuffix(normalized, "-auth") {
+		return true
+	}
+	for _, marker := range []string{
+		"authorization", "api-key", "apikey", "token", "secret", "password", "passwd", "cookie",
+		"credential", "signature", "access-key", "accesskey", "private-key", "privatekey",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return normalized == "sig"
+}
+
+func isSensitiveFlag(flag string) bool {
+	return isSensitiveName(normalizedFlagName(flag))
+}
+
+func redactHeaderValue(header string) string {
+	name, value, found := strings.Cut(header, ":")
+	if !found {
+		if isSensitiveName(header) {
+			return "<redacted>"
+		}
+		return redactURLSecrets(header)
+	}
+	if isSensitiveName(name) {
+		return name + ": <redacted>"
+	}
+	return name + ":" + redactURLSecrets(value)
+}
+
+func redactStandaloneSecrets(arg string) string {
+	if schemeEnd := strings.Index(arg, "://"); schemeEnd > 0 && !strings.ContainsAny(arg[:schemeEnd], " \t:") {
+		return redactURLSecrets(arg)
+	}
+	if key, _, found := strings.Cut(arg, "="); found && isSensitiveName(strings.TrimLeft(key, "-")) {
+		return key + "=<redacted>"
+	}
+	name, _, found := strings.Cut(arg, ":")
+	if found {
+		headerName := strings.TrimPrefix(name, "-H")
+		if isSensitiveName(headerName) {
+			return name + ": <redacted>"
+		}
+	}
+	return redactURLSecrets(arg)
+}
+
+func redactURLSecrets(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.Contains(trimmed, "://") {
+		return raw
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "<redacted-url>"
+	}
+	if parsed.User != nil {
+		parsed.User = url.User("<redacted>")
+	}
+	query := parsed.Query()
+	keys := make([]string, 0, len(query))
+	for key := range query {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if isSensitiveName(key) {
+			query[key] = []string{"<redacted>"}
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if strings.IndexFunc(value, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("_@%+=:,./-", r))
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOpts) (*ExecuteResult, error) {
@@ -164,7 +321,10 @@ func (e *CmdExecutor) Execute(ctx context.Context, args []string, opts ExecuteOp
 		if stdoutBuf.truncated {
 			result.Stderr += fmt.Sprintf("\n[stdout truncated at %d bytes]", maxOutputBytes)
 		}
-		return result, fmt.Errorf("%s: timeout after %v", e.binaryPath, timeout)
+		if ctx.Err() != nil {
+			return result, fmt.Errorf("%s: execution canceled: %w", e.binaryPath, ctx.Err())
+		}
+		return result, fmt.Errorf("%s: timeout after %v: %w", e.binaryPath, timeout, context.DeadlineExceeded)
 	case err := <-done:
 		result.Stdout = stdoutBuf.String()
 		result.Stderr = stderrBuf.String()
@@ -346,8 +506,10 @@ func (e *CmdExecutor) LogResult(prefix string, result *ExecuteResult, err error)
 	if logFn == nil {
 		logFn = func(level, format string, args ...interface{}) {
 			switch level {
-			case "WARN", "ERROR":
+			case "ERROR":
 				logx.Errorf(format, args...)
+			case "WARN":
+				logx.Slowf(format, args...)
 			case "INFO":
 				logx.Infof(format, args...)
 			default:

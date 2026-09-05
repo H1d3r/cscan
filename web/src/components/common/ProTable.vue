@@ -146,6 +146,27 @@
       </div>
     </div>
 
+    <el-alert
+      v-if="requestStatus === 'forbidden'"
+      :title="$t('asset.attackSurface.dataForbidden')"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="table-request-state"
+    />
+    <el-alert
+      v-else-if="requestStatus === 'error'"
+      :title="$t('asset.attackSurface.loadFailed')"
+      type="error"
+      show-icon
+      :closable="false"
+      class="table-request-state"
+    >
+      <template #default>
+        <el-button link type="primary" @click="loadData">{{ $t('asset.attackSurface.retry') }}</el-button>
+      </template>
+    </el-alert>
+
     <!-- Main Table -->
     <el-table v-loading="loading" :data="tableData" v-bind="$attrs" @selection-change="handleSelectionChange" @sort-change="handleSortChange">
       <el-table-column v-if="selection" type="selection" width="40" />
@@ -192,6 +213,7 @@ import { ArrowDown, Filter, Search } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import request from '@/api/request'
 import { debounce } from 'lodash-es'
+import { fetchAllPages } from '@/utils/pagedRequest'
 
 defineOptions({
   name: 'ProTable',
@@ -258,6 +280,11 @@ const props = defineProps({
   transformPayload: {
     type: Function,
     default: null
+  },
+  // 攻击面工作台由父组件管理 URL；关闭后不读取或写入 page/pageSize/筛选参数。
+  syncUrl: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -268,12 +295,14 @@ const route = useRoute()
 const searchQuery = ref('')
 const showFilters = ref(false)
 const loading = ref(false)
+const requestStatus = ref('idle')
 const tableData = ref([])
 const selectedRows = ref([])
 const stats = ref({})
 const isInitialLoad = ref(true)
 // 请求序号：快速切换搜索/翻页时旧响应可能晚于新响应返回，丢弃过期响应避免覆盖新数据
 let loadDataSeq = 0
+let loadStatsSeq = 0
 const pagination = reactive({
   page: 1,
   pageSize: 10,
@@ -299,7 +328,7 @@ const showTopToolbar = hasSearchToolbar || hasCustomSearchSlot || showTopFilterB
 const searchForm = reactive({})
 
 // Keys that ProTable should never read from or write to URL (managed by parent components)
-const EXTERNAL_QUERY_KEYS = new Set(['tab', 'subTab'])
+const EXTERNAL_QUERY_KEYS = new Set(['tab', 'subTab', 'view', 'scope', 'rootDomain', 'ip', 'targetId', 'metric'])
 
 // Get the set of valid search field keys from searchItems prop
 function getSearchItemKeys() {
@@ -308,6 +337,7 @@ function getSearchItemKeys() {
 
 // Initialize state from URL query
 function initQueryFromUrl() {
+  if (!props.syncUrl) return
   const query = route.query
   if (query.page) pagination.page = parseInt(query.page) || 1
   if (query.pageSize) pagination.pageSize = parseInt(query.pageSize) || 10
@@ -328,6 +358,7 @@ function initQueryFromUrl() {
 
 // Sync ProTable state to URL query, preserving all external params
 function syncQueryToUrl() {
+  if (!props.syncUrl) return
   const proTableParams = {
     page: pagination.page,
     pageSize: pagination.pageSize,
@@ -369,19 +400,48 @@ function syncQueryToUrl() {
 }
 
 // Data fetching
+function buildRequestPayload() {
+  const payload = {
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+    query: searchQuery.value,
+    ...searchForm,
+    ...(props.extraParams || {})
+  }
+
+  if (sortState.prop && sortState.order) {
+    payload.sortField = sortState.prop
+    payload.sortOrder = sortState.order === 'ascending' ? 'asc' : 'desc'
+  }
+
+  if (props.searchItems) {
+    props.searchItems.forEach(item => {
+      if (item.inputType === 'number' && payload[item.prop] !== undefined && payload[item.prop] !== '') {
+        const numVal = Number(payload[item.prop])
+        if (!isNaN(numVal)) payload[item.prop] = numVal
+      }
+    })
+  }
+
+  return props.transformPayload ? props.transformPayload(payload) : payload
+}
+
 async function loadStats() {
   if (!props.statApi) return
+  const seq = ++loadStatsSeq
   try {
-    const payload = { query: searchQuery.value,
-      ...searchForm }
-    const res = await request.post(props.statApi, payload)
+    const res = await request.post(props.statApi, buildRequestPayload())
+    if (seq !== loadStatsSeq) return
     if (res.code === 0) {
-      // 处理嵌套的 data 包装情况
       stats.value = res.data?.stat || res.data || res.stat || res || {}
     }
   } catch (error) {
-    console.error('Failed to load stats:', error)
+    if (seq === loadStatsSeq) console.error('Failed to load stats:', error)
   }
+}
+
+function isForbidden(error) {
+  return error?.response?.status === 403 || Number(error?.status || error?.code) === 403
 }
 
 async function loadData() {
@@ -391,52 +451,30 @@ async function loadData() {
 
   const seq = ++loadDataSeq
   loading.value = true
+  requestStatus.value = 'loading'
 
-  // Skip URL sync on initial mount to avoid race condition with parent components
-  // (e.g. AssetInventoryTab writing subTab via async router.replace)
-  if (!isInitialLoad.value) {
+  // Skip URL sync on initial mount to avoid race condition with parent components.
+  if (!isInitialLoad.value && props.syncUrl) {
     syncQueryToUrl()
   }
   isInitialLoad.value = false
 
   try {
-    const payload = {
-      page: pagination.page,
-      pageSize: pagination.pageSize,
-      query: searchQuery.value,
-      ...(props.extraParams || {}),
-      ...searchForm
-    }
-
-    // Add sort parameters if sorting is active
-    if (sortState.prop && sortState.order) {
-      payload.sortField = sortState.prop
-      payload.sortOrder = sortState.order === 'ascending' ? 'asc' : 'desc'
-    }
-
-    // Cast specific fields to Number if they are defined as numbers in searchItems
-    if (props.searchItems) {
-      props.searchItems.forEach(item => {
-        if (item.inputType === 'number' && payload[item.prop] !== undefined && payload[item.prop] !== '') {
-          const numVal = Number(payload[item.prop])
-          if (!isNaN(numVal)) {
-            payload[item.prop] = numVal
-          }
-        }
-      })
-    }
-
-    // 应用自定义 payload 转换（例如将 aiStatus 筛选值映射到 aiStatus/aiResult）
-    const finalPayload = props.transformPayload ? props.transformPayload(payload) : payload
-
-    const res = await request.post(props.api, finalPayload)
-    if (seq !== loadDataSeq) return // 已有更新的请求发出，丢弃本次过期响应
+    const res = await request.post(props.api, buildRequestPayload())
+    if (seq !== loadDataSeq) return
     if (res.code === 0) {
-      tableData.value = res.list || []
-      pagination.total = res.total || 0
+      const payload = res.data?.list !== undefined ? res.data : res
+      tableData.value = payload.list || []
+      pagination.total = payload.total || 0
+      requestStatus.value = 'success'
+    } else {
+      requestStatus.value = Number(res.code) === 403 ? 'forbidden' : 'error'
     }
   } catch (error) {
-    console.error('Failed to load table data:', error)
+    if (seq === loadDataSeq) {
+      requestStatus.value = isForbidden(error) ? 'forbidden' : 'error'
+      console.error('Failed to load table data:', error)
+    }
   } finally {
     if (seq === loadDataSeq) loading.value = false
   }
@@ -588,6 +626,20 @@ async function handleBatchDelete() {
   }
 }
 
+// Fetch exports through the same bounded/filter-aware payload as the table.
+function fetchAllExportRows() {
+  return fetchAllPages(props.exportApi || props.api, (page, pageSize) => {
+    const payload = {
+      query: searchQuery.value,
+      ...searchForm,
+      ...(props.extraParams || {}),
+      page,
+      pageSize,
+    }
+    return props.transformPayload ? props.transformPayload(payload) : payload
+  })
+}
+
 // Export handling
 async function handleExport(command) {
   if (!props.exportApi) return
@@ -605,18 +657,7 @@ async function handleExport(command) {
   } else if (command === 'csv') {
     ElMessage.info(t('common.gettingAllData') || 'Getting all data...')
     try {
-      const res = await request.post(props.exportApi || props.api, {
-        query: searchQuery.value,
-      ...searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) {
-        // 处理嵌套的 data 包装情况
-        const dataContainer = res.data?.list !== undefined ? res.data : res
-        data = dataContainer.list || []
-      } else {
-        ElMessage.error(t('common.getDataFailed') || 'Failed to get data')
-        return
-      }
+      data = await fetchAllExportRows()
     } catch (e) {
       ElMessage.error(t('common.getDataFailed') || 'Failed to get data')
       return
@@ -669,18 +710,7 @@ async function handleExport(command) {
     // Export All (TXT)
     ElMessage.info(t('common.gettingAllData') || 'Getting all data...')
     try {
-      const res = await request.post(props.exportApi || props.api, {
-        query: searchQuery.value,
-      ...searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) {
-        // 处理嵌套的 data 包装情况
-        const dataContainer = res.data?.list !== undefined ? res.data : res
-        data = dataContainer.list || []
-      } else {
-        ElMessage.error(t('common.getDataFailed') || 'Failed to get data')
-        return
-      }
+      data = await fetchAllExportRows()
     } catch (e) {
       ElMessage.error(t('common.getDataFailed') || 'Failed to get data')
       return
@@ -737,6 +767,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  loadDataSeq += 1
+  loadStatsSeq += 1
+  handleSearch.cancel?.()
 })
 
 // Expose methods and state to parent component

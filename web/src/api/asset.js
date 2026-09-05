@@ -27,11 +27,12 @@ export function getScreenshots(data) {
   })
 }
 
-// 获取资产统计
-export function getAssetStat() {
+// 获取资产统计（targetId 为空时返回全局范围）
+export function getAssetStat(data = {}) {
   return request({
     url: '/asset/stat',
-    method: 'post'
+    method: 'post',
+    data
   })
 }
 

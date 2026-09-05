@@ -124,30 +124,16 @@ func TestLegacyLogConsumerIgnoresOptionalStructuredFields(t *testing.T) {
 	}
 }
 
-func TestMetricsNeverUseHostOrTaskAsLabels(t *testing.T) {
-	var metrics scanMetrics
-	metrics.record(scanner.EventSchemeProbeComplete, "scheme", "CONFIRMED", map[string]interface{}{
+func TestStructuredMetricsAndTaskEventsAreDisabled(t *testing.T) {
+	worker := &Worker{}
+	if eventLogger := worker.scannerEventLogger("task-1"); eventLogger != nil {
+		t.Fatal("scanner event logger must be disabled")
+	}
+
+	// Structured task events are intentionally discarded and must not require
+	// metric state or persistence infrastructure.
+	worker.taskLogEvent("task-1", LevelInfo, "扫描事件已记录", scanner.EventSchemeProbeComplete, "scheme", "CONFIRMED", map[string]interface{}{
 		"host": "high-cardinality.example.test", "port": 443, "conflict": true,
 	})
-	metrics.record(EventTaskFinalized, "task", model.TaskStatusPartial, map[string]interface{}{
-		"task_id": "task-high-cardinality", "outcome": model.TaskStatusPartial,
-	})
-	for key := range metrics.snapshot() {
-		if strings.Contains(key, "high-cardinality") || strings.Contains(key, "task_id") || strings.Contains(key, "host=") {
-			t.Fatalf("high-cardinality metric label leaked: %s", key)
-		}
-	}
-}
-
-func TestExceptionalTargetEventsAreBoundedAndSampled(t *testing.T) {
-	worker := &Worker{}
-	logged := 0
-	for i := 0; i < 2000; i++ {
-		if worker.shouldPersistStructuredEvent("task-1", scanner.EventNmapPortResult) {
-			logged++
-		}
-	}
-	if logged <= 20 || logged > 100 {
-		t.Fatalf("sampled logs=%d, want >20 and <=100", logged)
-	}
+	NewTaskLoggerWS("worker-a", "task-1").Event(LevelInfo, "扫描事件已记录", scanner.EventSchemeProbeComplete, "scheme", "CONFIRMED", nil)
 }

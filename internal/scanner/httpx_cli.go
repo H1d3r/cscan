@@ -159,8 +159,10 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 			return
 		}
 		switch level {
-		case "ERROR", "WARN":
+		case "ERROR":
 			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Slowf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
 		default:
@@ -181,7 +183,6 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 		return result, nil
 	}
 
-	taskLog("INFO", "Httpx(CLI): scanning %d targets", len(targets))
 	concurrency := opts.Concurrency
 	if concurrency <= 0 {
 		concurrency = config.WorkerConcurrency
@@ -195,7 +196,6 @@ func (s *HttpxScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResul
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	taskLog("INFO", "Httpx(CLI): using %d workers for %d targets", concurrency, len(targets))
 
 	targetChan := make(chan string, len(targets))
 	resultChan := make(chan httpxTargetResult, len(targets))
@@ -248,17 +248,74 @@ dispatch:
 			}
 		}
 		summarizeHttpxTarget(result.Diagnostic, probe)
+		logHttpxProbeResult(taskLog, probe)
 		emitHTTPXProbeEvent(config.EventLogger, probe)
 	}
 	if dispatched := result.Diagnostic.Coverage.Attempted + countPriorSuccesses(result.Diagnostic.Coverage); dispatched < result.Diagnostic.Coverage.Input && ctx.Err() != nil {
 		result.Diagnostic.Coverage.Unconfirmed += result.Diagnostic.Coverage.Input - dispatched
 	}
 	result.Diagnostic.Status = deriveHttpxPhaseStatus(ctx, result.Diagnostic.Coverage)
-	taskLog("INFO", "Httpx(CLI): completed, input=%d attempted=%d succeeded=%d timed_out=%d failed=%d zero_update=%d status=%s",
+	taskLog("INFO", "协议探测阶段摘要：输入=%d，已尝试=%d，成功=%d，超时=%d，失败=%d，未更新=%d，状态=%s",
 		result.Diagnostic.Coverage.Input, result.Diagnostic.Coverage.Attempted, result.Diagnostic.Coverage.Succeeded,
 		result.Diagnostic.Coverage.TimedOut, result.Diagnostic.Coverage.Failed,
 		result.Diagnostic.Coverage.ZeroUpdate, result.Diagnostic.Status)
 	return result, nil
+}
+
+func logHttpxProbeResult(taskLog func(string, string, ...interface{}), probe httpxTargetResult) {
+	if taskLog == nil || probe.asset == nil {
+		return
+	}
+	target := formatAssetTarget(probe.asset)
+	if probe.priorSuccessful {
+		resolution := resolveAssetScheme(probe.asset)
+		taskLog("INFO", "协议探测结果：%s -> %s（沿用已确认结果）", target, strings.ToUpper(resolution.Scheme))
+		return
+	}
+
+	attempts := make([]string, 0, len(probe.attempts))
+	for _, attempt := range probe.attempts {
+		attempts = append(attempts, fmt.Sprintf("%s %s", strings.ToUpper(attempt.Scheme), httpxOutcomeDescription(attempt.Outcome)))
+	}
+	detail := strings.Join(attempts, "，")
+	if detail == "" {
+		detail = "未尝试"
+	}
+
+	if probe.selected != nil {
+		scheme := probe.selected.ObservedScheme
+		if scheme == "" {
+			scheme = probe.selected.Scheme
+		}
+		taskLog("INFO", "协议探测结果：%s -> %s（最终 %s）", target, detail, strings.ToUpper(scheme))
+		return
+	}
+	if len(probe.attempts) == 2 && probe.attempts[0].Outcome == HttpxOutcomeNotHTTP && probe.attempts[1].Outcome == HttpxOutcomeNotHTTP {
+		taskLog("INFO", "协议探测结果：%s -> %s（确认非 HTTP）", target, detail)
+		return
+	}
+	taskLog("WARN", "协议探测结果：%s -> %s（未确认）", target, detail)
+}
+
+func httpxOutcomeDescription(outcome HttpxAttemptOutcome) string {
+	switch outcome {
+	case HttpxOutcomeSuccess:
+		return "成功"
+	case HttpxOutcomeTimeout:
+		return "超时"
+	case HttpxOutcomeExecError:
+		return "执行失败"
+	case HttpxOutcomeNoOutput:
+		return "无响应"
+	case HttpxOutcomeParseError:
+		return "解析失败"
+	case HttpxOutcomeNoMatch:
+		return "无匹配结果"
+	case HttpxOutcomeNotHTTP:
+		return "非 HTTP"
+	default:
+		return "未知结果"
+	}
 }
 
 func emitHTTPXPhaseEvent(eventLog ScanEventLogger, diagnostic *ScanDiagnostic, noOutput, parseFailed int) {
@@ -343,6 +400,8 @@ func (s *HttpxScanner) probeTarget(ctx context.Context, target string, asset *As
 				observed = scheme
 			}
 			evidence = append(evidence, SchemeEvidence{Scheme: observed, Kind: SchemeEvidenceSuccessfulResponse, Success: true, StatusCode: attempt.Response.StatusCode})
+			probe.selected = &probe.attempts[len(probe.attempts)-1]
+			break
 		}
 	}
 
@@ -376,7 +435,11 @@ func (s *HttpxScanner) scanSingleTargetCLI(ctx context.Context, target string, o
 		attempt.Scheme = normalizeScheme(parsed.Scheme)
 	}
 	args := s.httpxArgs(target, opts)
-	taskLog("INFO", "[Httpx] CLI: target=%s", safeTarget)
+	commandLine := FormatCommandLine("httpx", args)
+	if s.executor != nil {
+		commandLine = s.executor.CommandLine(args)
+	}
+	taskLog("INFO", "系统执行命令：%s", commandLine)
 
 	res, err := s.executeCommand(ctx, args, ExecuteOpts{Timeout: time.Duration(opts.Timeout+10) * time.Second, LogFn: taskLog})
 	if res != nil {
@@ -385,26 +448,22 @@ func (s *HttpxScanner) scanSingleTargetCLI(ctx context.Context, target string, o
 	if err != nil {
 		if isHttpxTimeout(ctx, err) {
 			attempt.Outcome = HttpxOutcomeTimeout
+			taskLog("WARN", "Httpx(CLI)：目标=%s 探测超时", safeTarget)
 		} else {
 			attempt.Outcome = HttpxOutcomeExecError
+			taskLog("ERROR", "Httpx(CLI)：目标=%s 启动或执行失败，error_type=%T", safeTarget, err)
 		}
-		taskLog("ERROR", "Httpx(CLI): target=%s outcome=%s exitCode=%d stdout_bytes=%d stderr_bytes=%d error_type=%T",
-			safeTarget, attempt.Outcome, exitCodeOf(res), outputBytesOf(res, true), outputBytesOf(res, false), err)
 		return attempt
 	}
 	if res == nil {
 		attempt.Outcome = HttpxOutcomeExecError
-		taskLog("ERROR", "Httpx(CLI): target=%s outcome=nil_result", safeTarget)
+		taskLog("ERROR", "Httpx(CLI)：目标=%s 未返回执行结果", safeTarget)
 		return attempt
 	}
 	if res.ExitCode != 0 {
 		attempt.Outcome = HttpxOutcomeExecError
-		taskLog("ERROR", "Httpx(CLI): target=%s outcome=nonzero_exit exitCode=%d stdout_bytes=%d stderr_bytes=%d",
-			safeTarget, res.ExitCode, len(res.Stdout), len(res.Stderr))
+		taskLog("ERROR", "Httpx(CLI)：目标=%s 非零退出，exitCode=%d", safeTarget, res.ExitCode)
 		return attempt
-	}
-	if s.executor != nil {
-		s.executor.LogResult("Httpx(CLI): "+safeTarget, res, nil)
 	}
 	if strings.TrimSpace(res.Stdout) == "" {
 		attempt.Outcome = HttpxOutcomeNoOutput
@@ -442,12 +501,17 @@ func (s *HttpxScanner) scanSingleTargetCLI(ctx context.Context, target string, o
 		attempt.Outcome = HttpxOutcomeSuccess
 		return attempt
 	}
+	if err := scanner.Err(); err != nil {
+		attempt.Outcome = HttpxOutcomeParseError
+		taskLog("ERROR", "Httpx(CLI)：目标=%s 输出读取失败", safeTarget)
+		return attempt
+	}
 	if parseFailCount > 0 && validCount == 0 {
 		attempt.Outcome = HttpxOutcomeParseError
+		taskLog("ERROR", "Httpx(CLI)：目标=%s 输出解析失败，行数=%d", safeTarget, lineCount)
 	} else {
 		attempt.Outcome = HttpxOutcomeNoMatch
 	}
-	taskLog("DEBUG", "[Httpx] target=%s lines=%d parseFail=%d outcome=%s", target, lineCount, parseFailCount, attempt.Outcome)
 	return attempt
 }
 

@@ -131,7 +131,7 @@ func TestHttpxMixedSuccessTimeoutIntegration(t *testing.T) {
 	for _, diagnostic := range result.Diagnostic.Targets {
 		outcomes[diagnostic.Outcome]++
 	}
-	if outcomes[string(HttpxOutcomeSuccess)] != 1 || outcomes[string(HttpxOutcomeTimeout)] != 2 || outcomes[string(HttpxOutcomeNoOutput)] != 1 {
+	if outcomes[string(HttpxOutcomeSuccess)] != 1 || outcomes[string(HttpxOutcomeTimeout)] != 2 || outcomes[string(HttpxOutcomeNoOutput)] != 0 {
 		t.Fatalf("per-attempt outcomes = %#v", outcomes)
 	}
 }

@@ -25,6 +25,7 @@
       :searchItems="vulSearchItems"
       :statLabels="statLabels"
       :extraParams="mergedExtraParams"
+      :sync-url="props.syncUrl"
       selection
       :searchPlaceholder="$t('vul.targetPlaceholder')"
       :searchKeys="['authority', 'url', 'pocFile', 'vulName']"
@@ -223,6 +224,7 @@ import { updateVulStatus } from '@/api/asset'
 import { reverifyVul } from '@/api/vul'
 import { getWorkerList } from '@/api/task'
 import ProTable from '@/components/common/ProTable.vue'
+import { fetchAllPages } from '@/utils/pagedRequest'
 
 const { t } = useI18n()
 const emit = defineEmits(['data-changed'])
@@ -233,6 +235,10 @@ const props = defineProps({
   extraParams: {
     type: Object,
     default: () => ({})
+  },
+  syncUrl: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -275,9 +281,9 @@ const filterParams = computed(() => {
 
 // T4.3: 合并父级固定过滤 + 快速筛选 + 默认严重度排序（不破坏敏感信息页既有过滤）
 const mergedExtraParams = computed(() => ({
-  ...props.extraParams,
   ...filterParams.value,
-  sort: 'severity'
+  sort: 'severity',
+  ...props.extraParams
 }))
 
 function onFilterChange() {
@@ -564,6 +570,12 @@ async function handleClear() {
 async function handleExport(command) {
   let data = []
   let filename = ''
+  const fetchExportRows = () => fetchAllPages('/vul/list', (page, pageSize) => ({
+    ...(proTableRef.value?.searchForm || {}),
+    ...mergedExtraParams.value,
+    page,
+    pageSize,
+  }))
 
   if (command === 'selected-target' || command === 'selected-url') {
     if (selectedRows.value.length === 0) {
@@ -575,10 +587,7 @@ async function handleExport(command) {
   } else if (command === 'csv') {
     ElMessage.info(t('asset.gettingAllData'))
     try {
-      const res = await request.post('/vul/list', {
-        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
+      data = await fetchExportRows()
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
 
     if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
@@ -612,10 +621,7 @@ async function handleExport(command) {
   } else {
     ElMessage.info(t('asset.gettingAllData'))
     try {
-      const res = await request.post('/vul/list', {
-        ...proTableRef.value?.searchForm, page: 0, pageSize: 0
-      })
-      if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
+      data = await fetchExportRows()
     } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
     filename = command === 'all-target' ? 'vul_targets_all.txt' : 'vul_urls_all.txt'
   }

@@ -71,12 +71,6 @@ type ServiceContext struct {
 	// Worker 日志读取器（从 MongoDB worker_log 集合读取）
 	WorkerLogReader *WorkerLogReader
 
-	// 弱口令复验立即触发（由 cscan.go 注入；T3.3 runNow 端点调用，解耦 scheduler 依赖）
-	RunWeakPassReverify func(ctx context.Context) error
-
-	// 敏感信息（暴露面）复验立即触发（由 cscan.go 注入；T3.4 runNow 端点复用，解耦 scheduler 依赖）
-	RunExposureReverify func(ctx context.Context) error
-
 	// 缓存的模板元数据（并发安全）
 	templateMu         sync.RWMutex
 	TemplateCategories []string
@@ -416,11 +410,6 @@ func (s *ServiceContext) GetCertModel() *model.CertModel {
 	return model.NewCertModel(s.MongoDB)
 }
 
-// GetReverifyConfigModel 返回复验配置模型（T3.3/T3.4，单集合）
 func (s *ServiceContext) GetExecutorTaskModel() *model.ExecutorTaskModel {
 	return model.NewExecutorTaskModel(s.MongoDB)
-}
-
-func (s *ServiceContext) GetReverifyConfigModel() *model.ReverifyConfigModel {
-	return model.NewReverifyConfigModel(s.MongoDB)
 }

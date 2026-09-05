@@ -7,12 +7,14 @@ import (
 	"cscan/internal/scanner"
 )
 
-// portIdentifyMergeResult keeps the business result and its execution
-// conclusion together. Assets are always based on the discovered set; the
-// diagnostic describes ports whose service identification is not confirmed.
+// portIdentifyMergeResult separates the inventory result from assets that may
+// continue into fingerprint and POC scans. TIMEOUT ports remain in Assets for
+// persistence and task accounting, but are omitted from EligibleAssets.
 type portIdentifyMergeResult struct {
-	Assets []*scanner.Asset
-	Phase  PhaseResult
+	Assets            []*scanner.Asset
+	EligibleAssets    []*scanner.Asset
+	TimedOutHostPorts map[string]struct{}
+	Phase             PhaseResult
 }
 
 // mergeNmapPortIdentifyResults overlays Nmap evidence onto a cloned, stable
@@ -45,6 +47,7 @@ func mergeNmapPortIdentifyResults(discovered []*scanner.Asset, results []scanner
 	seenWarnings := make(map[string]struct{})
 	seenResults := make(map[string]struct{}, len(results))
 	removed := make(map[string]struct{})
+	timedOutHostPorts := make(map[string]struct{})
 	canceled := false
 
 	addWarning := func(code string) {
@@ -94,6 +97,7 @@ func mergeNmapPortIdentifyResults(discovered []*scanner.Asset, results []scanner
 			}
 		case scanner.PortTimeout:
 			coverage.TimedOut++
+			timedOutHostPorts[key] = struct{}{}
 			addUnconfirmed(result, scanner.ReasonTimeout)
 		case scanner.PortExecError:
 			coverage.Failed++
@@ -138,13 +142,23 @@ func mergeNmapPortIdentifyResults(discovered []*scanner.Asset, results []scanner
 	}
 
 	merged := make([]*scanner.Asset, 0, len(orderedKeys))
+	eligible := make([]*scanner.Asset, 0, len(orderedKeys))
 	for _, key := range orderedKeys {
 		if _, excluded := removed[key]; excluded {
 			continue
 		}
-		merged = append(merged, assetByKey[key])
+		asset := assetByKey[key]
+		merged = append(merged, asset)
+		if _, timedOut := timedOutHostPorts[key]; !timedOut {
+			eligible = append(eligible, asset)
+		}
 	}
-	return portIdentifyMergeResult{Assets: merged, Phase: phase}
+	return portIdentifyMergeResult{
+		Assets:            merged,
+		EligibleAssets:    eligible,
+		TimedOutHostPorts: timedOutHostPorts,
+		Phase:             phase,
+	}
 }
 
 func normalizedHostPort(host string, port int) string {
@@ -340,4 +354,23 @@ func portIdentifyResultsForAssets(assets []*scanner.Asset, outcome scanner.PortI
 		})
 	}
 	return results
+}
+
+// excludeAssetsByHostPort returns the downstream scan candidates while keeping
+// the caller's inventory slice untouched.
+func excludeAssetsByHostPort(assets []*scanner.Asset, excluded map[string]struct{}) []*scanner.Asset {
+	if len(excluded) == 0 {
+		return assets
+	}
+	eligible := make([]*scanner.Asset, 0, len(assets))
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+		if _, skip := excluded[normalizedHostPort(asset.Host, asset.Port)]; skip {
+			continue
+		}
+		eligible = append(eligible, asset)
+	}
+	return eligible
 }

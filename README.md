@@ -66,6 +66,9 @@ Download URL: [lasest-cscan-poc.zip](http://www.txf7.cn/upload/lasest-cscan-poc.
 ```bash
 # Windows PowerShell:
 ./dev.ps1
+
+# mac/linux:
+./dev.sh
 ```
 ---
 

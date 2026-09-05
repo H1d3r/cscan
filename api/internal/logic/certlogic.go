@@ -155,6 +155,12 @@ func (l *CertLogic) buildCertFilter(req *types.CertListReq) bson.M {
 			{"sans": bson.M{"$regex": q, "$options": "i"}},
 		}
 	}
+	if req.Host != "" {
+		filter["host"] = strings.TrimSpace(req.Host)
+	}
+	if req.Port > 0 {
+		filter["port"] = req.Port
+	}
 	if req.Issuer != "" {
 		filter["issuer_dn"] = bson.M{"$regex": regexp.QuoteMeta(req.Issuer), "$options": "i"}
 	}

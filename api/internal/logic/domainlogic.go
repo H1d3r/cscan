@@ -120,9 +120,20 @@ func (l *DomainLogic) DomainList(req *types.DomainListReq) (*types.DomainListRes
 	if req.OrgId != "" {
 		filter["org_id"] = req.OrgId
 	}
+	if len(req.Labels) > 0 && req.RootDomain == "" {
+		appendBSONAndCondition(filter, bson.M{"labels": bson.M{"$in": req.Labels}})
+	}
+	if req.TargetId != "" {
+		targetType, targetValue, err := model.DecodeTargetID(req.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		appendBSONAndCondition(filter, bson.M{"host": hostFilterForTarget(targetType, targetValue)})
+	}
 
-	// 分页参数
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+	// 外部明细接口始终使用有界分页。
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
+	resp.Page, resp.PageSize = req.Page, req.PageSize
 
 	// 服务端聚合（$group by domain + $facet 分页），避免全量加载资产到内存
 	aggResults, total, err := assetModel.AggregateDomains(l.ctx, filter, req.Page, req.PageSize)

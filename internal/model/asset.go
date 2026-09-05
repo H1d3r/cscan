@@ -398,19 +398,34 @@ type AssetTargetGroupResult struct {
 	Name string `bson:"name"`
 }
 
-// AggregateTargetGroups 执行目标维度聚合 pipeline，返回 {key, count, location, extras} 行。
-// pipeline 由调用方构造（元素为完整 stage 文档，如 {"$match": {...}}、{"$group": {...}}）。
-func (m *AssetModel) AggregateTargetGroups(ctx context.Context, pipeline []bson.M) ([]AssetTargetGroupResult, error) {
+// AggregateTargetGroups executes a grouped pagination pipeline whose final stage
+// is a facet with exact total and current-page data.
+func (m *AssetModel) AggregateTargetGroups(ctx context.Context, pipeline []bson.M) ([]AssetTargetGroupResult, int, error) {
 	cursor, err := m.coll.Aggregate(ctx, pipeline)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer cursor.Close(ctx)
-	var rows []AssetTargetGroupResult
-	if err := cursor.All(ctx, &rows); err != nil {
-		return nil, err
+	var result []struct {
+		Total []struct {
+			Count int `bson:"count"`
+		} `bson:"total"`
+		Data []AssetTargetGroupResult `bson:"data"`
 	}
-	return rows, nil
+	if err := cursor.All(ctx, &result); err != nil {
+		return nil, 0, err
+	}
+	if len(result) == 0 {
+		return []AssetTargetGroupResult{}, 0, nil
+	}
+	total := 0
+	if len(result[0].Total) > 0 {
+		total = result[0].Total[0].Count
+	}
+	if result[0].Data == nil {
+		result[0].Data = []AssetTargetGroupResult{}
+	}
+	return result[0].Data, total, nil
 }
 
 // FindForTargetInventory 目标资产列表查询：排除 body/header/banner/cert/screenshot/icon_hash_bytes 大字段，update_time 降序。
@@ -650,14 +665,8 @@ func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, filter bson.M,
 		sortOrder = -1
 	}
 
-	// 总数：空过滤走估算（O(1)），带过滤走精确计数
-	var total int64
-	var err error
-	if len(filter) == 0 {
-		total, err = m.coll.EstimatedDocumentCount(ctx)
-	} else {
-		total, err = m.coll.CountDocuments(ctx, filter)
-	}
+	// total 与列表严格复用同一 filter；外部分页契约要求精确总数。
+	total, err := m.coll.CountDocuments(ctx, filter)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -667,7 +676,7 @@ func (m *AssetModel) AggregateInventoryPaged(ctx context.Context, filter bson.M,
 
 	opts := options.Find().
 		SetProjection(AssetInventoryProjection).
-		SetSort(bson.D{{Key: sortKey, Value: sortOrder}}).
+		SetSort(bson.D{{Key: sortKey, Value: sortOrder}, {Key: "_id", Value: sortOrder}}).
 		SetSkip(skip).
 		SetLimit(limit)
 

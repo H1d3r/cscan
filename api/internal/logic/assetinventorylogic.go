@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"cscan/api/internal/svc"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type AssetInventoryLogic struct {
@@ -130,6 +132,22 @@ func (l *AssetInventoryLogic) buildInventoryFilter(req *types.AssetInventoryReq)
 		}})
 	}
 
+	if req.WebOnly {
+		appendAndFilter(bson.M{"$or": bson.A{
+			bson.M{"is_http": true},
+			bson.M{"service": bson.M{"$in": bson.A{"http", "https"}}},
+			bson.M{"title": bson.M{"$exists": true, "$ne": ""}},
+			bson.M{"screenshot": bson.M{"$exists": true, "$ne": ""}},
+		}})
+		appendAndFilter(bson.M{"port": bson.M{"$gt": 0}})
+	}
+	if req.HasIcon {
+		appendAndFilter(bson.M{"icon_hash": bson.M{"$exists": true, "$nin": bson.A{"", nil}}})
+	}
+	if req.HasScreenshot {
+		appendAndFilter(bson.M{"screenshot": bson.M{"$exists": true, "$nin": bson.A{"", nil}}})
+	}
+
 	return filter
 }
 
@@ -186,9 +204,16 @@ func convertAssetToInventoryItem(asset model.Asset) types.AssetInventoryItem {
 
 // AssetInventory 获取资产清单
 func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq) (resp *types.AssetInventoryResp, err error) {
-	req.Page, req.PageSize = model.NormalizePage(req.Page, req.PageSize)
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 
 	filter := l.buildInventoryFilter(req)
+	if req.TargetId != "" {
+		targetType, targetValue, decodeErr := model.DecodeTargetID(req.TargetId)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		appendBSONAndCondition(filter, bson.M{"host": hostFilterForTarget(targetType, targetValue)})
+	}
 	sortField := inventorySortField(req.SortBy)
 	skip := int64((req.Page - 1) * req.PageSize)
 	limit := int64(req.PageSize)
@@ -204,13 +229,93 @@ func (l *AssetInventoryLogic) AssetInventory(req *types.AssetInventoryReq) (resp
 	for _, asset := range assets {
 		resultItems = append(resultItems, convertAssetToInventoryItem(asset))
 	}
+	l.attachInventoryTLSSummaries(resultItems)
 
 	return &types.AssetInventoryResp{
-		Code:  0,
-		Msg:   "success",
-		Total: int(total),
-		List:  resultItems,
+		Code:     0,
+		Msg:      "success",
+		Page:     req.Page,
+		PageSize: req.PageSize,
+		Total:    int(total),
+		List:     resultItems,
 	}, nil
+}
+
+// attachInventoryTLSSummaries 批量为当前页服务关联最新证书，避免逐行查询证书集合。
+func (l *AssetInventoryLogic) attachInventoryTLSSummaries(items []types.AssetInventoryItem) {
+	if len(items) == 0 {
+		return
+	}
+
+	endpointFilters := make(bson.A, 0, len(items))
+	seenEndpoints := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		host := strings.TrimSpace(item.Host)
+		if host == "" || item.Port <= 0 {
+			continue
+		}
+		key := inventoryTLSKey(host, item.Port)
+		if _, exists := seenEndpoints[key]; exists {
+			continue
+		}
+		seenEndpoints[key] = struct{}{}
+		endpointFilters = append(endpointFilters, bson.M{"host": host, "port": item.Port})
+	}
+	if len(endpointFilters) == 0 {
+		return
+	}
+
+	certModel := l.svcCtx.GetCertModel()
+	if certModel == nil {
+		return
+	}
+	certs, err := certModel.Find(l.ctx, bson.M{"$or": endpointFilters}, options.Find().SetSort(bson.D{
+		{Key: "update_time", Value: -1},
+		{Key: "_id", Value: -1},
+	}))
+	if err != nil {
+		l.Logger.Errorf("[AssetInventory] 查询当前页 TLS 证书失败: %v", err)
+		return
+	}
+
+	now := time.Now()
+	summaries := make(map[string]*types.AssetInventoryTLSSummary, len(certs))
+	for _, cert := range certs {
+		key := inventoryTLSKey(cert.Host, cert.Port)
+		if _, exists := summaries[key]; exists {
+			continue
+		}
+		notAfter := int64(0)
+		if !cert.NotAfter.IsZero() {
+			notAfter = cert.NotAfter.UnixMilli()
+		}
+		summaries[key] = &types.AssetInventoryTLSSummary{
+			SubjectCN:  cert.Subject.CommonName,
+			IssuerOrg:  cert.Issuer.Organization,
+			NotAfter:   notAfter,
+			Status:     inventoryTLSStatus(cert.NotAfter, now),
+			SelfSigned: cert.IsSelfSigned,
+		}
+	}
+
+	for index := range items {
+		items[index].TLS = summaries[inventoryTLSKey(items[index].Host, items[index].Port)]
+	}
+}
+
+func inventoryTLSKey(host string, port int) string {
+	return strings.ToLower(strings.TrimSpace(host)) + "\x00" + fmt.Sprintf("%d", port)
+}
+
+func inventoryTLSStatus(notAfter, now time.Time) string {
+	switch {
+	case !notAfter.IsZero() && notAfter.Before(now):
+		return "expired"
+	case !notAfter.IsZero() && notAfter.Before(now.Add(30*24*time.Hour)):
+		return "expiring"
+	default:
+		return "valid"
+	}
 }
 
 // inventorySortField 将前端排序参数转为 MongoDB 排序字段

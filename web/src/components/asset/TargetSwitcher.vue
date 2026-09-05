@@ -44,7 +44,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { Sort, Check, MapLocation, Monitor } from '@element-plus/icons-vue'
 import { getAssetTargetList } from '@/api/asset'
 
@@ -56,8 +56,10 @@ const emit = defineEmits(['select'])
 
 const options = ref([])
 const loading = ref(false)
+let searchRequestSeq = 0
 
 async function searchTargets(query) {
+  const seq = ++searchRequestSeq
   loading.value = true
   try {
     const res = await getAssetTargetList({
@@ -65,14 +67,16 @@ async function searchTargets(query) {
       pageSize: 50,
       query: query || undefined,
     })
+    if (seq !== searchRequestSeq) return
     // 响应拦截器返回 {code,msg,total,list}（顶层无 data 包裹）
     const payload = res?.data ?? res
     options.value = payload?.list || []
   } catch (err) {
+    if (seq !== searchRequestSeq) return
     console.error('[TargetSwitcher] search error:', err)
     options.value = []
   } finally {
-    loading.value = false
+    if (seq === searchRequestSeq) loading.value = false
   }
 }
 
@@ -87,6 +91,10 @@ function handleChange(id) {
     emit('select', id)
   }
 }
+
+onUnmounted(() => {
+  searchRequestSeq += 1
+})
 </script>
 
 <style scoped lang="scss">

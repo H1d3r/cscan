@@ -14,8 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-const assetTargetGroupsLimit = 500
-
 type AssetTargetGroupsLogic struct {
 	logx.Logger
 	ctx    context.Context
@@ -30,15 +28,16 @@ func NewAssetTargetGroupsLogic(ctx context.Context, svcCtx *svc.ServiceContext) 
 	}
 }
 
-// AssetTargetGroups 目标资产按维度聚合（host/port/ip/app/status），
-// 支撑详情页 Inventory 的 Hosts/Ports/IP Addresses/Technologies/Status Code 子 Tab。
+// AssetTargetGroups 目标或全局资产按维度聚合（host/port/ip/app/status），
+// 支撑统一 Inventory 的 Hosts/Ports/IP Addresses/Technologies/Status Code 子 Tab。
 func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsReq) (*types.AssetTargetGroupsResp, error) {
-	if req.TargetId == "" {
-		return nil, xerr.NewParamError("targetId is empty")
-	}
-	tType, tValue, err := model.DecodeTargetID(req.TargetId)
-	if err != nil {
-		return nil, err
+	match := bson.M{}
+	if strings.TrimSpace(req.TargetId) != "" {
+		tType, tValue, err := model.DecodeTargetID(req.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		match["host"] = hostFilterForTarget(tType, tValue)
 	}
 
 	assetModel := l.svcCtx.GetAssetModel()
@@ -46,17 +45,17 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 		return nil, xerr.NewServerError("asset model not available")
 	}
 
-	match := bson.M{"host": hostFilterForTarget(tType, tValue)}
 	if err := applyAssetTargetFilters(match, req.Query, req.Ports, req.StatusCodes, req.Technologies, req.Labels); err != nil {
 		return nil, err
 	}
+	req.Page, req.PageSize = normalizeListPage(req.Page, req.PageSize)
 
-	pipeline, err := buildTargetGroupPipeline(req.GroupBy, match)
+	pipeline, err := buildTargetGroupPipeline(req.GroupBy, match, req.Page, req.PageSize)
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := assetModel.AggregateTargetGroups(l.ctx, pipeline)
+	rows, total, err := assetModel.AggregateTargetGroups(l.ctx, pipeline)
 	if err != nil {
 		l.Logger.Errorf("[AssetTargetGroups] aggregate groupBy=%s fail: %v", req.GroupBy, err)
 		return nil, xerr.NewServerError("")
@@ -75,7 +74,9 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 		item := types.AssetTargetGroupItem{Key: key, Count: row.Count, Location: row.Location, Extras: row.Extras, Labels: row.Labels}
 		list = append(list, item)
 	}
-	return &types.AssetTargetGroupsResp{Code: 0, Msg: "success", List: list}, nil
+	return &types.AssetTargetGroupsResp{
+		Code: 0, Msg: "success", Page: req.Page, PageSize: req.PageSize, Total: total, List: list,
+	}, nil
 }
 
 // buildTargetGroupPipeline 构造聚合 pipeline：
@@ -87,19 +88,19 @@ func (l *AssetTargetGroupsLogic) AssetTargetGroups(req *types.AssetTargetGroupsR
 //
 // 所有分组统一收集组内资产标签并集（labels），供子 Tab 标签列展示；
 // 用 $push + $setUnion 归并，避免 $unwind labels 拉高 count。
-func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
+func buildTargetGroupPipeline(groupBy string, match bson.M, page, pageSize int) ([]bson.M, error) {
 	var group bson.M
 	pipeline := []bson.M{{"$match": match}}
 
 	switch strings.TrimSpace(groupBy) {
 	case "host":
-		// 与服务列表同口径：端口 0 是无端口占位记录（纯域名），不计入主机服务数，
-		// 否则主机 Tab 显示的服务数比服务 Tab 实际行数多
+		// 与服务列表同口径：端口 0 是无端口占位记录（纯域名），不计入主机服务数。
 		if _, ok := match["port"]; !ok {
 			match["port"] = bson.M{"$gt": 0}
 		}
+		pipeline = append(pipeline, bson.M{"$match": bson.M{"host": bson.M{"$nin": bson.A{nil, ""}}}})
 		group = bson.M{
-			"_id": "$host",
+			"_id":   "$host",
 			"count": bson.M{"$sum": 1},
 		}
 	case "port":
@@ -108,7 +109,7 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 			match["port"] = bson.M{"$gt": 0}
 		}
 		group = bson.M{
-			"_id": "$port",
+			"_id":   "$port",
 			"count": bson.M{"$sum": 1},
 			"extras": bson.M{
 				"$addToSet": bson.M{"$cond": bson.A{
@@ -118,7 +119,10 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 			},
 		}
 	case "ip":
-		pipeline = append(pipeline, bson.M{"$unwind": "$ip.ipv4"})
+		pipeline = append(pipeline,
+			bson.M{"$unwind": "$ip.ipv4"},
+			bson.M{"$match": bson.M{"ip.ipv4.ip": bson.M{"$nin": bson.A{nil, ""}}}},
+		)
 		group = bson.M{
 			"_id":   "$ip.ipv4.ip",
 			"count": bson.M{"$sum": 1},
@@ -136,6 +140,7 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 		// 展示名取组内首个原始条目，前端 getTechName 会再做同样的归一化展示。
 		pipeline = append(pipeline,
 			bson.M{"$unwind": "$app"},
+			bson.M{"$match": bson.M{"app": bson.M{"$nin": bson.A{nil, ""}}}},
 			bson.M{"$addFields": bson.M{"appKey": bson.M{"$toLower": bson.M{"$trim": bson.M{"input": bson.M{
 				"$arrayElemAt": bson.A{
 					bson.M{"$split": bson.A{
@@ -162,7 +167,7 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 			match["status"] = bson.M{"$nin": bson.A{nil, "", "0"}}
 		}
 		group = bson.M{
-			"_id": "$status",
+			"_id":   "$status",
 			"count": bson.M{"$sum": 1},
 		}
 	default:
@@ -179,8 +184,14 @@ func buildTargetGroupPipeline(groupBy string, match bson.M) ([]bson.M, error) {
 			"initialValue": bson.A{},
 			"in":           bson.M{"$setUnion": bson.A{"$$value", "$$this"}},
 		}}}},
-		bson.M{"$sort": bson.M{"count": -1, "_id": 1}},
-		bson.M{"$limit": assetTargetGroupsLimit},
+		bson.M{"$sort": bson.D{{Key: "count", Value: -1}, {Key: "_id", Value: 1}}},
+		bson.M{"$facet": bson.M{
+			"total": bson.A{bson.M{"$count": "count"}},
+			"data": bson.A{
+				bson.M{"$skip": int64((page - 1) * pageSize)},
+				bson.M{"$limit": int64(pageSize)},
+			},
+		}},
 	)
 	return pipeline, nil
 }

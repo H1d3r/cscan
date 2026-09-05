@@ -270,15 +270,10 @@ func (s *AssetWriteService) SaveAssets(ctx context.Context, mainTaskID, orgID st
 		}
 	}
 
-	logx.Infof("[AssetWriteService] SaveAssets: total=%d, new=%d, update=%d, attemptedWrites=%d, failedWrites=%d",
-		totalAsset, newAsset, updateAsset, attemptedWrites, failedWrites)
-
 	// 批量写入变化快照
 	if len(diffs) > 0 {
 		if err := s.diffModel.BatchInsert(ctx, diffs); err != nil {
 			logx.Errorf("[AssetWriteService] [ScanDiff] batch insert failed (task=%s): %v", mainTaskID, err)
-		} else {
-			logx.Infof("[AssetWriteService] [ScanDiff] wrote %d diff records for task=%s", len(diffs), mainTaskID)
 		}
 	}
 

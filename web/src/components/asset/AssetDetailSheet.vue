@@ -5,127 +5,133 @@
     size="640px"
     class="asset-detail-sheet"
   >
-    <div v-loading="loading" class="detail-body">
-      <template v-if="asset">
-        <!-- General -->
-        <div class="section">
-          <div class="section-header general">
-            <el-icon><MapLocation /></el-icon>
-            {{ $t('asset.targetView.secGeneral') }}
-          </div>
-          <div class="kv"><label>Domain</label><span class="mono">{{ asset.host }}</span></div>
-          <div class="kv">
-            <label>HTTP</label>
-            <span v-if="getStatusCodeText(asset.status)" class="cert-status" :class="`cert-${statusClass}`">{{ getStatusCodeText(asset.status) }}</span>
-            <span v-else class="muted">-</span>
-          </div>
-          <div class="kv"><label>{{ $t('asset.targetView.pageTitleCol') }}</label><span>{{ asset.title || '-' }}</span></div>
-          <div class="kv">
-            <label>IP</label>
-            <div v-if="asset.ips && asset.ips.length" class="ip-badges">
-              <span v-for="ip in asset.ips" :key="ip" class="ip-badge">{{ ip }}</span>
+    <el-tabs v-model="activeTab" class="detail-tabs" @tab-change="handleTabChange">
+      <el-tab-pane :label="$t('asset.assetDetail.details')" name="detail" lazy>
+        <div v-loading="loading" class="detail-body">
+          <template v-if="asset">
+            <div class="section">
+              <div class="section-header general">
+                <el-icon><MapLocation /></el-icon>
+                {{ $t('asset.targetView.secGeneral') }}
+              </div>
+              <div class="kv"><label>Domain</label><span class="mono">{{ asset.host }}</span></div>
+              <div class="kv">
+                <label>HTTP</label>
+                <span v-if="getStatusCodeText(asset.status)" class="cert-status" :class="`cert-${statusClass}`">{{ getStatusCodeText(asset.status) }}</span>
+                <span v-else class="muted">-</span>
+              </div>
+              <div class="kv"><label>{{ $t('asset.targetView.pageTitleCol') }}</label><span>{{ asset.title || '-' }}</span></div>
+              <div class="kv">
+                <label>IP</label>
+                <div v-if="asset.ips && asset.ips.length" class="ip-badges">
+                  <span v-for="ip in asset.ips" :key="ip" class="ip-badge">{{ ip }}</span>
+                </div>
+                <span v-else class="muted">{{ $t('asset.targetView.noIps') }}</span>
+              </div>
+              <div v-if="asset.screenshot" class="screenshot-wrap">
+                <ScreenshotHoverPreview
+                  :src="getScreenshotDataUrl(asset.screenshot)"
+                  :alt="asset.title || asset.host"
+                >
+                  <el-image
+                    :src="getScreenshotDataUrl(asset.screenshot)"
+                    :preview-src-list="[getScreenshotDataUrl(asset.screenshot)]"
+                    fit="contain"
+                    preview-teleported
+                  />
+                </ScreenshotHoverPreview>
+              </div>
             </div>
-            <span v-else class="muted">{{ $t('asset.targetView.noIps') }}</span>
-          </div>
-          <div v-if="asset.screenshot" class="screenshot-wrap">
-            <el-image :src="getScreenshotDataUrl(asset.screenshot)" :preview-src-list="[getScreenshotDataUrl(asset.screenshot)]" fit="contain" preview-teleported />
-          </div>
-        </div>
 
-        <!-- Network -->
-        <div class="section">
-          <div class="section-header network">
-            <el-icon><Connection /></el-icon>
-            {{ $t('asset.targetView.secNetwork') }}
-          </div>
-          <div class="kv"><label>Host</label><span class="mono">{{ asset.host }}</span></div>
-          <div class="kv"><label>Port</label><span class="mono">{{ asset.port }}</span></div>
-          <div class="kv"><label>{{ $t('asset.targetView.server') }}</label><span>{{ asset.cname || asset.service || '-' }}</span></div>
-        </div>
-
-        <!-- Certification -->
-        <div v-if="cert" class="section">
-          <div class="section-header cert">
-            <el-icon><Lock /></el-icon>
-            {{ $t('asset.targetView.secCertification') }}
-          </div>
-          <div class="kv">
-            <label>SSL</label>
-            <span class="cert-status" :class="`cert-${cert.status}`">
-              <el-icon><Lock /></el-icon>
-              {{ certStatusLabel(cert.status) }}
-            </span>
-          </div>
-          <div class="kv"><label>{{ $t('asset.targetView.colIssuer') }}</label><span>{{ cert.issuerOrg || cert.issuerDn || '-' }}</span></div>
-          <div class="kv"><label>CN</label><span class="mono">{{ cert.subjectCn || '-' }}</span></div>
-          <div class="kv">
-            <label>{{ $t('asset.targetView.colSans') }}</label>
-            <div class="san-list">
-              <el-tag v-for="san in cert.sans.slice(0, 8)" :key="san" size="small">{{ san }}</el-tag>
-              <span v-if="cert.sans.length > 8" class="muted">+{{ cert.sans.length - 8 }}</span>
-              <span v-if="!cert.sans.length" class="muted">-</span>
+            <div class="section">
+              <div class="section-header network">
+                <el-icon><Connection /></el-icon>
+                {{ $t('asset.targetView.secNetwork') }}
+              </div>
+              <div class="kv"><label>Host</label><span class="mono">{{ asset.host }}</span></div>
+              <div class="kv"><label>Port</label><span class="mono">{{ asset.port }}</span></div>
+              <div class="kv"><label>{{ $t('asset.targetView.server') }}</label><span>{{ asset.cname || asset.service || '-' }}</span></div>
             </div>
-          </div>
-          <div class="kv"><label>{{ $t('asset.targetView.colValidFrom') }}</label><span>{{ formatDate(cert.notBefore) }}</span></div>
-          <div class="kv"><label>{{ $t('asset.targetView.colExpiresOn') }}</label><span>{{ formatDate(cert.notAfter) }}</span></div>
-        </div>
 
-        <!-- Technologies -->
-        <div class="section">
-          <div class="section-header tech">
-            <el-icon><Files /></el-icon>
-            {{ $t('asset.targetView.secTechnologies') }}
-          </div>
-          <div v-if="asset.technologies && asset.technologies.length" class="tech-list">
-            <TechTag v-for="tech in asset.technologies" :key="tech" :tech="tech" />
-          </div>
-          <span v-else class="muted">-</span>
-        </div>
+            <div v-if="cert" class="section">
+              <div class="section-header cert">
+                <el-icon><Lock /></el-icon>
+                {{ $t('asset.targetView.secCertification') }}
+              </div>
+              <div class="kv">
+                <label>SSL</label>
+                <span class="cert-status" :class="`cert-${cert.status}`">
+                  <el-icon><Lock /></el-icon>
+                  {{ certStatusLabel(cert.status) }}
+                </span>
+              </div>
+              <div class="kv"><label>{{ $t('asset.targetView.colIssuer') }}</label><span>{{ cert.issuerOrg || cert.issuerDn || '-' }}</span></div>
+              <div class="kv"><label>CN</label><span class="mono">{{ cert.subjectCn || '-' }}</span></div>
+              <div class="kv">
+                <label>{{ $t('asset.targetView.colSans') }}</label>
+                <div class="san-list">
+                  <el-tag v-for="san in cert.sans.slice(0, 8)" :key="san" size="small">{{ san }}</el-tag>
+                  <span v-if="cert.sans.length > 8" class="muted">+{{ cert.sans.length - 8 }}</span>
+                  <span v-if="!cert.sans.length" class="muted">-</span>
+                </div>
+              </div>
+              <div class="kv"><label>{{ $t('asset.targetView.colValidFrom') }}</label><span>{{ formatDate(cert.notBefore) }}</span></div>
+              <div class="kv"><label>{{ $t('asset.targetView.colExpiresOn') }}</label><span>{{ formatDate(cert.notAfter) }}</span></div>
+            </div>
 
-        <!-- HTTP Response -->
-        <div v-if="asset.httpHeader" class="section">
-          <div class="section-header http">
-            <el-icon><Document /></el-icon>
-            {{ $t('asset.targetView.secHttpResponse') }}
-          </div>
-          <pre class="code-block">{{ asset.httpHeader }}</pre>
-        </div>
+            <div class="section">
+              <div class="section-header tech">
+                <el-icon><Files /></el-icon>
+                {{ $t('asset.targetView.secTechnologies') }}
+              </div>
+              <div v-if="asset.technologies && asset.technologies.length" class="tech-list">
+                <TechTag v-for="tech in asset.technologies" :key="tech" :tech="tech" />
+              </div>
+              <span v-else class="muted">-</span>
+            </div>
 
-        <!-- Body -->
-        <div v-if="asset.httpBody" class="section">
-          <div class="section-header http">
-            <el-icon><Document /></el-icon>
-            {{ $t('asset.targetView.secBody') }}
-          </div>
-          <pre class="code-block">{{ asset.httpBody }}</pre>
-        </div>
+            <div v-if="asset.httpHeader" class="section">
+              <div class="section-header http">
+                <el-icon><Document /></el-icon>
+                {{ $t('asset.targetView.secHttpResponse') }}
+              </div>
+              <pre class="code-block">{{ asset.httpHeader }}</pre>
+            </div>
 
-        <!-- 变化时间线（自旧抽屉迁入：首次发现/属性变化/漏洞事件） -->
-        <div class="section">
-          <div class="section-header timeline">
-            <el-icon><Clock /></el-icon>
-            {{ $t('asset.timeline.tab') }}
-          </div>
+            <div v-if="asset.httpBody" class="section">
+              <div class="section-header http">
+                <el-icon><Document /></el-icon>
+                {{ $t('asset.targetView.secBody') }}
+              </div>
+              <pre class="code-block">{{ asset.httpBody }}</pre>
+            </div>
+          </template>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane :label="$t('asset.timeline.tab')" name="timeline" lazy>
+        <div class="timeline-body">
           <AssetTimeline
+            v-if="activeTab === 'timeline' && asset"
             :asset-id="asset.id"
             :host="asset.host"
             :port="asset.port"
           />
         </div>
-      </template>
-    </div>
+      </el-tab-pane>
+    </el-tabs>
   </el-drawer>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MapLocation, Connection, Lock, Files, Document, Clock } from '@element-plus/icons-vue'
+import { MapLocation, Connection, Lock, Files, Document } from '@element-plus/icons-vue'
 import AssetTimeline from './AssetTimeline.vue'
 import TechTag from '@/components/common/TechTag.vue'
+import ScreenshotHoverPreview from '@/components/common/ScreenshotHoverPreview.vue'
 import { getAssetDetail, getAssetTargetCerts } from '@/api/asset'
 import { getScreenshotDataUrl } from '@/utils/screenshot'
-// 状态码归一化展示（"0"/"502 Bad Gateway" → 数字码或隐藏）
 import { getStatusCodeText } from './targetViewUtils'
 
 const props = defineProps({
@@ -142,6 +148,7 @@ const visible = computed({
   set: v => emit('update:modelValue', v),
 })
 
+const activeTab = ref('detail')
 const asset = ref(null)
 const loading = ref(false)
 const certs = ref([])
@@ -172,10 +179,11 @@ function formatDate(ms) {
   return new Date(ms).toLocaleString()
 }
 
-watch(() => props.modelValue, async (open) => {
-  if (!open || !props.assetId) return
+async function loadAssetDetail() {
+  if (!props.assetId || loading.value) return
   loading.value = true
   asset.value = null
+  certs.value = []
   try {
     const [detailRes, certRes] = await Promise.all([
       getAssetDetail({ id: props.assetId }),
@@ -190,14 +198,34 @@ watch(() => props.modelValue, async (open) => {
   } finally {
     loading.value = false
   }
+}
+
+function handleTabChange(tab) {
+  if (tab === 'detail' && visible.value && !asset.value) loadAssetDetail()
+}
+
+watch(() => props.modelValue, open => {
+  if (!open || !props.assetId) return
+  activeTab.value = 'detail'
+  loadAssetDetail()
 })
 </script>
 
 <style scoped lang="scss">
+.detail-tabs {
+  :deep(.el-tabs__header) {
+    margin-bottom: 18px;
+  }
+}
+
 .detail-body {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  min-height: 120px;
+}
+
+.timeline-body {
   min-height: 120px;
 }
 
@@ -215,7 +243,6 @@ watch(() => props.modelValue, async (open) => {
     &.cert { color: #22c55e; }
     &.tech { color: #a855f7; }
     &.http { color: #64748b; }
-    &.timeline { color: #0ea5e9; }
   }
 }
 
@@ -272,6 +299,13 @@ watch(() => props.modelValue, async (open) => {
     border-radius: 6px;
     border: 1px solid var(--el-border-color-lighter);
   }
+}
+
+.detail-screenshot-hover-preview {
+  width: min(50vw, 960px);
+  height: min(50vh, 620px);
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
 }
 
 .cert-status {

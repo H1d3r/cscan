@@ -15,11 +15,11 @@ type BruteResult struct {
 	Message   string `json:"message,omitempty"`
 	ExtraInfo string `json:"extraInfo,omitempty"` // 附加信息（如 Oracle 服务名）
 
-	// 修复 H-9：结构化错误分类，避免协议错误/超时被误判为"凭据无效→已修复"
+	// 修复 H-9：结构化错误分类，区分认证失败与网络/协议错误
 	// - 空值：凭据验证完成，Success 字段可信
-	// - "network"：网络错误（超时/拒绝连接/DNS 失败）→ 不可达，应标记 pending
-	// - "protocol"：协议错误（握手失败/解析错误/服务非预期类型）→ 无法判定，应标记 pending
-	// - "auth_reject"：明确认证拒绝（凭据无效）→ 可判定为已修复（仅复验已知凭据场景）
+	// - "network"：网络错误（超时/拒绝连接/DNS 失败）
+	// - "protocol"：协议错误（握手失败/解析错误/服务非预期类型）
+	// - "auth_reject"：明确认证拒绝（凭据无效）
 	ErrorType string `json:"errorType,omitempty"`
 }
 

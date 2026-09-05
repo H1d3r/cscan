@@ -2351,6 +2351,9 @@ async function loadNucleiTemplatesForSelect() {
       await nextTick()
       restoreNucleiTableSelection()
     }
+  } catch (error) {
+    // Select 的 change 事件不会 await 此请求；在此消费拒绝，避免取消或网络错误成为未处理 Promise。
+    console.error('Load Nuclei templates failed:', error)
   } finally {
     nucleiTemplateLoading.value = false
     // 延迟重置，避免 toggleRowSelection 触发的 selection-change 覆盖跨页选择
@@ -2386,6 +2389,9 @@ async function loadCustomPocsForSelect() {
       await nextTick()
       restoreCustomPocTableSelection()
     }
+  } catch (error) {
+    // Select 的 change 事件不会 await 此请求；在此消费拒绝，避免取消或网络错误成为未处理 Promise。
+    console.error('Load custom POC failed:', error)
   } finally {
     customPocLoading.value = false
     setTimeout(() => { isLoadingData.value = false }, 100)

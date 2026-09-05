@@ -1,42 +1,34 @@
 <template>
   <div class="asset-space-search">
-    <!-- List View -->
-    <template v-if="!selectedTargetId">
+    <GlobalAttackSurfaceView
+      v-if="isGlobalView"
+      :auto-open-settings="autoOpenSettings"
+      @settings-opened="autoOpenSettings = false"
+    />
+
+    <template v-else>
       <div class="page-header">
         <div class="header-content">
-          <h1>{{ $t('navigation.assetSpaceSearch') }}</h1>
+          <h1>{{ $t('navigation.assetManagement') }}</h1>
           <p class="description">{{ $t('asset.spaceSearchDescription') }}</p>
         </div>
         <div class="header-actions">
           <div class="header-search" />
-          <el-radio-group v-model="listMode" size="default">
+          <el-radio-group :model-value="'target'" size="default" @change="handleListModeChange">
             <el-radio-button value="target">{{ $t('asset.globalView.tabTargetView') }}</el-radio-button>
             <el-radio-button value="global">{{ $t('asset.globalView.tabGlobalView') }}</el-radio-button>
           </el-radio-group>
         </div>
       </div>
       <AssetInventoryCardView
-        v-if="listMode === 'target'"
         ref="cardViewRef"
         @create-target="openAddDialog"
         @start-scan="handleStartScan"
         @view-target="handleViewTarget"
         @edit-target="handleEditTarget"
       />
-      <GlobalAssetView v-else />
     </template>
 
-    <!-- Detail View -->
-    <template v-else>
-      <TargetDetailView
-        :target-id="selectedTargetId"
-        :auto-open-settings="detailAutoSettings"
-        @back="handleBack"
-        @view-asset="handleViewAsset"
-      />
-    </template>
-
-    <!-- 手动添加资产 dialog（自旧资产概览页迁入，功能不遗失） -->
     <el-dialog
       v-model="addDialogVisible"
       :title="$t('asset.manualAddAssetTitle')"
@@ -51,11 +43,7 @@
         :placeholder="$t('asset.addBatchPlaceholder')"
       />
       <div v-if="addErrors.length" class="add-errors">
-        <div
-          v-for="(e, i) in addErrors"
-          :key="i"
-          class="add-error-line"
-        >
+        <div v-for="(e, i) in addErrors" :key="i" class="add-error-line">
           {{ $t('asset.addBatchLine', { line: e.line, target: e.target, msg: e.message }) }}
         </div>
       </div>
@@ -63,11 +51,7 @@
         <el-button @click="addDialogVisible = false">
           {{ $t('asset.addAssetCancel') }}
         </el-button>
-        <el-button
-          type="primary"
-          :loading="addSubmitting"
-          @click="handleAddSubmit"
-        >
+        <el-button type="primary" :loading="addSubmitting" @click="handleAddSubmit">
           {{ $t('asset.addAssetConfirm') }}
         </el-button>
       </template>
@@ -76,48 +60,50 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, reactive } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import AssetInventoryCardView from '@/components/asset/AssetInventoryCardView.vue'
-import TargetDetailView from '@/components/asset/TargetDetailView.vue'
-import GlobalAssetView from '@/components/asset/GlobalAssetView.vue'
+import GlobalAttackSurfaceView from '@/components/asset/GlobalAttackSurfaceView.vue'
 import { importAssets } from '@/api/asset'
 import { validateTargets } from '@/utils/target'
 
+const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
-const selectedTargetId = ref('')
-const detailAutoSettings = ref(false)
 const cardViewRef = ref(null)
-const listMode = ref('target')
+const autoOpenSettings = ref(false)
+const isGlobalView = computed(() => route.query.view === 'global')
+
+function workbenchQuery(targetId = '') {
+  const query = { view: 'global', tab: 'service' }
+  if (targetId) query.targetId = targetId
+  return query
+}
+
+function handleListModeChange(mode) {
+  if (mode === 'global') {
+    autoOpenSettings.value = false
+    router.replace({ path: '/asset-management/space-search', query: workbenchQuery() })
+  }
+}
+
+function openTarget(targetId, openSettings = false) {
+  autoOpenSettings.value = openSettings
+  router.push({
+    path: '/asset-management/space-search',
+    query: workbenchQuery(targetId),
+  })
+}
 
 function handleViewTarget(targetId) {
-  detailAutoSettings.value = false
-  selectedTargetId.value = targetId
+  openTarget(targetId, false)
 }
 
-// 目标行画笔：进入详情并直接打开目标设置抽屉（标签/备注/颜色/重发现）
 function handleEditTarget(targetId) {
-  detailAutoSettings.value = true
-  selectedTargetId.value = targetId
-}
-
-function handleBack(newTargetId) {
-  if (newTargetId && newTargetId !== selectedTargetId.value) {
-    detailAutoSettings.value = false
-    selectedTargetId.value = newTargetId
-  } else {
-    selectedTargetId.value = ''
-  }
-  detailAutoSettings.value = false
-}
-
-function handleViewAsset(asset) {
-  // 资产详情抽屉已在 TargetDetailView 内部打开，此处仅保留事件出口
-  console.log('View asset:', asset)
+  openTarget(targetId, true)
 }
 
 function handleStartScan(targetIds) {
@@ -128,7 +114,6 @@ function handleStartScan(targetIds) {
   }
 }
 
-// 手动添加资产（批量粘贴，自旧资产概览页迁入）
 const addDialogVisible = ref(false)
 const addSubmitting = ref(false)
 const addForm = reactive({ targets: '' })
@@ -162,13 +147,12 @@ async function handleAddSubmit() {
       addDialogVisible.value = false
       addForm.targets = ''
       addErrors.value = []
-      // 已移除列表自动轮询，手动添加成功后主动刷新目标列表
       cardViewRef.value?.refresh()
     } else {
       ElMessage.error(res.msg || t('asset.addAssetFailed'))
     }
-  } catch (e) {
-    // axios 拦截器已统一提示
+  } catch {
+    // The request interceptor provides the global notification.
   } finally {
     addSubmitting.value = false
   }

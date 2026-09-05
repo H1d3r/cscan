@@ -228,19 +228,23 @@ function goVulnTab() {
   activeTab.value = 'vulnerabilities'
 }
 
-// 目录/JS/敏感信息保留独立页面，跳转并携带 rootDomain/ip 预过滤参数
+// 目录/JS/敏感信息已并入全局视图，跳转到统一攻击面页面的对应 Tab
 function exposureQuery() {
-  return isDomainTarget.value
-    ? { rootDomain: meta.value?.targetValue }
-    : { ip: meta.value?.targetValue }
+  return { scope: meta.value?.targetValue || '' }
 }
 
 function goExposurePage(type) {
-  router.push({ path: `/asset-management/exposure/${type}`, query: exposureQuery() })
+  router.push({
+    path: '/asset-management/space-search',
+    query: { view: 'global', tab: type, ...exposureQuery() }
+  })
 }
 
 function goSensitivePage() {
-  router.push({ path: '/asset-management/risk/sensitive-info', query: exposureQuery() })
+  router.push({
+    path: '/asset-management/space-search',
+    query: { view: 'global', tab: 'sensitive', ...exposureQuery() }
+  })
 }
 
 async function fetchMeta() {

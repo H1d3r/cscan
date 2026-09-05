@@ -321,8 +321,6 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTa
 	if phaseSummary.Weight != incrAmount {
 		phaseSummary.Weight = incrAmount
 	}
-	logx.Debugf("[SchedulerClient] phase report acknowledged, mainTaskId=%s subTaskId=%s phase=%s",
-		mainTaskID, subTaskID, canonicalPhase)
 
 	allDone := task.SubTaskDone >= task.SubTaskCount
 
@@ -357,10 +355,8 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTa
 			finalized = updated || terminal
 			if !updated && !terminal {
 				finalizationPending = true
-				logx.Infof("[SchedulerClient] semantic finalization is still pending, mainTaskId=%s", mainTaskID)
 			}
 			if updated {
-				logx.Infof("[SchedulerClient] task finalized, mainTaskId=%s outcome=%s", mainTaskID, summary.Outcome)
 				// The atomic terminal transition is the exactly-once notification gate.
 				if c.notifySvc != nil {
 					if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, summary.Outcome); nerr != nil {

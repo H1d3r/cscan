@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
-	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 
@@ -84,6 +84,60 @@ func (e *CustomFingerprintEngine) GetFingerprintCount() int {
 	return len(e.fingerprints)
 }
 
+func (e *CustomFingerprintEngine) unknownConditionSummary(includePassive, includeActive bool) (int, []string) {
+	if e == nil {
+		return 0, nil
+	}
+	counts := make(map[string]int)
+	fingerprints := make([]*model.Fingerprint, 0, len(e.fingerprints)+len(e.activeFingerprints))
+	if includePassive {
+		fingerprints = append(fingerprints, e.fingerprints...)
+	}
+	if includeActive {
+		fingerprints = append(fingerprints, e.activeFingerprints...)
+	}
+	for _, fp := range fingerprints {
+		if fp == nil || !fp.Enabled || strings.TrimSpace(fp.Rule) == "" {
+			continue
+		}
+		for _, branch := range splitByOperator(fp.Rule, "||") {
+			for _, condition := range splitByOperator(branch, "&&") {
+				conditionType := parsedConditionType(condition)
+				if conditionType != "" && !isSupportedConditionType(conditionType) {
+					counts[conditionType]++
+				}
+			}
+		}
+	}
+	total := 0
+	types := make([]string, 0, len(counts))
+	for conditionType, count := range counts {
+		total += count
+		types = append(types, conditionType)
+	}
+	sort.Strings(types)
+	return total, types
+}
+
+func parsedConditionType(condition string) string {
+	condition = strings.Trim(strings.TrimSpace(condition), "()")
+	for _, operator := range []string{"!=\"", "=\"", "="} {
+		if index := strings.Index(condition, operator); index > 0 {
+			return strings.ToLower(strings.TrimSpace(condition[:index]))
+		}
+	}
+	return ""
+}
+
+func isSupportedConditionType(conditionType string) bool {
+	switch conditionType {
+	case "body", "title", "header", "server", "url", "body_regex", "body_re", "title_regex", "title_re", "icon_hash", "favicon_hash", "cookie", "status":
+		return true
+	default:
+		return false
+	}
+}
+
 // GetActiveFingerprintCount 返回已加载的主动指纹数量
 func (e *CustomFingerprintEngine) GetActiveFingerprintCount() int {
 	if e == nil {
@@ -137,52 +191,17 @@ func (e *CustomFingerprintEngine) MatchActiveFingerprint(fp *model.Fingerprint, 
 		return false
 	}
 
-	// 检查是否有匹配规则
 	hasRule := fp.Rule != "" || len(fp.HTML) > 0 || len(fp.Headers) > 0 || len(fp.Scripts) > 0
 	if !hasRule {
-		// 如果没有规则，尝试通过 title 匹配（回退策略）
-		if matchTitleFallback(fp.Name, data.Title) {
-			logx.Debugf("Active fingerprint '%s' matched by title fallback: %s", fp.Name, data.Title)
-			return true
-		}
-		logx.Debugf("Active fingerprint '%s' has no matching rule, skipping", fp.Name)
-		return false
+		return matchTitleFallback(fp.Name, data.Title)
 	}
-
-	// 优先使用Rule字段（ARL格式规则语法）
 	if fp.Rule != "" {
-		matched := e.matchRule(fp.Rule, data)
-		if matched {
-			logx.Debugf("Active fingerprint '%s' matched by Rule: %s", fp.Name, fp.Rule)
-			return true
-		}
-		// 规则不匹配时，尝试通过 title 匹配（回退策略）
-		if matchTitleFallback(fp.Name, data.Title) {
-			logx.Debugf("Active fingerprint '%s' matched by title fallback: %s", fp.Name, data.Title)
-			return true
-		}
-		return false
+		return e.matchRule(fp.Rule, data) || matchTitleFallback(fp.Name, data.Title)
 	}
-
-	// 使用ARL webapp.json格式规则
-	if e.matchARLWebappRules(fp, data) {
-		logx.Debugf("Active fingerprint '%s' matched by ARL rules", fp.Name)
+	if e.matchARLWebappRules(fp, data) || e.matchWappalyzerRules(fp, data) {
 		return true
 	}
-
-	// 使用Wappalyzer格式规则
-	if e.matchWappalyzerRules(fp, data) {
-		logx.Debugf("Active fingerprint '%s' matched by Wappalyzer rules", fp.Name)
-		return true
-	}
-
-	// 最后尝试通过 title 匹配（回退策略）
-	if matchTitleFallback(fp.Name, data.Title) {
-		logx.Debugf("Active fingerprint '%s' matched by title fallback: %s", fp.Name, data.Title)
-		return true
-	}
-
-	return false
+	return matchTitleFallback(fp.Name, data.Title)
 }
 
 // matchTitleFallback 通过 title 进行回退匹配
@@ -247,12 +266,8 @@ func (e *CustomFingerprintEngine) MatchWithEvidence(data *FingerprintData) Finge
 	}
 	findings := make(FingerprintFindings, 0, len(e.fingerprints))
 	if len(e.fingerprints) == 0 {
-		logx.Debug("[CustomFingerprint] no fingerprints loaded")
 		return findings
 	}
-
-	logx.Debugf("[CustomFingerprint] MatchWithEvidence: evaluating %d fingerprints (enabled) against url=%s title=%q server=%q bodyLen=%d",
-		len(e.fingerprints), data.URL, data.Title, data.Server, len(data.Body))
 
 	for _, fp := range e.fingerprints {
 		if !fp.Enabled {
@@ -263,14 +278,9 @@ func (e *CustomFingerprintEngine) MatchWithEvidence(data *FingerprintData) Finge
 		finding := newFingerprintFinding(fp, rawMatched)
 		if rawMatched {
 			finding.Evidence = e.collectFingerprintEvidence(fp, data)
-			logx.Debugf("[CustomFingerprint] MATCH: source=%s name=%s evidence=%d", finding.Source, fp.Name, len(finding.Evidence))
-		} else {
-			logx.Debugf("[CustomFingerprint] NO MATCH: source=%s name=%s", finding.Source, fp.Name)
 		}
 		findings = append(findings, finding)
 	}
-
-	logx.Debugf("[CustomFingerprint] MatchWithEvidence result: evaluated=%d", len(findings))
 	return findings
 }
 
@@ -730,7 +740,6 @@ func (e *CustomFingerprintEngine) matchSingleCondition(condition string, data *F
 		// 从HeaderString中提取状态码
 		result = strings.Contains(data.HeaderString, value)
 	default:
-		logx.Debugf("Unknown condition type: %s", condType)
 		return false
 	}
 

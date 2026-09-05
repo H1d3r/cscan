@@ -10,6 +10,10 @@ RUN npm install
 
 COPY . .
 
+# 注入根目录 VERSION（Docker 构建上下文仅包含 web/）
+ARG VERSION=unknown
+ENV APP_VERSION=$VERSION
+
 # 添加构建时间戳，强制每次都重新构建
 ARG BUILD_TIME
 ENV BUILD_TIME=$BUILD_TIME

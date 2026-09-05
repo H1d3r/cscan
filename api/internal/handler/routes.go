@@ -118,8 +118,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/update", Handler: worker.WorkerTaskUpdateHandler(svcCtx)},
 		// 单条漏洞复验结果回传（worker 复测完成后写入复验结论/状态，T-复验闭环）
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/vul/reverify", Handler: worker.WorkerVulReverifyHandler(svcCtx)},
-		// 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 执行后回传状态流转）
-		{Method: http.MethodPost, Path: "/api/v1/worker/reverify/result", Handler: worker.WorkerReverifyBatchHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/subtask/done", Handler: worker.WorkerSubTaskDoneHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/control", Handler: worker.WorkerTaskControlHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/task/recovery", Handler: worker.WorkerTaskRecoveryHandler(svcCtx)},
@@ -332,10 +330,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		{Method: http.MethodPost, Path: "/api/v1/vul/batchDelete", Handler: vul.VulBatchDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/vul/clear", Handler: vul.VulClearHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/vul/updateStatus", Handler: vul.VulUpdateStatusHandler(svcCtx)},
-		// 弱口令/敏感信息持续复验配置（T3.3 / T3.4）
-		{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/get", Handler: vul.ReverifyConfigGetHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/vul/reverify/config/save", Handler: vul.ReverifyConfigSaveHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/vul/reverify/runNow", Handler: vul.ReverifyRunNowHandler(svcCtx)},
 		// 单条/批量漏洞复验（人工触发，worker 执行复测，T-复验闭环）
 		{Method: http.MethodPost, Path: "/api/v1/vul/reverify", Handler: vul.ReverifyHandler(svcCtx)},
 
@@ -545,7 +539,6 @@ func RegisterHandlers(server *rest.Server, svcCtx *svc.ServiceContext) {
 		// Worker管理（敏感操作,需要管理员权限）
 		// 安全修复:原放在 authRoutes 中,任意登录用户可获取 install key 或重启/删除 Worker
 		{Method: http.MethodPost, Path: "/api/v1/worker/list", Handler: worker.WorkerListHandler(svcCtx)},
-		{Method: http.MethodPost, Path: "/api/v1/worker/delete", Handler: worker.WorkerDeleteHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/rename", Handler: worker.WorkerRenameHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/restart", Handler: worker.WorkerRestartHandler(svcCtx)},
 		{Method: http.MethodPost, Path: "/api/v1/worker/concurrency", Handler: worker.WorkerSetConcurrencyHandler(svcCtx)},

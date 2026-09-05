@@ -601,7 +601,7 @@ func parseAppName(app string) string {
 
 // loadCustomFingerprints 加载自定义指纹到指纹扫描器
 // activeScan: 是否启用主动扫描，如果启用则同时加载主动指纹
-func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.FingerprintScanner, activeScan bool) {
+func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.FingerprintScanner, activeScan bool) (passiveCount, activeCount int) {
 	// 添加 panic 恢复机制
 	defer func() {
 		if r := recover(); r != nil {
@@ -693,12 +693,9 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 						mfp.CSS = passiveFp.CSS
 						mfp.URL = passiveFp.URL
 						mfp.Category = passiveFp.Category
-						w.logger.Debug("Active fingerprint '%s' linked to local passive fingerprint", afp.Name)
 					} else {
 						w.logger.Warn("Active fingerprint '%s' has no matching rule", afp.Name)
 					}
-				} else if mfp.Rule != "" {
-					w.logger.Debug("Active fingerprint '%s' loaded with rule from API", afp.Name)
 				}
 
 				// 解析ID
@@ -709,7 +706,6 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 				}
 				activeFingerprints = append(activeFingerprints, mfp)
 			}
-			w.logger.Info("Loaded %d active fingerprints", len(activeFingerprints))
 		}
 	}
 
@@ -723,10 +719,8 @@ func (w *Worker) loadCustomFingerprints(ctx context.Context, fpScanner *scanner.
 			customEngine = scanner.NewCustomFingerprintEngine(passiveFingerprints)
 		}
 		fpScanner.SetCustomFingerprintEngine(customEngine)
-		w.logger.Info("Loaded %d passive fingerprints, %d active fingerprints into scanner", len(passiveFingerprints), len(activeFingerprints))
-	} else {
-		w.logger.Info("No fingerprints found")
 	}
+	return len(passiveFingerprints), len(activeFingerprints)
 }
 
 // filterSkippedHostsAssets 过滤掉因端口阈值超限被跳过的主机的资产

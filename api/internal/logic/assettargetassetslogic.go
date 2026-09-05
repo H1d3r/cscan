@@ -53,14 +53,8 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 		return nil, err
 	}
 
-	page := req.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := req.PageSize
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := normalizeListPage(req.Page, req.PageSize)
+	req.Page, req.PageSize = page, pageSize
 
 	total, err := assetModel.Count(l.ctx, filter)
 	if err != nil {
@@ -104,8 +98,10 @@ func (l *AssetTargetAssetsLogic) AssetTargetAssets(req *types.AssetTargetAssetsR
 		Code: 0,
 		Msg:  "success",
 		Data: types.AssetTargetAssetsData{
-			List:  items,
-			Total: total,
+			List:     items,
+			Page:     page,
+			PageSize: pageSize,
+			Total:    total,
 		},
 	}, nil
 }

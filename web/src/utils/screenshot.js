@@ -42,20 +42,20 @@ export function detectImageFormat(base64Data) {
   if (!base64Data) return 'image/jpeg'
 
   // JPEG: /9j/
-  if (base64Data.startsWith('/9j/') || base64Data.startsWith('iVBOR')) {
+  if (base64Data.startsWith('/9j/')) {
     return 'image/jpeg'
   }
-  
+
   // PNG: iVBOR
   if (base64Data.startsWith('iVBOR')) {
     return 'image/png'
   }
-  
+
   // GIF: R0lGOD
   if (base64Data.startsWith('R0lGOD')) {
     return 'image/gif'
   }
-  
+
   // WebP: UklGR
   if (base64Data.startsWith('UklGR')) {
     return 'image/webp'

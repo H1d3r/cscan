@@ -444,21 +444,6 @@ func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverify
 	return &resp, nil
 }
 
-// SaveReverifyBatch 上报持续复验批量结果（T3.3 弱口令 / T3.4 敏感信息）
-func (c *WorkerHTTPClient) SaveReverifyBatch(ctx context.Context, req *ReverifyBatchReq) (*ReverifyBatchResp, error) {
-	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/reverify/result", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var resp ReverifyBatchResp
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %w", err)
-	}
-
-	return &resp, nil
-}
-
 // Heartbeat 心跳
 func (c *WorkerHTTPClient) Heartbeat(ctx context.Context, req *HeartbeatReq) (*HeartbeatResp, error) {
 	// 心跳不做内部重试（调用方 sendHeartbeatWithRetry 已有重试逻辑）

@@ -33,8 +33,13 @@ func AssetListHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 // AssetStatHandler 资产统计
 func AssetStatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var req types.AssetStatReq
+		if err := httpx.Parse(r, &req); err != nil {
+			response.ParamError(w, err.Error())
+			return
+		}
 		l := logic.NewAssetStatLogic(r.Context(), svcCtx)
-		resp, err := l.AssetStat()
+		resp, err := l.AssetStat(&req)
 		if err != nil {
 			response.Error(w, err)
 			return

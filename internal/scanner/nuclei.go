@@ -222,8 +222,10 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 			return
 		}
 		switch level {
-		case "ERROR", "WARN":
+		case "ERROR":
 			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Slowf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
 		default:
@@ -232,10 +234,6 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	}
 
 	if len(targets) == 0 {
-		logFn("INFO", "No targets for nuclei scan")
-		if config.TaskLogger != nil {
-			config.TaskLogger("WARN", "No targets for nuclei scan (all assets were skipped as non-HTTP)")
-		}
 		input := len(config.Assets)
 		if input == 0 {
 			input = len(config.Targets)
@@ -261,8 +259,6 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	}
 	opts.Tags = utils.UniqueStrings(opts.Tags)
 
-	logFn("INFO", "Nuclei: Starting scan for %d targets (CLI mode)", len(targets))
-
 	customTemplatePaths, err := s.prepareTemplates(opts, logFn)
 	if err != nil {
 		return nil, fmt.Errorf("prepare templates: %w", err)
@@ -283,7 +279,6 @@ func (s *NucleiScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResu
 	if concurrency > len(targets) {
 		concurrency = len(targets)
 	}
-	logFn("INFO", "Nuclei: scanning %d targets with %d workers (CLI mode)", len(targets), concurrency)
 
 	type targetResult struct {
 		vuls      []*Vulnerability
@@ -358,7 +353,6 @@ dispatch:
 			} else {
 				coverage.Failed++
 			}
-			logFn("ERROR", "Nuclei: target execution failed (error_type=%T)", res.err)
 			// Preserve findings produced before a process-level failure, but never
 			// count that target as successfully covered.
 			appendVulnerabilities(res.vuls)
@@ -396,7 +390,6 @@ dispatch:
 	}
 	result.Diagnostic = &ScanDiagnostic{Phase: "poc", Status: status, Coverage: coverage, WarningCodes: warningCodes}
 
-	logFn("INFO", "Nuclei: Completed, found %d vulnerabilities", len(result.Vulnerabilities))
 	return result, nil
 }
 
@@ -411,8 +404,10 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 			return
 		}
 		switch level {
-		case "ERROR", "WARN":
+		case "ERROR":
 			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Slowf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
 		default:
@@ -442,8 +437,6 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	if opts.Concurrency > 50 {
 		opts.Concurrency = 50
 	}
-
-	taskLog("INFO", "Batch scan: %d targets (single-process CLI mode)", len(targets))
 
 	customTemplatePaths, err := s.prepareTemplates(opts, taskLog)
 	if err != nil {
@@ -497,12 +490,11 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		args = append(args, "-header", header)
 	}
 
-	taskLog("INFO", "Nuclei: scanning %d targets in single process (templates=%d, concurrency=%d, rate=%d, timeout=%v)",
-		len(targets), len(customTemplatePaths), opts.Concurrency, opts.RateLimit, processTimeout)
-	taskLog("INFO", "Nuclei CLI: execution prepared (arguments redacted)")
+	taskLog("INFO", "系统执行命令：%s", s.executor.CommandLine(args))
 
 	var allVuls []*Vulnerability
 	seen := make(map[string]bool)
+	outputLines, invalidLines := 0, 0
 
 	// 流式读取 nuclei -jsonl 输出，边扫边通过 OnVulnerabilityFound 实时入库
 	streamErr := s.executor.StreamLines(ctx, args, func(line string) (bool, error) {
@@ -510,9 +502,10 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		if line == "" {
 			return true, nil
 		}
+		outputLines++
 		var event NucleiResultEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			taskLog("WARN", "Nuclei CLI: invalid_json_line_bytes=%d", len(line))
+			invalidLines++
 			return true, nil
 		}
 		if !event.MatcherStatus {
@@ -528,8 +521,6 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 		}
 		seen[vulKey] = true
 		allVuls = append(allVuls, vul)
-		taskLog("INFO", "  Found: %s - %s [%s] -> %s",
-			event.TemplateID, event.Info.Name, event.Info.Severity, vul.Url)
 		if opts.OnVulnerabilityFound != nil {
 			opts.OnVulnerabilityFound(vul)
 		}
@@ -537,10 +528,16 @@ func (s *NucleiScanner) ScanBatch(ctx context.Context, targets []string, opts *N
 	}, ExecuteOpts{Timeout: processTimeout, LogFn: taskLog})
 
 	if streamErr != nil {
-		taskLog("WARN", "Nuclei batch scan stream error: %v", streamErr)
+		if errors.Is(streamErr, context.DeadlineExceeded) {
+			taskLog("WARN", "Nuclei 批量扫描超时")
+		} else {
+			taskLog("ERROR", "Nuclei 批量扫描启动或执行失败：%v", streamErr)
+		}
+	} else if outputLines > 0 && invalidLines == outputLines {
+		streamErr = fmt.Errorf("nuclei output parse failed")
+		taskLog("ERROR", "Nuclei 批量扫描输出解析失败：行数=%d", outputLines)
 	}
 
-	taskLog("INFO", "Batch scan completed, %d targets, %d vuls", len(targets), len(allVuls))
 	return allVuls, streamErr
 }
 
@@ -558,8 +555,10 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 	if taskLogger == nil {
 		taskLogger = func(level, format string, args ...interface{}) {
 			switch level {
-			case "ERROR", "WARN":
+			case "ERROR":
 				logx.Errorf(format, args...)
+			case "WARN":
+				logx.Slowf(format, args...)
 			case "DEBUG":
 				logx.Debugf(format, args...)
 			default:
@@ -596,13 +595,9 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		args = append(args, "-header", header)
 	}
 
-	taskLogger("INFO", "Nuclei CLI: scanning %s (templates=%d, concurrency=%d, rate=%d)",
-		safeTarget, len(templatePaths), opts.Concurrency, opts.RateLimit)
-	taskLogger("INFO", "Nuclei CLI: execution prepared (arguments redacted)")
-
 	// 进程超时 = 目标超时 + 30s 缓冲
 	processTimeout := time.Duration(opts.TargetTimeout+30) * time.Second
-	taskLogger("INFO", "Nuclei CLI: ProcessTimeout=%v (target timeout + 30s buffer)", processTimeout)
+	taskLogger("INFO", "系统执行命令：%s", s.executor.CommandLine(args))
 
 	res, execErr := s.executor.Execute(ctx, args, ExecuteOpts{
 		Timeout: processTimeout,
@@ -618,7 +613,7 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		if execErr == nil {
 			execErr = fmt.Errorf("nuclei executor returned nil result")
 		}
-		taskLogger("WARN", "Nuclei CLI: target=%s outcome=nil_result", safeTarget)
+		taskLogger("ERROR", "Nuclei CLI：目标=%s 未返回执行结果", safeTarget)
 		return nil, execErr
 	}
 
@@ -633,13 +628,12 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		executionErr = fmt.Errorf("nuclei exited with code %d", res.ExitCode)
 	}
 	if executionErr != nil {
-		reason := "execution_error"
 		if errors.Is(executionErr, context.DeadlineExceeded) || strings.Contains(strings.ToLower(executionErr.Error()), "timeout") {
-			reason = "timeout"
 			executionErr = context.DeadlineExceeded
+			taskLogger("WARN", "Nuclei CLI：目标=%s 执行超时", safeTarget)
+		} else {
+			taskLogger("ERROR", "Nuclei CLI：目标=%s 启动或非零退出，exitCode=%d", safeTarget, res.ExitCode)
 		}
-		taskLogger("WARN", "Nuclei CLI: target=%s outcome=%s exitCode=%d stdout_bytes=%d stderr_bytes=%d",
-			safeTarget, reason, res.ExitCode, len(res.Stdout), len(res.Stderr))
 	}
 
 	var vuls []*Vulnerability
@@ -655,7 +649,6 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		var event NucleiResultEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			invalidLines++
-			taskLogger("WARN", "Nuclei CLI: target=%s invalid_json_line_bytes=%d", safeTarget, len(line))
 			continue
 		}
 		if !event.MatcherStatus {
@@ -664,23 +657,17 @@ func (s *NucleiScanner) scanSingleTargetCLI(ctx context.Context, target string, 
 		vul := s.convertCLIResult(&event, target)
 		if vul != nil {
 			vuls = append(vuls, vul)
-			taskLogger("INFO", "  Found: %s - %s [%s]",
-				event.TemplateID, event.Info.Name, event.Info.Severity)
 		}
 	}
 	if scanner.Err() != nil && executionErr == nil {
 		executionErr = fmt.Errorf("nuclei output read failed: %w", scanner.Err())
+		taskLogger("ERROR", "Nuclei CLI：目标=%s 输出读取失败", safeTarget)
 	}
 	if executionErr == nil && outputLines > 0 && invalidLines == outputLines {
 		executionErr = fmt.Errorf("nuclei output parse failed")
+		taskLogger("ERROR", "Nuclei CLI：目标=%s 输出解析失败，行数=%d", safeTarget, outputLines)
 	}
 
-	taskLogger("INFO", "Nuclei: %s -> %d vulnerabilities outcome=%s", safeTarget, len(vuls), func() string {
-		if executionErr != nil {
-			return "failed"
-		}
-		return "complete"
-	}())
 	return vuls, executionErr
 }
 
@@ -764,8 +751,10 @@ func (s *NucleiScanner) prepareTemplates(opts *NucleiOptions, logFn func(level, 
 	if logFn == nil {
 		logFn = func(level, format string, args ...interface{}) {
 			switch level {
-			case "ERROR", "WARN":
+			case "ERROR":
 				logx.Errorf(format, args...)
+			case "WARN":
+				logx.Slowf(format, args...)
 			case "DEBUG":
 				logx.Debugf(format, args...)
 			default:
@@ -939,71 +928,32 @@ func parseAppName(app string) string {
 }
 
 func prepareTargets(assets []*Asset, forceScan bool, taskLogger func(level, format string, args ...interface{})) []string {
-	logFn := func(level, format string, args ...interface{}) {
-		if taskLogger != nil {
-			taskLogger(level, format, args...)
-			return
-		}
-		switch level {
-		case "ERROR", "WARN":
-			logx.Errorf(format, args...)
-		case "DEBUG":
-			logx.Debugf(format, args...)
-		default:
-			logx.Infof(format, args...)
-		}
-	}
-
 	targets := make([]string, 0, len(assets))
 	seen := make(map[string]bool)
-	skipped := 0
-	var skippedDetails []string
 
 	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
 		isHTTP := asset.IsHTTP || IsHTTPService(asset.Service, asset.Port)
 		if !forceScan && !isHTTP {
-			skipped++
-			detail := fmt.Sprintf("%s:%d (service=%s)", asset.Host, asset.Port, asset.Service)
-			skippedDetails = append(skippedDetails, detail)
-			logFn("DEBUG", "Skipping non-HTTP asset: %s", detail)
 			continue
 		}
 
-		scheme := "http"
-		if asset.Service == "https" || asset.Port == 443 || asset.Port == 8443 {
-			scheme = "https"
-		}
-
-		var target string
+		// 已确认的响应 scheme 优先于 service/port；只有没有响应证据时，
+		// resolveAssetScheme 才把端口作为 hint。
+		target := buildAssetTargetURL(asset)
 		if asset.Path != "" && asset.Path != "/" {
 			path := asset.Path
 			if !strings.HasPrefix(path, "/") {
 				path = "/" + path
 			}
-			target = fmt.Sprintf("%s://%s:%d%s", scheme, asset.Host, asset.Port, path)
-		} else {
-			target = fmt.Sprintf("%s://%s:%d", scheme, asset.Host, asset.Port)
+			target += path
 		}
-
-		if !seen[target] {
+		if target != "" && !seen[target] {
 			seen[target] = true
 			targets = append(targets, target)
 		}
-	}
-
-	if skipped > 0 {
-		if forceScan {
-			logFn("INFO", "Force scan enabled: processing %d assets", len(targets))
-		} else {
-			logFn("INFO", "Nuclei: skipped %d non-HTTP assets, scanning %d HTTP targets", skipped, len(targets))
-			if len(skippedDetails) <= 10 {
-				logFn("INFO", "Skipped non-HTTP assets: %s", strings.Join(skippedDetails, ", "))
-			} else {
-				logFn("INFO", "Skipped non-HTTP assets (first 10): %s", strings.Join(skippedDetails[:10], ", "))
-			}
-		}
-	} else if forceScan && len(assets) > 0 {
-		logFn("INFO", "Force scan enabled: all %d assets will be scanned", len(assets))
 	}
 
 	return targets

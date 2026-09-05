@@ -10,6 +10,7 @@
       :statLabels="statLabels"
       :extra-params="props.extraParams"
       :transform-payload="transformListPayload"
+      :sync-url="props.syncUrl"
       :searchPlaceholder="$t('dirscan.targetPlaceholder')"
       :searchKeys="['authority']"
       selection
@@ -196,6 +197,7 @@ import {
   stopBatchAnalyze as stopDirBatchAnalyze
 } from '@/api/dirscan'
 import ProTable from '@/components/common/ProTable.vue'
+import { fetchAllPages } from '@/utils/pagedRequest'
 
 const BATCH_TASK_STORAGE_KEY = 'cscan_dirscan_batch_task'
 
@@ -205,6 +207,10 @@ const props = defineProps({
   extraParams: {
     type: Object,
     default: () => ({})
+  },
+  syncUrl: {
+    type: Boolean,
+    default: true
   },
   // 是否启用AI研判功能（默认true；敏感目录页面可传false）
   enableAI: {
@@ -598,14 +604,23 @@ async function handleStopBatch() {
 // ==================== 导出 ====================
 
 async function handleExport(command) {
-  ElMessage.info(t('asset.gettingAllData'))
   let data = []
-  try {
-    const res = await request.post('/dirscan/result/list', {
-      ...proTableRef.value?.searchForm, page: 0, pageSize: 0
-    })
-    if (res.code === 0) { data = res.list || [] } else { ElMessage.error(t('asset.getDataFailed')); return }
-  } catch (e) { ElMessage.error(t('asset.getDataFailed')); return }
+  if (command === 'selected-url') {
+    data = selectedRows.value
+  } else {
+    ElMessage.info(t('asset.gettingAllData'))
+    try {
+      data = await fetchAllPages('/dirscan/result/list', (page, pageSize) => transformListPayload({
+        ...(proTableRef.value?.searchForm || {}),
+        ...(props.extraParams || {}),
+        page,
+        pageSize,
+      }))
+    } catch (e) {
+      ElMessage.error(t('asset.getDataFailed'))
+      return
+    }
+  }
   if (data.length === 0) { ElMessage.warning(t('asset.noDataToExport')); return }
 
   if (command === 'csv') {

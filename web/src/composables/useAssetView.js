@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
+import { fetchAllPages } from '@/utils/pagedRequest'
 
 export function useAssetView(options) {
   const { t } = useI18n()
@@ -92,13 +93,10 @@ export function useAssetView(options) {
     } else {
       ElMessage.info(t('asset.gettingAllData'))
       try {
-        const res = await request.post(`${apiPrefix}/list`, { ...proTableRef.value?.searchForm, page: 0, pageSize: 0 })
-        if (res.code === 0) {
-          data = res.list || []
-        } else {
-          ElMessage.error(t('asset.getDataFailed'))
-          return
-        }
+        data = await fetchAllPages(
+          `${apiPrefix}/list`,
+          (page, pageSize) => ({ ...proTableRef.value?.searchForm, page, pageSize })
+        )
       } catch (e) {
         ElMessage.error(t('asset.getDataFailed'))
         return

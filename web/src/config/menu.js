@@ -6,22 +6,14 @@
 import {
   Setting, Monitor, List, Search, Aim, Odometer, Stamp, Connection,
   Key, OfficeBuilding, Bell, User, UserFilled, Document,
-  CircleClose, Warning, Timer, Picture, MagicStick, Operation,
-  Folder, Files, Lock
+  CircleClose, Warning, Timer, Picture, MagicStick, Operation
 } from '@element-plus/icons-vue'
 
 // buildMenu 构造菜单树，t 为 vue-i18n 的翻译函数（在 computed 中调用以响应语言切换）
 export function buildMenu(t) {
   return [
     { type: 'item', index: '/dashboard', icon: Odometer, label: t('navigation.dashboard') },
-    { type: 'submenu', index: 'asset-menu', icon: Monitor, label: t('navigation.assetManagement'), items: [
-      { index: '/asset-management/space-search', icon: Search, label: t('navigation.assetSpaceSearch') },
-      // 子域名/IP/端口/站点/Icon/应用/截图/证书 已合并进资产空间搜索的目标详情 Tab
-      { index: '/asset-management/exposure/dir', icon: Folder, label: t('navigation.exposureDir') },
-      { index: '/asset-management/exposure/js', icon: Files, label: t('navigation.exposureJs') },
-      { index: '/asset-management/risk/sensitive-info', icon: Lock, label: t('navigation.riskSensitiveInfo') },
-      { index: '/asset-management/risk/vuln', icon: Warning, label: t('navigation.riskVuln') },
-    ]},
+    { type: 'item', index: '/asset-management/space-search', icon: Monitor, label: t('navigation.assetManagement') },
     { type: 'divider' },
     { type: 'item', index: '/task', icon: List, label: t('navigation.taskManagement') },
     { type: 'submenu', index: 'space-engine-menu', icon: Connection, label: t('navigation.spaceEngine'), items: [
@@ -42,7 +34,6 @@ export function buildMenu(t) {
     { type: 'item', index: '/worker-logs', icon: Document, label: t('navigation.workerLogs') },
     { type: 'submenu', index: 'advanced-config-menu', icon: Operation, label: t('navigation.advancedConfig'), items: [
       { index: '/settings-notify', icon: Bell, label: t('navigation.notifyConfig') },
-      { index: '/settings-reverify', icon: Timer, label: t('navigation.reverifyConfig') },
       { index: '/high-risk-filter', icon: Warning, label: t('navigation.highRiskFilter') },
     ]},
     { type: 'submenu', index: 'system-management', icon: Setting, label: t('navigation.systemManagement'), items: [

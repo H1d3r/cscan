@@ -347,6 +347,37 @@ type AssetListResp struct {
 	List  []Asset `json:"list"`
 }
 
+type AssetStatReq struct {
+	TargetId string `json:"targetId,optional"`
+}
+
+type AttackSurfaceScope struct {
+	Type     string `json:"type"`
+	TargetId string `json:"targetId"`
+}
+
+type AttackSurfaceDrilldown struct {
+	Tab     string                 `json:"tab"`
+	Filters map[string]interface{} `json:"filters"`
+}
+
+type AttackSurfaceMetric struct {
+	Key        string                 `json:"key"`
+	LabelKey   string                 `json:"labelKey"`
+	Value      int                    `json:"value"`
+	Category   string                 `json:"category"`
+	Tone       string                 `json:"tone"`
+	Applicable bool                   `json:"applicable"`
+	Drilldown  AttackSurfaceDrilldown `json:"drilldown"`
+}
+
+type AttackSurfaceStatData struct {
+	Scope     AttackSurfaceScope    `json:"scope"`
+	Target    *AssetTargetListItem  `json:"target"`
+	Metrics   []AttackSurfaceMetric `json:"metrics"`
+	UpdatedAt int64                 `json:"updatedAt"`
+}
+
 type AssetStatResp struct {
 	Code         int                `json:"code"`
 	Msg          string             `json:"msg"`
@@ -361,7 +392,8 @@ type AssetStatResp struct {
 	TopTitle     []StatItem         `json:"topTitle"`
 	TopIconHash  []IconHashStatItem `json:"topIconHash,omitempty"`
 	// 新增字段 - 风险等级分布
-	RiskDistribution map[string]int `json:"riskDistribution,omitempty"`
+	RiskDistribution map[string]int        `json:"riskDistribution,omitempty"`
+	Data             AttackSurfaceStatData `json:"data"`
 }
 
 type StatItem struct {
@@ -549,7 +581,8 @@ type SiteBatchDeleteReq struct {
 // ==================== 域名管理 ====================
 type DomainListReq struct {
 	Page       int      `json:"page,default=1"`
-	PageSize   int      `json:"pageSize,default=20"`
+	PageSize   int      `json:"pageSize,default=10"`
+	TargetId   string   `json:"targetId,optional"`
 	Query      string   `json:"query,optional"`
 	Domain     string   `json:"domain,optional"`
 	RootDomain string   `json:"rootDomain,optional"`
@@ -574,10 +607,12 @@ type Domain struct {
 }
 
 type DomainListResp struct {
-	Code  int      `json:"code"`
-	Msg   string   `json:"msg"`
-	Total int      `json:"total"`
-	List  []Domain `json:"list"`
+	Code     int      `json:"code"`
+	Msg      string   `json:"msg"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"pageSize"`
+	Total    int      `json:"total"`
+	List     []Domain `json:"list"`
 }
 
 type DomainStatResp struct {
@@ -634,7 +669,8 @@ type DeleteAssetGroupResp struct {
 // ==================== 资产清单管理 ====================
 type AssetInventoryReq struct {
 	Page                     int      `json:"page,default=1"`
-	PageSize                 int      `json:"pageSize,default=20"`
+	PageSize                 int      `json:"pageSize,default=10"`
+	TargetId                 string   `json:"targetId,optional"`
 	Query                    string   `json:"query,optional"`                    // 搜索关键词
 	Technologies             []string `json:"technologies,optional"`             // 技术栈过滤
 	Ports                    []int    `json:"ports,optional"`                    // 端口过滤
@@ -647,38 +683,52 @@ type AssetInventoryReq struct {
 	GroupId                  string   `json:"groupId,optional"`                  // 资产分组ID
 	Domain                   string   `json:"domain,optional"`                   // 域名过滤
 	RequireRecognitionOrShot bool     `json:"requireRecognitionOrShot,optional"` // 只显示有技术栈或截图的资产
+	WebOnly                  bool     `json:"webOnly,optional"`                  // 只显示 Web 服务资产
+	HasIcon                  bool     `json:"hasIcon,optional"`                  // 只显示有图标的资产
+	HasScreenshot            bool     `json:"hasScreenshot,optional"`            // 只显示有截图的资产
+}
+
+type AssetInventoryTLSSummary struct {
+	SubjectCN  string `json:"subjectCn,omitempty"`
+	IssuerOrg  string `json:"issuerOrg,omitempty"`
+	NotAfter   int64  `json:"notAfter,omitempty"`
+	Status     string `json:"status,omitempty"` // valid|expiring|expired
+	SelfSigned bool   `json:"selfSigned,omitempty"`
 }
 
 type AssetInventoryItem struct {
-	Id              string   `json:"id"`
-	Host            string   `json:"host"`
-	IP              string   `json:"ip"`
-	Ips             []string `json:"ips"`
-	Port            int      `json:"port"`
-	Service         string   `json:"service"`
-	Title           string   `json:"title"`
-	Technologies    []string `json:"technologies"`     // 技术栈
-	Labels          []string `json:"labels"`           // 自定义标签
-	Status          string   `json:"status"`           // HTTP状态码
-	Domain          string   `json:"domain,omitempty"` // 域名
-	LastUpdated     string   `json:"lastUpdated"`      // 最后更新时间（相对时间）
-	FirstSeen       string   `json:"firstSeen"`        // 首次发现时间（完整时间）
-	LastUpdatedFull string   `json:"lastUpdatedFull"`  // 最后更新时间（完整时间）
-	Screenshot      string   `json:"screenshot,omitempty"`
-	IconHash        string   `json:"iconHash,omitempty"`
-	IconHashBytes   string   `json:"iconHashBytes,omitempty"` // Base64编码的图标数据
-	HttpHeader      string   `json:"httpHeader,omitempty"`
-	HttpBody        string   `json:"httpBody,omitempty"`
-	Banner          string   `json:"banner,omitempty"`
-	CName           string   `json:"cname,omitempty"`
-	ASN             string   `json:"asn,omitempty"`
+	Id              string                    `json:"id"`
+	Host            string                    `json:"host"`
+	IP              string                    `json:"ip"`
+	Ips             []string                  `json:"ips"`
+	Port            int                       `json:"port"`
+	Service         string                    `json:"service"`
+	Title           string                    `json:"title"`
+	Technologies    []string                  `json:"technologies"`     // 技术栈
+	Labels          []string                  `json:"labels"`           // 自定义标签
+	Status          string                    `json:"status"`           // HTTP状态码
+	Domain          string                    `json:"domain,omitempty"` // 域名
+	LastUpdated     string                    `json:"lastUpdated"`      // 最后更新时间（相对时间）
+	FirstSeen       string                    `json:"firstSeen"`        // 首次发现时间（完整时间）
+	LastUpdatedFull string                    `json:"lastUpdatedFull"`  // 最后更新时间（完整时间）
+	Screenshot      string                    `json:"screenshot,omitempty"`
+	IconHash        string                    `json:"iconHash,omitempty"`
+	IconHashBytes   string                    `json:"iconHashBytes,omitempty"` // Base64编码的图标数据
+	HttpHeader      string                    `json:"httpHeader,omitempty"`
+	HttpBody        string                    `json:"httpBody,omitempty"`
+	Banner          string                    `json:"banner,omitempty"`
+	CName           string                    `json:"cname,omitempty"`
+	ASN             string                    `json:"asn,omitempty"`
+	TLS             *AssetInventoryTLSSummary `json:"tls,omitempty"`
 }
 
 type AssetInventoryResp struct {
-	Code  int                  `json:"code"`
-	Msg   string               `json:"msg"`
-	Total int                  `json:"total"`
-	List  []AssetInventoryItem `json:"list"`
+	Code     int                  `json:"code"`
+	Msg      string               `json:"msg"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"pageSize"`
+	Total    int                  `json:"total"`
+	List     []AssetInventoryItem `json:"list"`
 }
 
 // ==================== 资产详情（按需加载，含 body/header/banner 等大字段） ====================
@@ -1064,14 +1114,16 @@ type VulDetailResp struct {
 }
 
 type VulListReq struct {
-	Page      int    `json:"page,default=1"`
-	PageSize  int    `json:"pageSize,default=20"`
-	Query     string `json:"query,optional"`
-	Authority string `json:"authority,optional"`
-	Severity  string `json:"severity,optional"`
-	Source    string `json:"source,optional"`
-	Host      string `json:"host,optional"`
-	Port      int    `json:"port,optional"`
+	Page         int    `json:"page,default=1"`
+	PageSize     int    `json:"pageSize,default=10"`
+	TargetId     string `json:"targetId,optional"`
+	HighRiskOnly bool   `json:"highRiskOnly,optional"`
+	Query        string `json:"query,optional"`
+	Authority    string `json:"authority,optional"`
+	Severity     string `json:"severity,optional"`
+	Source       string `json:"source,optional"`
+	Host         string `json:"host,optional"`
+	Port         int    `json:"port,optional"`
 	// Phase 5: 敏感信息/敏感目录页面复用 /vul/list 时下发的固定过滤。
 	// IsRisk 为 nil 时忽略，非 nil 时精确匹配 is_risk 字段。
 	IsRisk     *bool  `json:"isRisk,optional"`
@@ -1091,10 +1143,12 @@ type VulListReq struct {
 }
 
 type VulListResp struct {
-	Code  int    `json:"code"`
-	Msg   string `json:"msg"`
-	Total int    `json:"total"`
-	List  []Vul  `json:"list"`
+	Code     int    `json:"code"`
+	Msg      string `json:"msg"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+	Total    int    `json:"total"`
+	List     []Vul  `json:"list"`
 }
 
 type VulDeleteReq struct {
@@ -1254,15 +1308,6 @@ type WorkerListResp struct {
 	Code int      `json:"code"`
 	Msg  string   `json:"msg"`
 	List []Worker `json:"list"`
-}
-
-type WorkerDeleteReq struct {
-	Name string `json:"name"` // Worker名称
-}
-
-type WorkerDeleteResp struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
 }
 
 type WorkerRenameReq struct {
@@ -3588,6 +3633,7 @@ type JSFinderListReq struct {
 	Query       string   `json:"query,optional" form:"query,optional"`
 	Page        int      `json:"page,default=1" form:"page,default=1"`
 	PageSize    int      `json:"pageSize,default=10" form:"pageSize,default=10"`
+	TargetId    string   `json:"targetId,optional" form:"targetId,optional"`
 	Severity    string   `json:"severity,optional" form:"severity,optional"`
 	Tags        string   `json:"tags,optional" form:"tags,optional"`
 	TagsAny     []string `json:"tagsAny,optional" form:"tagsAny,optional"`
@@ -3597,10 +3643,12 @@ type JSFinderListReq struct {
 }
 
 type JSFinderListResp struct {
-	Code  int               `json:"code"`
-	Msg   string            `json:"msg"`
-	Total int64             `json:"total"`
-	List  []*JSFinderResult `json:"list"`
+	Code     int               `json:"code"`
+	Msg      string            `json:"msg"`
+	Page     int               `json:"page"`
+	PageSize int               `json:"pageSize"`
+	Total    int64             `json:"total"`
+	List     []*JSFinderResult `json:"list"`
 }
 
 // JSFinderDetailReq 单条 JSFinder 结果详情请求
@@ -3729,6 +3777,7 @@ type DirScanResult struct {
 // DirScanResultListReq 目录扫描列表请求
 type DirScanResultListReq struct {
 	TaskId     string `json:"taskId,optional"`
+	TargetId   string `json:"targetId,optional"`
 	Authority  string `json:"authority,optional"`
 	Url        string `json:"url,optional"`
 	Path       string `json:"path,optional"`
@@ -3736,7 +3785,7 @@ type DirScanResultListReq struct {
 	SizeMin    *int64 `json:"sizeMin,optional"`
 	SizeMax    *int64 `json:"sizeMax,optional"`
 	Page       int    `json:"page,default=1"`
-	PageSize   int    `json:"pageSize,default=20"`
+	PageSize   int    `json:"pageSize,default=10"`
 	SortField  string `json:"sortField,optional"`
 	SortOrder  string `json:"sortOrder,optional"`
 	Query      string `json:"query,optional"`
@@ -3746,10 +3795,12 @@ type DirScanResultListReq struct {
 
 // DirScanResultListResp 目录扫描列表响应
 type DirScanResultListResp struct {
-	Code  int              `json:"code"`
-	Msg   string           `json:"msg"`
-	Total int64            `json:"total"`
-	List  []*DirScanResult `json:"list"`
+	Code     int              `json:"code"`
+	Msg      string           `json:"msg"`
+	Page     int              `json:"page"`
+	PageSize int              `json:"pageSize"`
+	Total    int64            `json:"total"`
+	List     []*DirScanResult `json:"list"`
 }
 
 // DirScanDetailReq 单条详情请求
@@ -3879,6 +3930,8 @@ type SaveCertReq struct {
 // CertListReq 证书列表请求
 type CertListReq struct {
 	Query         string `json:"query,optional" form:"query,optional"`                 // 按 host/authority/subjectDN/issuerDN/SAN 模糊匹配
+	Host          string `json:"host,optional" form:"host,optional"`                   // 精确主机过滤
+	Port          int    `json:"port,optional" form:"port,optional"`                   // 精确端口过滤，0 表示不限
 	Issuer        string `json:"issuer,optional" form:"issuer,optional"`               // 按颁发机构 DN 模糊过滤
 	ExpiredBefore string `json:"expiredBefore,optional" form:"expiredBefore,optional"` // 到期时间 <= 该时间戳（秒）
 	ExpiredAfter  string `json:"expiredAfter,optional" form:"expiredAfter,optional"`   // 到期时间 >= 该时间戳（秒）
@@ -3908,63 +3961,6 @@ type CertDetailResp struct {
 	Data *Cert  `json:"data,omitempty"`
 }
 
-// ==================== 弱口令/敏感信息持续复验配置（T3.3/T3.4） ====================
-
-// ReverifyConfig 复验配置（API 层表示，对齐 model.ReverifyConfig；与 T3.4 敏感信息复验共用）
-type ReverifyConfig struct {
-	Id               string `json:"id,omitempty"`
-	WeakPassEnabled  bool   `json:"weakPassEnabled"`
-	ExposureEnabled  bool   `json:"exposureEnabled"`
-	CronSpec         string `json:"cronSpec"`
-	MaxTargetsPerRun int    `json:"maxTargetsPerRun"`
-	Concurrency      int    `json:"concurrency"`
-	// 运行状态字段（runNow / pull/status 读取）
-	LastRunTime   string `json:"lastRunTime,omitempty"`
-	LastRunStatus string `json:"lastRunStatus,omitempty"`
-	LastRunCount  int    `json:"lastRunCount"`
-	LastRunError  string `json:"lastRunError,omitempty"`
-	NextRunTime   string `json:"nextRunTime,omitempty"`
-	CreateTime    string `json:"createTime,omitempty"`
-	UpdateTime    string `json:"updateTime,omitempty"`
-}
-
-// ReverifyConfigGetReq 获取复验配置请求
-type ReverifyConfigGetReq struct {
-}
-
-// ReverifyConfigGetResp 获取复验配置响应（无配置时返回默认值，weakPassEnabled=false）
-type ReverifyConfigGetResp struct {
-	Code   int             `json:"code"`
-	Msg    string          `json:"msg"`
-	Config *ReverifyConfig `json:"config"`
-}
-
-// ReverifyConfigSaveReq 保存复验配置请求
-type ReverifyConfigSaveReq struct {
-	WeakPassEnabled  bool   `json:"weakPassEnabled"`
-	ExposureEnabled  bool   `json:"exposureEnabled"`
-	CronSpec         string `json:"cronSpec"`
-	MaxTargetsPerRun int    `json:"maxTargetsPerRun"`
-	Concurrency      int    `json:"concurrency"`
-}
-
-// ReverifyConfigSaveResp 保存复验配置响应
-type ReverifyConfigSaveResp struct {
-	Code   int             `json:"code"`
-	Msg    string          `json:"msg"`
-	Config *ReverifyConfig `json:"config"`
-}
-
-// ReverifyRunNowReq 立即触发弱口令复验请求
-type ReverifyRunNowReq struct {
-}
-
-// ReverifyRunNowResp 立即触发弱口令复验响应
-type ReverifyRunNowResp struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
-}
-
 // ==================== 单条漏洞复验（人工触发，worker 执行复测，T-复验闭环） ====================
 
 // VulReverifyReq 单条/批量漏洞复验请求（前端点击"复验"按钮触发）
@@ -3991,26 +3987,6 @@ type WorkerVulReverifyReq struct {
 
 // WorkerVulReverifyResp Worker 复验结果回传响应
 type WorkerVulReverifyResp struct {
-	Code    int    `json:"code"`
-	Msg     string `json:"msg"`
-	Success bool   `json:"success"`
-}
-
-// WorkerReverifyBatchReq Worker 持续复验批量结果回传（T3.3 弱口令 / T3.4 敏感信息，worker 专用端点）
-type WorkerReverifyBatchReq struct {
-	Kind    string                    `json:"kind"` // weakpass / exposure
-	Results []WorkerReverifyBatchItem `json:"results"`
-}
-
-// WorkerReverifyBatchItem 单条复验结论
-type WorkerReverifyBatchItem struct {
-	Id      string `json:"id"`      // vulnId（weakpass）或 jsfinder/dirscan 记录 ID（exposure）
-	Kind    string `json:"kind"`    // exposure 回写集合归属: jsfinder / dirscan（weakpass 忽略）
-	Outcome string `json:"outcome"` // weakpass: fixed/still_vuln/unreachable; exposure: resolved/verified/pending
-}
-
-// WorkerReverifyBatchResp Worker 持续复验批量结果回传响应
-type WorkerReverifyBatchResp struct {
 	Code    int    `json:"code"`
 	Msg     string `json:"msg"`
 	Success bool   `json:"success"`
@@ -4062,7 +4038,7 @@ type ContainerLogsFetchResp struct {
 // ==================== 资产目标（顶层资产：IP/主域名） ====================
 type AssetTargetListReq struct {
 	Page       int      `json:"page,default=1"`
-	PageSize   int      `json:"pageSize,default=20"`
+	PageSize   int      `json:"pageSize,default=10"`
 	TargetType string   `json:"targetType,optional"` // "" | "ip" | "domain"
 	Query      string   `json:"query,optional"`
 	Labels     []string `json:"labels,optional"`
@@ -4106,10 +4082,12 @@ type AssetTargetListItem struct {
 }
 
 type AssetTargetListResp struct {
-	Code  int                   `json:"code"`
-	Msg   string                `json:"msg"`
-	Total int64                 `json:"total"`
-	List  []AssetTargetListItem `json:"list"`
+	Code     int                   `json:"code"`
+	Msg      string                `json:"msg"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
+	Total    int64                 `json:"total"`
+	List     []AssetTargetListItem `json:"list"`
 }
 
 type AssetTargetDetailReq struct {
@@ -4210,8 +4188,8 @@ type AssetTargetDeleteResp struct {
 // AssetTargetAssetsReq 获取目标下的资产列表
 type AssetTargetAssetsReq struct {
 	TargetId     string   `json:"targetId"`
-	Page         int      `json:"page,optional"`
-	PageSize     int      `json:"pageSize,optional"`
+	Page         int      `json:"page,default=1"`
+	PageSize     int      `json:"pageSize,default=10"`
 	Query        string   `json:"query,optional"`        // host/title 模糊过滤
 	Ports        []int    `json:"ports,optional"`        // 端口过滤
 	StatusCodes  []string `json:"statusCodes,optional"`  // HTTP 状态码过滤
@@ -4221,8 +4199,10 @@ type AssetTargetAssetsReq struct {
 
 // AssetTargetAssetsData 目标资产分页数据
 type AssetTargetAssetsData struct {
-	List  []AssetTargetAssetItem `json:"list"`
-	Total int64                  `json:"total"`
+	List     []AssetTargetAssetItem `json:"list"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"pageSize"`
+	Total    int64                  `json:"total"`
 }
 
 // AssetTargetAssetItem 目标资产条目（底层 asset 的投影）
@@ -4275,8 +4255,10 @@ type AssetMediaResp struct {
 
 // AssetTargetGroupsReq 目标资产按维度聚合（Hosts/Ports/IP/Technologies/StatusCode 子 Tab）
 type AssetTargetGroupsReq struct {
-	TargetId     string   `json:"targetId"`
+	TargetId     string   `json:"targetId,optional"`
 	GroupBy      string   `json:"groupBy"` // host|port|ip|app|status
+	Page         int      `json:"page,default=1"`
+	PageSize     int      `json:"pageSize,default=10"`
 	Query        string   `json:"query,optional"`
 	Ports        []int    `json:"ports,optional"`
 	StatusCodes  []string `json:"statusCodes,optional"`
@@ -4294,15 +4276,20 @@ type AssetTargetGroupItem struct {
 }
 
 type AssetTargetGroupsResp struct {
-	Code int                    `json:"code"`
-	Msg  string                 `json:"msg"`
-	List []AssetTargetGroupItem `json:"list"`
+	Code     int                    `json:"code"`
+	Msg      string                 `json:"msg"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"pageSize"`
+	Total    int                    `json:"total"`
+	List     []AssetTargetGroupItem `json:"list"`
 }
 
-// AssetTargetCertsReq 目标关联的 TLS 证书列表
+// AssetTargetCertsReq 目标关联的 TLS 证书列表；targetId 为空时查询全局证书。
 type AssetTargetCertsReq struct {
-	TargetId string `json:"targetId"`
+	TargetId string `json:"targetId,optional"`
 	Query    string `json:"query,optional"`
+	Page     int    `json:"page,default=1"`
+	PageSize int    `json:"pageSize,default=10"`
 }
 
 // AssetTargetCertItem 证书行（TLS Tab + Services 列证书徽章）
@@ -4325,7 +4312,10 @@ type AssetTargetCertItem struct {
 }
 
 type AssetTargetCertsResp struct {
-	Code int                   `json:"code"`
-	Msg  string                `json:"msg"`
-	List []AssetTargetCertItem `json:"list"`
+	Code     int                   `json:"code"`
+	Msg      string                `json:"msg"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
+	Total    int64                 `json:"total"`
+	List     []AssetTargetCertItem `json:"list"`
 }

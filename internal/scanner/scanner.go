@@ -128,7 +128,7 @@ type Vulnerability struct {
 	Url       string `json:"url"`
 	PocFile   string `json:"pocFile"`
 	Source    string `json:"source"`
-	// 风险来源（如 auto:cert-expiry / auto:weakpass / auto:info-leak），供风险视图与复验按来源查询
+	// 风险来源（如 auto:cert-expiry / auto:weakpass / auto:info-leak），供风险视图按来源筛选
 	RiskSource string   `json:"riskSource,omitempty"`
 	Severity   string   `json:"severity"`
 	Extra      string   `json:"extra"`

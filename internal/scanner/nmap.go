@@ -204,8 +204,7 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 			config.TaskLogger("WARN", format, args...)
 			return // 已由 TaskLogger 统一输出，避免双写
 		}
-		// 修复 M3：原 logx.Infof 导致 WARN 日志以 INFO 级别落盘，无法按级别过滤
-		logx.Errorf(format, args...)
+		logx.Slowf(format, args...)
 	}
 	logError := func(format string, args ...interface{}) {
 		if config.TaskLogger != nil {
@@ -328,8 +327,6 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 	targets := cleanTargets
 	opts.Ports = portsToString(ports)
 
-	logInfo("Nmap: resolved targets=%v ports=%d concurrent=%d", targets, len(parsePorts(opts.Ports)), opts.Concurrent)
-
 	// 执行nmap扫描
 	assets, identifyResults := s.runNmapWithLogger(ctx, targets, opts, config.OnTargetDone, config.OnProgress, logInfo, logWarn, logError, logDebug)
 	if config.EventLogger != nil {
@@ -354,12 +351,11 @@ func (s *NmapScanner) Scan(ctx context.Context, config *ScanConfig) (*ScanResult
 func (s *NmapScanner) runNmapWithLogger(
 	ctx context.Context, targets []string, opts *NmapOptions,
 	onTargetDone func(string, []*Asset), onProgress func(int, string),
-	logInfo, _ logFunc, logError, logDebug logFunc,
+	logInfo, logWarn logFunc, logError, logDebug logFunc,
 ) ([]*Asset, []PortIdentifyResult) {
 	normalizedTargets := normalizeNmapTargets(targets)
 	ports := uniqueNmapPorts(parsePorts(opts.Ports))
 	if len(ports) == 0 || len(normalizedTargets) == 0 {
-		logInfo("Nmap: no host-port pairs to scan")
 		return nil, nil
 	}
 
@@ -370,8 +366,6 @@ func (s *NmapScanner) runNmapWithLogger(
 	if concurrent > len(ports) {
 		concurrent = len(ports)
 	}
-
-	logInfo("Nmap: starting scan, %d ports, %d targets, concurrent=%d", len(ports), len(normalizedTargets), concurrent)
 
 	type scanTask struct {
 		port  int
@@ -392,7 +386,7 @@ func (s *NmapScanner) runNmapWithLogger(
 		go func() {
 			defer wg.Done()
 			for task := range taskChan {
-				results := s.scanSinglePortWithLogger(ctx, normalizedTargets, task.port, opts, logInfo, logError, logDebug)
+				results := s.scanSinglePortWithLevelLogger(ctx, normalizedTargets, task.port, opts, logInfo, logWarn, logError, logDebug)
 				completedChan <- completedTask{index: task.index, results: results}
 
 				if onTargetDone != nil {
@@ -432,13 +426,18 @@ dispatch:
 		identifyResults = append(identifyResults, item.results...)
 	}
 	assets := portIdentifyResultsToAssets(identifyResults, logInfo)
-	logInfo("Nmap: scan completed, found %d open ports, produced %d host-port results", len(assets), len(identifyResults))
 	return assets, identifyResults
 }
 
-// scanSinglePortWithLogger scans one port across all normalized targets and
-// always returns one result per target, including process and parse failures.
+// scanSinglePortWithLogger keeps the existing test seam while production uses
+// a distinct WARN logger for expected timeouts.
 func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logError, logDebug logFunc) []PortIdentifyResult {
+	return s.scanSinglePortWithLevelLogger(ctx, targets, port, opts, logInfo, logError, logError, logDebug)
+}
+
+// scanSinglePortWithLevelLogger scans one port across all normalized targets
+// and always returns one result per target, including process and parse failures.
+func (s *NmapScanner) scanSinglePortWithLevelLogger(ctx context.Context, targets []string, port int, opts *NmapOptions, logInfo, logWarn, logError, logDebug logFunc) []PortIdentifyResult {
 	targets = normalizeNmapTargets(targets)
 	if len(targets) == 0 {
 		return nil
@@ -453,7 +452,6 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 		args = append(args, strings.Fields(opts.Args)...)
 	}
 	args = append(args, targets...)
-	logInfo("[Nmap] CLI: port=%d targets=%d timeout=%ds", port, len(targets), opts.Timeout)
 
 	timeout := time.Duration(opts.Timeout) * time.Second
 	if timeout <= 0 {
@@ -464,7 +462,6 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 
 	if !acquireProcessSlot(portCtx) {
 		if errors.Is(portCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			logError("Nmap: port %d timeout while waiting for process slot", port)
 			return uniformPortIdentifyResults(targets, port, PortTimeout, NmapReasonTimeout)
 		}
 		logError("Nmap: canceled while waiting for process slot")
@@ -472,6 +469,7 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 	}
 	defer releaseProcessSlot()
 
+	logInfo("系统执行命令：%s", FormatCommandLine("nmap", args))
 	runner := s.commandRunner
 	if runner == nil {
 		runner = runNmapCommand
@@ -488,7 +486,6 @@ func (s *NmapScanner) scanSinglePortWithLogger(ctx context.Context, targets []st
 			logError("Nmap: port %d canceled", port)
 			return uniformPortIdentifyResults(targets, port, PortCanceled, NmapReasonCanceled)
 		}
-		logError("Nmap: port %d timeout after %s", port, timeout)
 		return uniformPortIdentifyResults(targets, port, PortTimeout, NmapReasonTimeout)
 	}
 
@@ -677,9 +674,6 @@ func portIdentifyResultsToAssets(results []PortIdentifyResult, logInfo logFunc) 
 				productInfo += ":" + result.Version
 			}
 			asset.App = []string{productInfo}
-			logInfo("发现存活服务: %s:%d -> %s (产品: %s)", result.Host, result.Port, result.Service, productInfo)
-		} else {
-			logInfo("发现存活服务: %s:%d -> %s", result.Host, result.Port, result.Service)
 		}
 		assets = append(assets, asset)
 	}

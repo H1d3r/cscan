@@ -11,13 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// 目录扫描/JSFinder 复验状态常量（与 vul.go 的 ReverifyStatus* 区分用途）
-const (
-	DirReverifyStatusResolved    = "resolved"    // 已复验通过
-	DirReverifyStatusPending     = "pending"     // 待复验
-	DirReverifyStatusReverifying = "reverifying" // 复验中
-)
-
 // DirScanResult 目录扫描结果
 type DirScanResult struct {
 	Id            primitive.ObjectID `bson:"_id,omitempty" json:"id"`
@@ -41,11 +34,6 @@ type DirScanResult struct {
 	UpdateTime    time.Time          `bson:"update_time" json:"updateTime"`
 	ScanTime      time.Time          `bson:"scan_time,omitempty" json:"scanTime,omitempty"`
 	Version       int64              `bson:"version,omitempty" json:"version,omitempty"`
-
-	// 复验跟踪字段
-	ReverifyStatus string    `bson:"reverify_status,omitempty" json:"reverifyStatus,omitempty"`
-	LastVerifiedAt time.Time `bson:"last_verified_at,omitempty" json:"lastVerifiedAt,omitempty"`
-	VerifyPending  bool      `bson:"verify_pending,omitempty" json:"verifyPending,omitempty"`
 
 	// AI研判字段
 	AIStatus     string    `bson:"ai_status,omitempty" json:"aiStatus,omitempty"`
@@ -445,49 +433,6 @@ func (m *DirScanResultModel) Stat(ctx context.Context) (map[string]int64, error)
 		}
 	}
 	return stat, nil
-}
-
-// FindFoundForReverify 取待复验的已发现目录/文件（状态码 2xx/3xx，视为暴露）。
-// 修复 M-11：排除已 resolved 的记录，并按 last_reverified_time 升序排序以轮转目标，避免饥饿。
-func (m *DirScanResultModel) FindFoundForReverify(ctx context.Context, limit int) ([]DirScanResult, error) {
-	filter := bson.M{
-		"status_code":  bson.M{"$gte": 200, "$lt": 400},
-		// 排除已复验为 resolved 的记录（原实现不过滤，已修复的目标会被反复选取）
-		"reverify_status": bson.M{"$ne": DirReverifyStatusResolved},
-	}
-	opts := options.Find()
-	if limit > 0 {
-		opts.SetLimit(int64(limit))
-	}
-	// 按上次复验时间升序轮转：从未复验过的优先，最早复验的优先
-	opts.SetSort(bson.D{
-		{Key: "last_verified_at", Value: 1},
-		{Key: "create_time", Value: 1},
-	})
-	cursor, err := m.coll.Find(ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-	var docs []DirScanResult
-	if err = cursor.All(ctx, &docs); err != nil {
-		return nil, err
-	}
-	return docs, nil
-}
-
-// MarkReverify 批量回写复验结果。
-func (m *DirScanResultModel) MarkReverify(ctx context.Context, ids []string, status string, verifiedAt time.Time, pending bool) error {
-	oids := toObjectIDs(ids)
-	if len(oids) == 0 {
-		return nil
-	}
-	_, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}}, bson.M{"$set": bson.M{
-		"reverify_status":  status,
-		"last_verified_at": verifiedAt,
-		"verify_pending":   pending,
-	}})
-	return err
 }
 
 // UpdateAIResult 回写单条AI研判结果

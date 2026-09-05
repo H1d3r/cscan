@@ -31,15 +31,9 @@ type JSFinderResult struct {
 	CreateTime       time.Time          `bson:"create_time" json:"createTime"`
 	UpdateTime       time.Time          `bson:"update_time" json:"updateTime"`
 
-	// 复验跟踪字段（T3.4 敏感信息持续复验）：reverify_status ∈ {resolved,verified,pending}；
-	// verify_pending 表示目标不可达（连不上），与已确认修复（resolved）区分，避免误判。
-	ReverifyStatus string    `bson:"reverify_status,omitempty" json:"reverifyStatus,omitempty"`
-	LastVerifiedAt time.Time `bson:"last_verified_at,omitempty" json:"lastVerifiedAt,omitempty"`
-	VerifyPending  bool      `bson:"verify_pending,omitempty" json:"verifyPending,omitempty"`
-
 	// AI研判字段
-	AIStatus     string    `bson:"ai_status,omitempty" json:"aiStatus,omitempty"`     // pending/completed，空值等价于pending
-	AIResult     string    `bson:"ai_result,omitempty" json:"aiResult,omitempty"`     // risk/no_risk
+	AIStatus     string    `bson:"ai_status,omitempty" json:"aiStatus,omitempty"` // pending/completed，空值等价于pending
+	AIResult     string    `bson:"ai_result,omitempty" json:"aiResult,omitempty"` // risk/no_risk
 	AIAnalyzedAt time.Time `bson:"ai_analyzed_at,omitempty" json:"aiAnalyzedAt,omitempty"`
 	AIReason     string    `bson:"ai_reason,omitempty" json:"aiReason,omitempty"` // AI判断理由
 }
@@ -264,31 +258,6 @@ func (m *JSFinderResultModel) DeleteMany(ctx context.Context, filter bson.M) (in
 		return 0, err
 	}
 	return res.DeletedCount, nil
-}
-
-// FindSensitiveForReverify 取待复验的敏感信息泄露发现（标签含 info-leak / sensitive / high-risk）。
-// 普通 url/absurl 信息类发现（severity=info，无上述标签）不纳入，避免噪声。limit<=0 表示不限制。
-func (m *JSFinderResultModel) FindSensitiveForReverify(ctx context.Context, limit int) ([]*JSFinderResult, error) {
-	filter := bson.M{"tags": bson.M{"$in": []string{"info-leak", "sensitive", "high-risk"}}}
-	opts := options.Find()
-	if limit > 0 {
-		opts.SetLimit(int64(limit))
-	}
-	return m.Find(ctx, filter, opts)
-}
-
-// MarkReverify 批量回写复验结果（T3.4）：reverify_status / last_verified_at / verify_pending。
-func (m *JSFinderResultModel) MarkReverify(ctx context.Context, ids []string, status string, verifiedAt time.Time, pending bool) error {
-	oids := toObjectIDs(ids)
-	if len(oids) == 0 {
-		return nil
-	}
-	_, err := m.coll.UpdateMany(ctx, bson.M{"_id": bson.M{"$in": oids}}, bson.M{"$set": bson.M{
-		"reverify_status":  status,
-		"last_verified_at": verifiedAt,
-		"verify_pending":   pending,
-	}})
-	return err
 }
 
 // UpdateAIResult 回写单条AI研判结果

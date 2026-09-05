@@ -130,8 +130,8 @@ func TestFingerprintSchemePipelineUsesVerifiedHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(httpxTargets) != 2 || !strings.HasPrefix(httpxTargets[0], "https://") {
-		t.Fatalf("httpx targets/order = %#v, want HTTPS first then alternate probe", httpxTargets)
+	if len(httpxTargets) != 1 || !strings.HasPrefix(httpxTargets[0], "https://") {
+		t.Fatalf("httpx targets/order = %#v, want only the first successful HTTPS probe", httpxTargets)
 	}
 	if !reflect.DeepEqual(successfulHTTPXTargets, []string{"https://scheme.example.test:443"}) {
 		t.Fatalf("successful httpx targets = %#v", successfulHTTPXTargets)

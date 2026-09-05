@@ -99,12 +99,6 @@ func getGlobalBrowser(taskLog func(level, format string, args ...interface{})) (
 	globalBrowserCtx = ctx
 	globalBrowserCancel = cancel
 	globalBrowserInited = true
-	if taskLog == nil {
-		taskLog = func(level, format string, args ...interface{}) {
-			logx.Infof(format, args...)
-		}
-	}
-	taskLog("INFO", "[Chromedp] Global browser initialized (single Chrome process, tab-per-screenshot)")
 	return globalBrowserCtx, nil
 }
 
@@ -482,15 +476,9 @@ func applyGovernedFingerprintFindings(asset *Asset, appResults map[string]*AppDe
 	asset.FingerprintFindings = GovernFingerprintFindings(combined)
 	for _, finding := range asset.FingerprintFindings {
 		if finding.Decision != fingerprintDecisionConfirmed {
-			if taskLog != nil {
-				taskLog("DEBUG", "[Fingerprint] candidate %s confidence=%d reason=%s", finding.Name, finding.Confidence, finding.ReasonCode)
-			}
 			continue
 		}
 		mergeGovernedFingerprintDetection(appResults, finding)
-		if taskLog != nil {
-			taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: %s)", asset.Host, asset.Port, finding.Name, finding.Source)
-		}
 	}
 }
 
@@ -634,8 +622,10 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 			return
 		}
 		switch level {
-		case "ERROR", "WARN":
+		case "ERROR":
 			logx.Errorf(format, args...)
+		case "WARN":
+			logx.Slowf(format, args...)
 		case "DEBUG":
 			logx.Debugf(format, args...)
 		default:
@@ -711,6 +701,14 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	// The scanner may receive assets carrying findings from a previous scan.
 	// Do not clear them until a real response is observed for each asset.
 	httpAssets := config.Assets
+	initialScreenshots := make(map[*Asset]bool, len(httpAssets))
+	initialAppSources := make(map[*Asset]map[string]map[string]struct{}, len(httpAssets))
+	for _, asset := range httpAssets {
+		if asset != nil {
+			initialScreenshots[asset] = asset.Screenshot != ""
+			initialAppSources[asset] = snapshotAppSources(asset.App)
+		}
+	}
 	resetFingerprintFindingsForScan(httpAssets)
 	result.Diagnostic.Coverage.Input = len(httpAssets)
 	if len(httpAssets) == 0 {
@@ -719,8 +717,6 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 		return result, nil
 	}
 
-	taskLog("INFO", "Fingerprint: scanning %d assets, tool=%s, timeout %ds/target", len(httpAssets), opts.Tool, opts.TargetTimeout)
-
 	// 根据选择的工具执行扫描
 	useHttpx := opts.Tool == "httpx"
 	var httpxErr error
@@ -728,7 +724,6 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if useHttpx {
 		// 使用 httpx 库进行基础探测，并保留其逐目标诊断；指纹 worker 的回调完成
 		// 不能替代真实响应成功，否则全量 timeout/no-output 会被误报为 COMPLETE。
-		taskLog("DEBUG", "Using httpx library for fingerprint detection")
 		if s.runHttpxWithDiagnostic != nil {
 			httpxDiagnostic, httpxErr = s.runHttpxWithDiagnostic(ctx, httpAssets, opts, taskLog)
 		} else if s.runHttpx != nil {
@@ -759,8 +754,6 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 				}
 			}
 		}
-	} else {
-		taskLog("DEBUG", "Using builtin method for fingerprint detection")
 	}
 
 	// Screenshot errors are diagnostic-only: they never mutate protocol evidence
@@ -799,7 +792,6 @@ func (s *FingerprintScanner) Scan(ctx context.Context, config *ScanConfig) (*Sca
 	if concurrency > len(httpAssets) {
 		concurrency = len(httpAssets)
 	}
-	taskLog("INFO", "Fingerprint: scanning %d assets with %d workers", len(httpAssets), concurrency)
 
 	type fpResult struct {
 		asset *Asset
@@ -925,30 +917,29 @@ dispatch:
 		}
 	}
 
-	taskLog("INFO", "Fingerprint: completed passive scan, scanned %d assets", len(httpAssets))
-
-	// 证书抓取（ARL 风格附加功能）：对 HTTPS 资产及 TLS 端口白名单资产抓取 TLS 证书，
-	// 采集结果经 worker.handleResult 落入 cert 集合。受 opts.Cert 开关控制，默认关闭。
+	certFetched := 0
+	certTargets := 0
 	if opts.Cert {
-		taskLog("DEBUG", "Fingerprint: cert fetch enabled, checking %d assets for cert targets", len(httpAssets))
-		// 使用独立上下文避免指纹扫描超时影响证书采集
-		certCtx, certCancel := context.WithTimeout(ctx, 120*time.Second)
-		certFetched := s.fetchCertsForAssets(certCtx, httpAssets, result, taskLog, config.OnCertFound)
-		certCancel()
-		if certFetched > 0 {
-			taskLog("INFO", "Fingerprint: cert fetch completed, collected %d certificates", certFetched)
-		} else {
-			taskLog("DEBUG", "Fingerprint: cert fetch completed, no certificates collected (0 cert targets found)")
+		for _, asset := range httpAssets {
+			if asset != nil && isCertFetchTarget(asset) {
+				certTargets++
+			}
 		}
-	} else {
-		taskLog("DEBUG", "Fingerprint: cert fetch disabled (cert=false)")
+		if certTargets == 0 {
+			taskLog("INFO", "证书采集跳过：没有可用的 HTTPS 目标")
+		} else {
+			// 使用独立上下文避免指纹扫描超时影响证书采集
+			certCtx, certCancel := context.WithTimeout(ctx, 120*time.Second)
+			certFetched = s.fetchCertsForAssets(certCtx, httpAssets, result, taskLog, config.OnCertFound)
+			certCancel()
+			taskLog("INFO", "证书采集阶段摘要：目标=%d，成功=%d，失败=%d", certTargets, certFetched, certTargets-certFetched)
+		}
 	}
 
 	// 执行主动指纹扫描（如果启用）
 	if opts.ActiveScan {
 		if s.customFingerprintEngine != nil {
 			activeCount := s.customFingerprintEngine.GetActiveFingerprintCount()
-			taskLog("INFO", "Active fingerprint scan enabled, engine has %d active fingerprints", activeCount)
 			if activeCount > 0 {
 				s.RunActiveFingerprint(ctx, httpAssets, opts, taskLog, config.OnAssetUpdated)
 			} else {
@@ -957,9 +948,40 @@ dispatch:
 		} else {
 			taskLog("WARN", "Active fingerprint scan enabled but customFingerprintEngine is nil")
 		}
-	} else {
-		taskLog("DEBUG", "Active fingerprint scan not enabled (activeScan=%v)", opts.ActiveScan)
 	}
+
+	fingerprintedAssets, screenshotSucceeded, screenshotFailed := 0, 0, 0
+	for _, diagnostic := range result.Diagnostic.Targets {
+		if diagnostic.ReasonCode == ReasonScreenshotFailed {
+			screenshotFailed++
+		}
+	}
+	loggedAssets := make(map[*Asset]bool, len(httpAssets))
+	for _, asset := range httpAssets {
+		if asset == nil || loggedAssets[asset] {
+			continue
+		}
+		loggedAssets[asset] = true
+		confirmedApps := newlyConfirmedFingerprintApps(asset.App, initialAppSources[asset])
+		if len(confirmedApps) > 0 {
+			fingerprintedAssets++
+			taskLog("INFO", "指纹识别结果：%s -> %s", formatAssetTarget(asset), strings.Join(confirmedApps, ", "))
+		}
+		if opts.Screenshot && asset.Screenshot != "" && !initialScreenshots[asset] {
+			screenshotSucceeded++
+			taskLog("INFO", "截图成功：%s", sanitizedTarget(buildAssetTargetURL(asset)))
+		}
+	}
+	unknownConditions := 0
+	if s.customFingerprintEngine != nil && (opts.CustomEngine || opts.ActiveScan) {
+		var conditionTypes []string
+		unknownConditions, conditionTypes = s.customFingerprintEngine.unknownConditionSummary(opts.CustomEngine, opts.ActiveScan)
+		if unknownConditions > 0 {
+			taskLog("WARN", "自定义指纹扫描摘要：未知条件=%d，类型=%s", unknownConditions, strings.Join(conditionTypes, ","))
+		}
+	}
+	taskLog("INFO", "指纹识别阶段摘要：输入=%d，已处理=%d，HTTP确认=%d，确认指纹资产=%d，截图成功=%d，截图失败=%d，证书目标=%d，证书成功=%d，状态=%s",
+		len(httpAssets), completed, succeeded, fingerprintedAssets, screenshotSucceeded, screenshotFailed, certTargets, certFetched, result.Diagnostic.Status)
 
 	if config.EventLogger != nil {
 		for _, asset := range httpAssets {
@@ -1175,7 +1197,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 	// httpx 正常情况下已获取 body/title；若为空（重定向丢失、超时截断等异常），使用内置客户端兜底
 	var bodyBytes []byte
 	if asset.HttpBody == "" || asset.Title == "" {
-		taskLog("DEBUG", "httpx body/title empty for %s:%d, falling back to builtin client", asset.Host, asset.Port)
 		resp, err := s.client.Get(targetUrl)
 		if err == nil {
 			defer resp.Body.Close()
@@ -1210,8 +1231,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			}
 			persistSuccessfulScheme(asset, observedScheme, resp.StatusCode)
 			targetUrl = buildAssetTargetURL(asset)
-			taskLog("DEBUG", "[Fingerprint] builtin HTTP %s: status=%d server=%q title=%q bodyLen=%d",
-				targetUrl, resp.StatusCode, asset.Server, asset.Title, len(body))
 			// 更新HttpHeader为实际响应的header
 			if asset.HttpHeader == "" {
 				asset.HttpHeader = formatHeadersWithStatus(resp.Header, resp.StatusCode, resp.Proto)
@@ -1226,14 +1245,10 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 
 	// 记录 httpx 残留的应用检测结果
 	mergeExistingAppDetections(appResults, asset.App)
-	if len(asset.App) > 0 {
-		taskLog("DEBUG", "[Fingerprint] httpx residual apps for %s:%d: %v", asset.Host, asset.Port, asset.App)
-	}
 
 	// 如果启用Wappalyzer，进行检测（httpx模式下通常不需要，但保留兼容性）
 	if opts.Wappalyzer && s.wappalyzerClient != nil {
 		apps := s.wappalyzerClient.Fingerprint(headers, []byte(asset.HttpBody))
-		taskLog("DEBUG", "Wappalyzer detected apps for %s:%d: %v", asset.Host, asset.Port, apps)
 
 		for app := range apps {
 			appNameLower := strings.ToLower(app)
@@ -1246,7 +1261,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 					Sources:      []string{"wappalyzer"},
 				}
 			}
-			taskLog("INFO", "发现应用指纹: %s:%d -> %s (来源: wappalyzer)", asset.Host, asset.Port, app)
 		}
 	}
 
@@ -1273,7 +1287,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 
 	// 如果启用自定义指纹引擎，使用自定义格式的规则进行识别
 	if opts.CustomEngine && s.customFingerprintEngine != nil {
-		fpCount := s.customFingerprintEngine.GetFingerprintCount()
 		// 使用原始字节数据进行GBK编码匹配
 		if len(bodyBytes) == 0 {
 			bodyBytes = []byte(asset.HttpBody)
@@ -1303,10 +1316,7 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 			BodyTruncated:   strings.Contains(strings.ToLower(asset.HttpBody), "[truncated]"),
 			HeaderTruncated: strings.Contains(strings.ToLower(asset.HttpHeader), "[truncated]"),
 		}
-		taskLog("DEBUG", "[Fingerprint] custom engine input: host=%s:%d url=%s title=%q server=%q bodyLen=%d faviconHash=%s cookies=%q",
-			asset.Host, asset.Port, targetUrl, asset.Title, asset.Server, len(asset.HttpBody), faviconMMH3Hash, cookies)
 		findings := s.customFingerprintEngine.MatchWithEvidence(fpData)
-		taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) evaluated findings for %s:%d: %v", fpCount, asset.Host, asset.Port, findings)
 		applyGovernedFingerprintFindings(asset, appResults, findings, taskLog)
 	}
 
@@ -1316,7 +1326,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 		formattedApp := formatAppWithSources(result)
 		asset.App = append(asset.App, formattedApp)
 	}
-	taskLog("DEBUG", "[Fingerprint] final apps for %s:%d: %v (wappalyzer+custom+httpx merged)", asset.Host, asset.Port, asset.App)
 
 	// 截图功能：如果 httpx 没有获取到截图，使用内置方法补充
 	// 修复 D6：port 未知(==0)时跳过截图，避免对默认端口做无意义 Chrome 启动
@@ -1327,7 +1336,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 		shotCancel()
 		if screenshot != "" {
 			asset.Screenshot = screenshot
-			taskLog("DEBUG", "Screenshot captured for %s:%d using builtin method", asset.Host, asset.Port)
 		} else if onScreenshotFailure != nil {
 			onScreenshotFailure(asset, targetUrl)
 		}
@@ -1341,17 +1349,6 @@ func (s *FingerprintScanner) runAdditionalFingerprint(ctx context.Context, asset
 // fetchCertsForAssets 对资产列表中符合证书抓取条件的资产执行 TLS 握手并解析证书。
 // 返回成功采集的证书数量；失败的目标静默跳过（不影响整体指纹识别）。
 func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*Asset, result *ScanResult, taskLog func(level, format string, args ...interface{}), onCertFound func(*CertResult)) int {
-	certTargetCount := 0
-	for _, a := range assets {
-		if a == nil || !isCertFetchTarget(a) {
-			continue
-		}
-		certTargetCount++
-	}
-	if taskLog != nil {
-		taskLog("DEBUG", "Fingerprint: cert fetch checking %d/%d assets for TLS certs", certTargetCount, len(assets))
-	}
-
 	count := 0
 	for _, a := range assets {
 		if a == nil || !isCertFetchTarget(a) {
@@ -1373,9 +1370,6 @@ func (s *FingerprintScanner) fetchCertsForAssets(ctx context.Context, assets []*
 				onCertFound(cr)
 			}
 		}
-	}
-	if taskLog != nil && certTargetCount > 0 {
-		taskLog("DEBUG", "Fingerprint: cert fetch done, %d certs collected from %d targets", count, certTargetCount)
 	}
 	return count
 }
@@ -1579,7 +1573,6 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 
 		// 使用自定义指纹引擎
 		if opts.CustomEngine && s.customFingerprintEngine != nil {
-			fpCount := s.customFingerprintEngine.GetFingerprintCount()
 			fpData := &FingerprintData{
 				Title:         asset.Title,
 				Body:          asset.HttpBody,
@@ -1593,7 +1586,6 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 				BodyTruncated: len(body) > 50*1024 || strings.Contains(strings.ToLower(asset.HttpBody), "[truncated]"),
 			}
 			findings := s.customFingerprintEngine.MatchWithEvidence(fpData)
-			taskLog("DEBUG", "Custom fingerprint engine (loaded %d fingerprints) evaluated findings for %s:%d: %v", fpCount, asset.Host, asset.Port, findings)
 			applyGovernedFingerprintFindings(asset, appResults, findings, taskLog)
 		}
 
@@ -1610,7 +1602,6 @@ func (s *FingerprintScanner) fingerprint(ctx context.Context, asset *Asset, opts
 			shotCtx, shotCancel := screenshotContext(ctx, opts)
 			screenshot := s.captureScreenshot(shotCtx, targetUrl, taskLog)
 			shotCancel()
-			taskLog("INFO", "takeScreenshot截图: targetUrl:%s ->screenshot)", targetUrl)
 			if screenshot != "" {
 				asset.Screenshot = screenshot
 			} else if onScreenshotFailure != nil {
@@ -1842,9 +1833,6 @@ func (s *FingerprintScanner) takeScreenshot(ctx context.Context, targetUrl strin
 			taskLog("ERROR", "Screenshot failed for %s: %v", targetUrl, r.err)
 			return ""
 		}
-		if r.data != "" {
-			taskLog("INFO", "完成使用chromedp截图: %s", targetUrl)
-		}
 		return r.data
 	case <-timer.C:
 		taskLog("ERROR", "Screenshot timeout for %s (60s), closing tab", targetUrl)
@@ -2016,6 +2004,52 @@ func parseAppDetection(app string) *AppDetectionResult {
 	return result
 }
 
+func snapshotAppSources(apps []string) map[string]map[string]struct{} {
+	snapshot := make(map[string]map[string]struct{})
+	for _, app := range apps {
+		detection := parseAppDetection(app)
+		if detection == nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(detection.Name))
+		if name == "" {
+			continue
+		}
+		if snapshot[name] == nil {
+			snapshot[name] = make(map[string]struct{})
+		}
+		for _, source := range detection.Sources {
+			snapshot[name][strings.ToLower(strings.TrimSpace(source))] = struct{}{}
+		}
+	}
+	return snapshot
+}
+
+func newlyConfirmedFingerprintApps(apps []string, before map[string]map[string]struct{}) []string {
+	confirmed := make([]string, 0, len(apps))
+	for _, app := range apps {
+		detection := parseAppDetection(app)
+		if detection == nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(detection.Name))
+		isNewConfirmation := false
+		for _, source := range detection.Sources {
+			source = strings.ToLower(strings.TrimSpace(source))
+			switch source {
+			case "httpx", "wappalyzer", "custom", "active":
+				if _, existed := before[name][source]; !existed {
+					isNewConfirmation = true
+				}
+			}
+		}
+		if isNewConfirmation {
+			confirmed = append(confirmed, app)
+		}
+	}
+	return confirmed
+}
+
 func parseSourcePart(part string) (string, string) {
 	part = strings.TrimSpace(part)
 	if part == "" {
@@ -2184,8 +2218,10 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 	if taskLog == nil {
 		taskLog = func(level, format string, args ...interface{}) {
 			switch level {
-			case "ERROR", "WARN":
+			case "ERROR":
 				logx.Errorf(format, args...)
+			case "WARN":
+				logx.Slowf(format, args...)
 			case "DEBUG":
 				logx.Debugf(format, args...)
 			default:
@@ -2218,7 +2254,7 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 		return
 	}
 
-	taskLog("INFO", "Active fingerprint: scanning %d assets with %d active fingerprints", len(aliveAssets), activeCount)
+	taskLog("INFO", "主动指纹阶段开始：资产=%d，规则=%d", len(aliveAssets), activeCount)
 
 	// 设置主动指纹超时
 	activeTimeout := 10 * time.Second
@@ -2246,21 +2282,6 @@ func (s *FingerprintScanner) RunActiveFingerprint(ctx context.Context, assets []
 
 	// 获取主动指纹列表
 	activeFingerprints := s.customFingerprintEngine.GetActiveFingerprints()
-
-	// 调试：检查主动指纹是否有匹配规则
-	fingerprintsWithRule := 0
-	fingerprintsWithoutRule := 0
-	for _, fp := range activeFingerprints {
-		hasRule := fp.Rule != "" || len(fp.HTML) > 0 || len(fp.Headers) > 0 || len(fp.Scripts) > 0
-		if hasRule {
-			fingerprintsWithRule++
-			taskLog("DEBUG", "Active fingerprint '%s' has rule: %s, paths: %v", fp.Name, fp.Rule, fp.ActivePaths)
-		} else {
-			fingerprintsWithoutRule++
-			taskLog("DEBUG", "Active fingerprint '%s' has NO rule, paths: %v", fp.Name, fp.ActivePaths)
-		}
-	}
-	taskLog("DEBUG", "Active fingerprints: %d with rules, %d without rules", fingerprintsWithRule, fingerprintsWithoutRule)
 
 	// 请求计数器
 	var requestCount int32
@@ -2334,7 +2355,6 @@ dispatch:
 					req, err := http.NewRequestWithContext(reqCtx, "GET", fullURL, nil)
 					if err != nil {
 						atomic.AddInt32(&failCount, 1)
-						taskLog("DEBUG", "Active fingerprint request create failed: %s, error: %v", fullURL, err)
 						return
 					}
 
@@ -2374,19 +2394,13 @@ dispatch:
 						BodyTruncated: len(body) >= 1024*1024,
 					}
 
-					// 调试：记录请求结果
-					taskLog("DEBUG", "Active fingerprint request: %s, status=%d, bodyLen=%d, title=%s", fullURL, resp.StatusCode, len(body), fpData.Title)
-
 					// 匹配指纹
 					if s.customFingerprintEngine.MatchActiveFingerprint(fp, fpData) {
 						// 404页面通常不算匹配成功（除非是特定指纹如ThinkPHP）
 						if resp.StatusCode == 404 && !strings.Contains(strings.ToLower(fp.Name), "thinkphp") {
-							taskLog("DEBUG", "Active fingerprint '%s' matched but status is 404, skipping", fp.Name)
 							return
 						}
 
-						taskLog("DEBUG", "Active fingerprint matched: %s -> %s (path: %s)", baseURL, fp.Name, path)
-						taskLog("INFO", "Active fingerprint: %s -> %s", fullURL, fp.Name)
 						s.assetMutex.Lock()
 						if mergeActiveFingerprintApp(asset, fp) {
 							changedAssets[asset] = struct{}{}
@@ -2409,7 +2423,7 @@ dispatch:
 			onAssetUpdated(&assetSnapshot)
 		}
 	}
-	taskLog("INFO", "Active fingerprint: scan completed, requests=%d, success=%d, fail=%d", requestCount, successCount, failCount)
+	taskLog("INFO", "主动指纹阶段摘要：请求=%d，成功=%d，失败=%d", requestCount, successCount, failCount)
 }
 
 // isConnectionRefused 检查错误是否为连接被拒绝（目标不可达）

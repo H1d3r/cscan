@@ -109,16 +109,6 @@
                 >{{ $t('worker.restart') }}</el-button>
               </template>
             </el-popconfirm>
-            <el-popconfirm
-              :title="$t('worker.confirmDelete')"
-              :confirm-button-text="$t('common.confirm')"
-              :cancel-button-text="$t('common.cancel')"
-              @confirm="deleteWorker(row.name)"
-            >
-              <template #reference>
-                <el-button link size="small" type="danger">{{ $t('common.delete') }}</el-button>
-              </template>
-            </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
@@ -477,7 +467,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, reactive, computed, nextTick } from 'vue'
-import { Refresh, Delete, Edit, RefreshRight, Download, Monitor, Document, Search } from '@element-plus/icons-vue'
+import { Refresh, Edit, RefreshRight, Download, Monitor, Document, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import { useI18n } from 'vue-i18n'
@@ -695,20 +685,6 @@ function getHealthStatusText(status) {
     'throttled': t('worker.throttled')
   }
   return texts[status] || status
-}
-
-async function deleteWorker(workerName) {
-  try {
-    const res = await request.post('/worker/delete', { name: workerName })
-    if (res.code === 0) {
-      ElMessage.success(t('worker.workerDeleted'))
-      loadData()
-    } else {
-      ElMessage.error(res.msg || t('worker.deleteFailed'))
-    }
-  } catch (e) {
-    ElMessage.error(t('worker.deleteFailed') + ': ' + e.message)
-  }
 }
 
 async function restartWorker(workerName) {

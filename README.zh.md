@@ -64,6 +64,9 @@ docker compose pull && docker compose up -d
 ```bash
 # Windows PowerShell:
 ./dev.ps1
+
+# mac/linux:
+./dev.sh
 ```
 ---
 

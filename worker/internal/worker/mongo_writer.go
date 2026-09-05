@@ -193,13 +193,8 @@ func (w *Worker) replayAssetResult(ctx context.Context, req *TaskResultReq) erro
 		assets[i] = assetDocumentToScannerAsset(&req.Assets[i])
 	}
 	svc := model.NewAssetWriteService(w.mongoDB)
-	result, err := svc.SaveAssets(ctx, req.MainTaskId, req.OrgId, assets)
-	if err != nil {
-		return err
-	}
-	w.taskLog(req.MainTaskId, LevelInfo, "[Replay] assets saved: total=%d, new=%d, update=%d",
-		result.TotalAsset, result.NewAsset, result.UpdateAsset)
-	return nil
+	_, err := svc.SaveAssets(ctx, req.MainTaskId, req.OrgId, assets)
+	return err
 }
 
 func assetDocumentToScannerAsset(doc *AssetDocument) *model.ScannerAsset {
@@ -349,14 +344,12 @@ func (w *Worker) saveAssetResultDirect(ctx context.Context, mainTaskID, orgID st
 	}
 
 	svc := model.NewAssetWriteService(w.mongoDB)
-	result, err := svc.SaveAssets(ctx, mainTaskID, orgID, scannerAssets)
+	_, err := svc.SaveAssets(ctx, mainTaskID, orgID, scannerAssets)
 	if err != nil {
 		w.taskLog(mainTaskID, LevelError, "[MongoDirect] SaveAssets failed: %v", err)
 		return err
 	}
 
-	w.taskLog(mainTaskID, LevelInfo, "[MongoDirect] assets saved: total=%d, new=%d, update=%d",
-		result.TotalAsset, result.NewAsset, result.UpdateAsset)
 	return nil
 }
 
