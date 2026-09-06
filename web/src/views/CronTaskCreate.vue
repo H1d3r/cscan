@@ -1219,7 +1219,7 @@ function getDefaultForm() {
     ports: 'top100',
     portThreshold: 100,
     scanType: 'c',
-    portscanTargetTimeout: 60,
+    portscanTargetTimeout: 120,
     portscanProbeTimeoutMs: 1000,
     skipHostDiscovery: false,
     excludeCDN: false,
@@ -1832,6 +1832,20 @@ async function validateCron() {
   }
 }
 
+// 端口范围与单目标扫描上限联动（推荐值）
+const PORT_TIMEOUT_MAP = {
+  'top100': 120,
+  'top1000': 200,
+  '80,443,8080,8443': 60,
+  '1-65535': 900,
+}
+let isLoadingConfig = false
+watch(() => form.ports, (val) => {
+  if (!isLoadingConfig && PORT_TIMEOUT_MAP[val] !== undefined) {
+    form.portscanTargetTimeout = PORT_TIMEOUT_MAP[val]
+  }
+})
+
 // Cron 表达式实时校验（输入防抖 400ms，避免频繁请求后端）
 let cronDebounceTimer = null
 watch(() => form.cronSpec, (val) => {
@@ -2017,6 +2031,7 @@ function buildConfig() {
 
 // 将嵌套配置结构映射回扁平表单字段（编辑回显用）
 function applyConfig(config) {
+  isLoadingConfig = true
   if (config.domainscan) {
     form.domainscanEnable = config.domainscan.enable ?? false
     form.domainscanSubfinder = config.domainscan.subfinder ?? true
@@ -2127,6 +2142,7 @@ function applyConfig(config) {
     form.jsfinderEnableSourcemap = config.jsfinder.enableSourcemap ?? true
     form.jsfinderEnableUnauthCheck = config.jsfinder.enableUnauthCheck ?? true
   }
+  isLoadingConfig = false
 }
 
 // 提交表单

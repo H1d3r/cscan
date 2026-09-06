@@ -1225,7 +1225,7 @@ const form = reactive({
   ports: 'top100',
   portThreshold: 100,
   scanType: 'c',
-  portscanTargetTimeout: 60,
+  portscanTargetTimeout: 120,
   portscanProbeTimeoutMs: 1000,
   skipHostDiscovery: false,
   excludeCDN: false,
@@ -1430,6 +1430,7 @@ onMounted(async () => {
         const isManualMode = !!(config.pocscan?.nucleiSelectAll || config.pocscan?.customPocSelectAll ||
           (config.pocscan?.nucleiTemplateIds?.length > 0) || (config.pocscan?.customPocIds?.length > 0))
         const hasBruteforce = config.domainscan?.subdomainDictIds?.length > 0
+        isLoadingConfig = true
         Object.assign(form, {
           domainscanEnable: config.domainscan?.enable ?? false,
           domainscanSubfinder: config.domainscan?.subfinder ?? true,
@@ -1506,6 +1507,7 @@ onMounted(async () => {
           jsfinderEnableUnauthCheck: config.jsfinder?.enableUnauthCheck ?? true,
           jsfinderForceScan: config.jsfinder?.forceScan ?? false
         })
+        isLoadingConfig = false
         nucleiSelectAll.value = !!config.pocscan?.nucleiSelectAll
         nucleiSelectAllCount.value = nucleiSelectAll.value ? (config.pocscan?.nucleiTemplateIds?.length || 0) : 0
         Object.assign(nucleiSelectAllFilter, config.pocscan?.nucleiSelectAllFilter || {})
@@ -1534,6 +1536,20 @@ watch(() => form.recursiveDictIds, (newVal) => {
     form.domainscanRecursiveBrute = false
   }
 }, { deep: true })
+
+// 端口范围与单目标扫描上限联动（推荐值）
+const PORT_TIMEOUT_MAP = {
+  'top100': 120,
+  'top1000': 200,
+  '80,443,8080,8443': 60,
+  '1-65535': 900,
+}
+let isLoadingConfig = false
+watch(() => form.ports, (val) => {
+  if (!isLoadingConfig && PORT_TIMEOUT_MAP[val] !== undefined) {
+    form.portscanTargetTimeout = PORT_TIMEOUT_MAP[val]
+  }
+})
 
 // 当模块启用状态变化时，仅展开/收缩对应面板，不影响其他面板
 const moduleEnableMap = [
@@ -1622,6 +1638,7 @@ function applyConfig(config) {
   if (config.name) form.name = config.name
   if (config.target) form.target = config.target
 
+  isLoadingConfig = true
   Object.assign(form, {
     // batchSize 由后端自动计算，不再从配置加载
     // 子域名扫描
@@ -1709,6 +1726,7 @@ function applyConfig(config) {
     jsfinderEnableUnauthCheck: config.jsfinder?.enableUnauthCheck ?? true,
     jsfinderForceScan: config.jsfinder?.forceScan ?? false
   })
+  isLoadingConfig = false
 
   // 恢复手动全选状态（后端已展开的 ID 列表数量仅作展示，不加载列表）
   nucleiSelectAll.value = !!config.pocscan?.nucleiSelectAll
