@@ -31,6 +31,7 @@ services:
   # MongoDB
   mongodb:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/mongo:6
+    container_name: cscan_mongodb
     logging: *default-logging
     volumes:
       - cscan_mongodb_data:/data/db
