@@ -43,6 +43,7 @@ func (l *VulReverifyLogic) hasOnlineWorker() bool {
 		}
 		for _, key := range batch {
 			if key == "cscan:worker:install_key" ||
+				strings.Contains(key, ":instance:") ||
 				strings.Contains(key, ":control:") ||
 				strings.Contains(key, ":register:") ||
 				strings.Contains(key, ":desired_concurrency:") {
@@ -124,12 +125,12 @@ func (l *VulReverifyLogic) VulReverify(req *types.VulReverifyReq) (*types.VulRev
 			continue
 		}
 		task := &scheduler.TaskInfo{
-			TaskId:      taskId,
-			MainTaskId:  taskId,
-			TaskName:    "vuln_reverify",
-			Config:      string(cfgBytes),
-			Priority:    scheduler.PriorityHigh,
-			CreateTime:  time.Now().Local().Format("2006-01-02 15:04:05"),
+			TaskId:     taskId,
+			MainTaskId: taskId,
+			TaskName:   "vuln_reverify",
+			Config:     string(cfgBytes),
+			Priority:   scheduler.PriorityHigh,
+			CreateTime: time.Now().Local().Format("2006-01-02 15:04:05"),
 		}
 		if pErr := l.svcCtx.Scheduler.PushTask(l.ctx, task); pErr != nil {
 			l.Logger.Errorf("[VulReverify] PushTask for vuln %s failed: %v", id, pErr)

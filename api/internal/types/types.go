@@ -190,7 +190,6 @@ type UserTokenListItem struct {
 	Id         string   `json:"id"`
 	Name       string   `json:"name"`
 	Prefix     string   `json:"prefix"`
-	PlainToken string   `json:"plainToken"`
 	Scopes     []string `json:"scopes"`
 	ExpiresAt  int64    `json:"expiresAt,omitempty"`
 	LastUsedAt int64    `json:"lastUsedAt,omitempty"`

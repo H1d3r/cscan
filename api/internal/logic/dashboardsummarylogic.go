@@ -112,9 +112,9 @@ func (l *DashboardSummaryLogic) buildSummary() (*types.DashboardSummaryResp, err
 		var total int64
 		for taskResults.Next(l.ctx) {
 			var result struct {
-				ID     string `bson:"_id"`
-				Count  int64  `bson:"count"`
-				Total  int64  `bson:"total"`
+				ID     string    `bson:"_id"`
+				Count  int64     `bson:"count"`
+				Total  int64     `bson:"total"`
 				Latest time.Time `bson:"latest"`
 			}
 			if err := taskResults.Decode(&result); err == nil {
@@ -184,6 +184,7 @@ func (l *DashboardSummaryLogic) buildSummary() (*types.DashboardSummaryResp, err
 	var workerOnline, workerOffline int
 	for _, key := range workerKeys {
 		if key == "cscan:worker:install_key" ||
+			strings.Contains(key, ":instance:") ||
 			strings.Contains(key, ":control:") ||
 			strings.Contains(key, ":register:") {
 			continue

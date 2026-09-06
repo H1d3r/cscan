@@ -184,14 +184,13 @@ func (l *UserProfileLogic) UserTokenCreate(req *types.UserTokenCreateReq) (resp 
 	}
 
 	doc := &model.UserToken{
-		UserId:     oid,
-		Name:       req.Name,
-		TokenHash:  model.HashPAT(plain),
-		PlainToken: plain,
-		Prefix:     model.PATPrefixOf(plain),
-		Scopes:     scopes,
-		ExpiresAt:  expiresPtr,
-		Status:     model.StatusEnable,
+		UserId:    oid,
+		Name:      req.Name,
+		TokenHash: model.HashPAT(plain),
+		Prefix:    model.PATPrefixOf(plain),
+		Scopes:    scopes,
+		ExpiresAt: expiresPtr,
+		Status:    model.StatusEnable,
 	}
 	if err := l.svcCtx.UserTokenModel.Insert(l.ctx, doc); err != nil {
 		logx.Errorf("[PAT] insert token failed: %v", err)
@@ -263,7 +262,6 @@ func (l *UserProfileLogic) UserTokenList() (resp *types.UserTokenListResp, err e
 			Id:         d.Id.Hex(),
 			Name:       d.Name,
 			Prefix:     d.Prefix,
-			PlainToken: d.PlainToken,
 			Scopes:     d.Scopes,
 			Status:     d.Status,
 			CreateTime: d.CreateTime.Unix(),

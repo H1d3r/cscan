@@ -69,6 +69,7 @@ func (l *WorkerListLogic) WorkerList() (resp *types.WorkerListResp, err error) {
 	for _, key := range keys {
 		// 跳过非Worker状态的键（如 cscan:worker:control:*, cscan:worker:install_key 等）
 		if key == "cscan:worker:install_key" ||
+			strings.Contains(key, ":instance:") ||
 			strings.Contains(key, ":control:") ||
 			strings.Contains(key, ":register:") {
 			continue
@@ -163,52 +164,16 @@ func (l *WorkerRenameLogic) WorkerRename(req *types.WorkerRenameReq) (resp *type
 	if req.OldName == "" || req.NewName == "" {
 		return &types.WorkerRenameResp{Code: 400, Msg: "Worker名称不能为空"}, nil
 	}
-
 	if req.OldName == req.NewName {
 		return &types.WorkerRenameResp{Code: 400, Msg: "新旧名称相同"}, nil
 	}
 
-	rdb := l.svcCtx.RedisClient
-
-	// 1. 获取原Worker状态数据
-	oldKey := fmt.Sprintf("cscan:worker:%s", req.OldName)
-	data, err := rdb.Get(l.ctx, oldKey).Result()
-	if err != nil {
-		return &types.WorkerRenameResp{Code: 404, Msg: "Worker不存在"}, nil
-	}
-
-	// 2. 检查新名称是否已存在
-	newKey := fmt.Sprintf("cscan:worker:%s", req.NewName)
-	exists, _ := rdb.Exists(l.ctx, newKey).Result()
-	if exists > 0 {
-		return &types.WorkerRenameResp{Code: 400, Msg: "新名称已被使用"}, nil
-	}
-
-	// 3. 更新状态数据中的workerName
-	var status map[string]interface{}
-	if err := json.Unmarshal([]byte(data), &status); err != nil {
-		return &types.WorkerRenameResp{Code: 500, Msg: "数据解析失败"}, nil
-	}
-	status["workerName"] = req.NewName
-
-	// 4. 保存到新key
-	newData, _ := json.Marshal(status)
-	rdb.Set(l.ctx, newKey, newData, 10*time.Minute)
-
-	// 5. 删除旧key
-	rdb.Del(l.ctx, oldKey)
-
-	// 6. 更新Worker集合
-	rdb.SRem(l.ctx, "cscan:workers", req.OldName)
-	rdb.SAdd(l.ctx, "cscan:workers", req.NewName)
-
-	// 7. 发送重命名命令给Worker（让Worker更新自己的名称）
-	renameMsg, _ := json.Marshal(map[string]interface{}{"action": "rename", "workerName": req.OldName, "newName": req.NewName})
-	rdb.Publish(l.ctx, "cscan:worker:control", renameMsg)
-
-	l.Logger.Infof("[WorkerRename] Renamed worker from %s to %s", req.OldName, req.NewName)
-
-	return &types.WorkerRenameResp{Code: 0, Msg: "重命名成功"}, nil
+	// WorkerName participates in leased execution ownership and is immutable
+	// for one process lifetime. Renaming Redis/UI state in place would split the
+	// heartbeat, scheduler, and WebSocket identities, so require a drained
+	// restart with the new configured name instead.
+	l.Logger.Infof("[WorkerRename] Rejected runtime rename from %s to %s; restart required", req.OldName, req.NewName)
+	return &types.WorkerRenameResp{Code: 409, Msg: "运行时重命名不受支持，请停止并排空 Worker 后使用新名称重启"}, nil
 }
 
 // WorkerRestartLogic Worker重启逻辑

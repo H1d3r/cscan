@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,24 +17,23 @@ import (
 )
 
 const (
-	PATPrefix      = "cscan_pat_"
+	PATPrefix        = "cscan_pat_"
 	MaxTokensPerUser = 10
 )
 
 type UserToken struct {
-	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserId      primitive.ObjectID `bson:"user_id" json:"userId"`
-	Name        string             `bson:"name" json:"name"`
-	TokenHash   string             `bson:"token_hash" json:"-"`
-	PlainToken  string             `bson:"plain_token" json:"-"`
-	Prefix      string             `bson:"prefix" json:"prefix"`
-	Scopes      []string           `bson:"scopes,omitempty" json:"scopes,omitempty"`
-	ExpiresAt   *time.Time         `bson:"expires_at,omitempty" json:"expiresAt,omitempty"`
-	LastUsedAt  *time.Time         `bson:"last_used_at,omitempty" json:"lastUsedAt,omitempty"`
-	LastUsedIP  string             `bson:"last_used_ip,omitempty" json:"lastUsedIp,omitempty"`
-	Status      string             `bson:"status" json:"status"`
-	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
+	Id         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserId     primitive.ObjectID `bson:"user_id" json:"userId"`
+	Name       string             `bson:"name" json:"name"`
+	TokenHash  string             `bson:"token_hash" json:"-"`
+	Prefix     string             `bson:"prefix" json:"prefix"`
+	Scopes     []string           `bson:"scopes,omitempty" json:"scopes,omitempty"`
+	ExpiresAt  *time.Time         `bson:"expires_at,omitempty" json:"expiresAt,omitempty"`
+	LastUsedAt *time.Time         `bson:"last_used_at,omitempty" json:"lastUsedAt,omitempty"`
+	LastUsedIP string             `bson:"last_used_ip,omitempty" json:"lastUsedIp,omitempty"`
+	Status     string             `bson:"status" json:"status"`
+	CreateTime time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime time.Time          `bson:"update_time" json:"updateTime"`
 }
 
 type UserTokenModel struct {
@@ -41,11 +41,31 @@ type UserTokenModel struct {
 }
 
 func NewUserTokenModel(db *mongo.Database) *UserTokenModel {
-	return &UserTokenModel{coll: db.Collection("user_tokens")}
+	coll := db.Collection("user_tokens")
+	if err := ensureIndexes(coll, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "token_hash", Value: 1}}, Options: options.Index().SetUnique(true)},
+	}); err != nil {
+		logx.Errorf("[UserTokenModel] ensure token hash index failed: %v", err)
+	}
+	return &UserTokenModel{coll: coll}
 }
 
 func (m *UserTokenModel) Collection() *mongo.Collection {
 	return m.coll
+}
+
+// RemoveLegacyPlainTokens permanently removes PAT plaintext left by older releases.
+// The existence filter makes this migration safe to run on every startup.
+func (m *UserTokenModel) RemoveLegacyPlainTokens(ctx context.Context) (int64, error) {
+	result, err := m.coll.UpdateMany(
+		ctx,
+		bson.M{"plain_token": bson.M{"$exists": true}},
+		bson.M{"$unset": bson.M{"plain_token": ""}},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.ModifiedCount, nil
 }
 
 func (m *UserTokenModel) Insert(ctx context.Context, doc *UserToken) error {

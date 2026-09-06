@@ -127,16 +127,6 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column :label="$t('common.action')" width="160" fixed="right">
-              <template #default="{ row }">
-                <el-button size="small" @click="handleViewToken(row)">
-                  {{ $t('user.tokenView', '查看') }}
-                </el-button>
-                <el-button size="small" @click="handleCopyToken(row)">
-                  {{ $t('common.copy', '复制') }}
-                </el-button>
-              </template>
-            </el-table-column>
             <template #empty>
               <span>{{ $t('user.tokenEmpty', '暂无 Token') }}</span>
             </template>
@@ -197,7 +187,7 @@
       </template>
     </el-dialog>
 
-    <!-- Token 明文展示对话框：新建后或点击"查看"时显示，可复制 -->
+    <!-- Token 明文展示对话框：仅在新建后显示，可复制 -->
     <el-dialog v-model="tokenRevealVisible" :title="$t('user.tokenCreated', 'Token 已创建')" width="560px" append-to-body :close-on-click-modal="false">
       <el-alert type="warning" :closable="false">
         <template #title>{{ $t('user.tokenCreatedWarn') }}</template>
@@ -554,24 +544,7 @@ async function handleToggleStatus(row, val) {
   }
 }
 
-// 查看明文：已登录用户可随时查看自身 Token 明文
-function handleViewToken(row) {
-  if (!row.plainToken) {
-    ElMessage.warning(t('user.tokenPlaintextUnavailable', 'Token 明文不可用，请刷新列表后重试。'))
-    return
-  }
-  currentRevealToken.value = row.plainToken
-  tokenRevealVisible.value = true
-}
-
-function handleCopyToken(row) {
-  if (!row.plainToken) {
-    ElMessage.warning(t('user.tokenPlaintextUnavailable', 'Token 明文不可用，请刷新列表后重试。'))
-    return
-  }
-  navigator.clipboard?.writeText(row.plainToken)
-  ElMessage.success(t('common.copySuccess', '已复制'))
-}
+// 查看和复制历史 Token 明文已移除；明文只在新建成功后的当前对话框中展示一次。
 
 function copyCurrentToken() {
   if (!currentRevealToken.value) return
