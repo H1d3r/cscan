@@ -358,10 +358,15 @@ const themeStore = useThemeStore()
 const { t } = useI18n()
 
 const VERSION_SOURCE_URL = 'https://raw.githubusercontent.com/tangxiaofeng7/cscan/main/VERSION'
+// 国内网络下 raw.githubusercontent.com 经常不可达，失败时依次回退到以下镜像源
+const VERSION_FALLBACK_URLS = [
+  'https://cnb.cool/txf7/cscan/-/git/raw/main/VERSION'
+]
 const currentVersion = __APP_VERSION__
 const latestVersion = ref('')
 const versionLoading = ref(true)
 let versionAbortController = null
+let versionLoadGeneration = 0
 
 function compareVersions(left, right) {
   const normalize = value => String(value || '')
@@ -382,23 +387,57 @@ function compareVersions(left, right) {
 const updateAvailable = computed(() => compareVersions(latestVersion.value, currentVersion) > 0)
 
 async function loadLatestVersion() {
-  versionAbortController?.abort()
-  versionAbortController = new AbortController()
-  const timeout = setTimeout(() => versionAbortController?.abort(), 5000)
+  const generation = ++versionLoadGeneration
+  const previousController = versionAbortController
+  versionAbortController = null
+  previousController?.abort()
+
+  const ownsLoad = () => isComponentAlive && generation === versionLoadGeneration
+  if (!ownsLoad()) return
+
   versionLoading.value = true
   try {
-    const response = await fetch(VERSION_SOURCE_URL, {
-      cache: 'no-store',
-      signal: versionAbortController.signal
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    latestVersion.value = (await response.text()).trim()
+    for (const url of [VERSION_SOURCE_URL, ...VERSION_FALLBACK_URLS]) {
+      if (!ownsLoad()) return
+
+      const controller = new AbortController()
+      versionAbortController = controller
+      let timedOut = false
+      const timeout = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, 5000)
+      try {
+        const response = await fetch(url, {
+          cache: 'no-store',
+          signal: controller.signal
+        })
+        if (!ownsLoad()) return
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+        const version = (await response.text()).trim()
+        if (!ownsLoad()) return
+        if (version) {
+          latestVersion.value = version
+          return
+        }
+      } catch (err) {
+        if (!ownsLoad()) return
+        if (err?.name === 'AbortError' && !timedOut) return
+      } finally {
+        clearTimeout(timeout)
+        if (generation === versionLoadGeneration && versionAbortController === controller) {
+          versionAbortController = null
+        }
+      }
+    }
+    if (ownsLoad()) latestVersion.value = ''
   } catch (err) {
+    if (!ownsLoad()) return
     if (err?.name !== 'AbortError') console.warn('[Dashboard] latest version unavailable:', err)
     latestVersion.value = ''
   } finally {
-    clearTimeout(timeout)
-    versionLoading.value = false
+    if (ownsLoad()) versionLoading.value = false
   }
 }
 
@@ -889,7 +928,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   isComponentAlive = false
-  versionAbortController?.abort()
+  versionLoadGeneration += 1
+  const controller = versionAbortController
+  versionAbortController = null
+  controller?.abort()
   clearInterval(refreshInterval)
   refreshInterval = null
   Object.values(charts).forEach(chart => chart?.dispose())

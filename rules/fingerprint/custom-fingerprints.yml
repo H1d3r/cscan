@@ -291,7 +291,7 @@
 - name: AVCON-on-demand platform
   rule: body="<form action=\"./avcon.action\" method"
 - name: AVCON6
-  rule: body="filename=AVCON6Setup.exe" || title="AVCON6系统管理平台"  || body="language_dispose.action"
+  rule: body="filename=AVCON6Setup.exe" || title="AVCON6系统管理平台" || body="language_dispose.action"
 - name: AVEVA-InTouch-安全网关
   rule: body="InTouch Access Anywhere"
 - name: AVIZIO-Network-Camera
@@ -435,7 +435,7 @@
 - name: Akkadian-Provisioning-Manager
   rule: title="Akkadian Provisioning Manager"
 - name: Alarm operation monitoring system
-  rule: body="var objret = FBaseJSonDeal"  && body="onkeydown=\"keyDown(event)\""
+  rule: body="var objret = FBaseJSonDeal" && body="onkeydown=\"keyDown(event)\""
 - name: Alarmability - Fire Mobile Electronic Evidence Management
   rule: title="消防移动电子证据管理系统" && body="深圳市警翼数码科技有限公司"
 - name: Alcatel_Lucent-7250
@@ -969,7 +969,7 @@
 - name: CATALOGcreator
   rule: body="Powered by CATALOGcreator"
 - name: CCTV-Cameras
-  rule: body="style=\"font-size:24px;float:left;\">Network video client" && title!="Partizan Web Surveillance"  && header="thttpd/" && title!="esee"
+  rule: body="style=\"font-size:24px;float:left;\">Network video client" && title!="Partizan Web Surveillance" && header="thttpd/" && title!="esee"
 - name: CDNJS-front-end public library CDN
   rule: header="libs.cdnjs.net" || body="libs.cdnjs.net"
 - name: CDR_STATS-product
@@ -1449,7 +1449,7 @@
 - name: Cloud call center - customer service products
   rule: body="tq.cn/floatcard?" || title="TQ云呼叫中心"
 - name: Cloud lock - product
-  rule: body="href=\"http://bbs.yunsuo.com.cn" &&  body="<img class=\"yunsuologo\""
+  rule: body="href=\"http://bbs.yunsuo.com.cn" && body="<img class=\"yunsuologo\""
 - name: Cloud lock - product
   rule: header="yunsuo_session_verify"
 - name: Cloud meeting
@@ -2479,7 +2479,7 @@
 - name: GLPI-Status-Page
   rule: body="GLPI_OK"
 - name: GOLDENCIS-NACP Network Access Control System
-  rule: body="<div class=\"tit_b\"> 通过管理员分配的密码使用紧急入口。</div>"  && title="金盾内网安全网络准入控制系统"
+  rule: body="<div class=\"tit_b\"> 通过管理员分配的密码使用紧急入口。</div>" && title="金盾内网安全网络准入控制系统"
 - name: GOOD10000- Final Assembly System
   rule: body="value=\"https://mail.sinopec.com/owa/\"" && body="北京万佳信科技有限公司"
 - name: GPS
@@ -3135,7 +3135,7 @@
 - name: Hiawatha-web-server
   rule: server="Hiawatha Web Server"
 - name: Hibernating-Rhinos-RavenDB
-  rule: title="Raven.Studio" &&  body="alt=\"RavenDB\""
+  rule: title="Raven.Studio" && body="alt=\"RavenDB\""
 - name: Hidden danger management system
   rule: body="IE设置(隐患管理系统专用).reg"
 - name: HighWire-Press
@@ -3287,7 +3287,7 @@
 - name: Huizhi Technology - Smart 2000 Design Institute Integrated Information Management System
   rule: body="name=\"formDoc\" action=\"/hz/sys/login/logined.jsp"
 - name: Human resource information system
-  rule: body="name=\"VTI-GROUP\"" &&  body="action=\"usercheck.jsp\""
+  rule: body="name=\"VTI-GROUP\"" && body="action=\"usercheck.jsp\""
 - name: Hybrid-Cluster
   rule: server="Hybrid Cluster"
 - name: Hybris-Administration-Console
@@ -4353,7 +4353,7 @@
 - name: Material transfer inquiry system
   rule: body="var maintabstrip = Ext.getCmp(''RegionPanel1_Region3_mainTabStrip'');"
 - name: Materialize-CSS
-  rule: body="/materialize.css" || body="/materialize.min.css" || body="materialize/materialize" ||  body="materialize/css"
+  rule: body="/materialize.css" || body="/materialize.min.css" || body="materialize/materialize" || body="materialize/css"
 - name: Mathopd
   rule: server="Mathopd"
 - name: Max_Tech-C300N
@@ -5209,7 +5209,7 @@
 - name: PIOLINK-Application-Switch
   rule: title="PIOLINK Application Switch"
 - name: PIOLINK-Web-Manager
-  rule: title="PIOLINK Web Manager"  || body="<td class=col_head>Login - Piolink Web Manager</td>"
+  rule: title="PIOLINK Web Manager" || body="<td class=col_head>Login - Piolink Web Manager</td>"
 - name: PIX_LINK-WiFi-Repeater
   rule: body="_T(pg_login.user)"
 - name: PIXeon-PACS
@@ -5487,7 +5487,7 @@
 - name: Public business integrated linkage fee system
   rule: body="var hasbeensubmited = false"
 - name: Public opinion monitoring platform
-  rule: title="舆情监控平台"  && body="/mpoweb/a/login"
+  rule: title="舆情监控平台" && body="/mpoweb/a/login"
 - name: Puhua Technology -PowerPMS
   rule: body="AppHub.server.registerToHub(qrcodeid)" && body="/App_Themes/Default/assets/css/style.min.css" && body!="/Scripts/boot.js"
 - name: Pulsar
@@ -5567,7 +5567,7 @@
 - name: Quantum companies products
   rule: body="class=\"loginBodyBackground" && body="class=\"loginPatent\""
 - name: Queen Star - Tianqing Web Application Safety Gateway
-  rule: body="v2/global/vendor/modernizr/modernizr.js"  && body="天清Web应用安全网关"
+  rule: body="v2/global/vendor/modernizr/modernizr.js" && body="天清Web应用安全网关"
 - name: Queen Star-Harbor-Networks
   rule: title="::Harbour Networks::"
 - name: Queen Stars-Tiangle WEB Application Detection System
@@ -6295,7 +6295,7 @@
 - name: Spring-Hibernate-SpringMVC-整合框架
   rule: body="<h1>Spring + Hibernate + SpringMVC/Struts basic project.</h1>" && body="log4j"
 - name: SpringBlade
-  rule: body="https://bladex.vip"||body="saber/iconfont.css" || body="Saber 将不能正常工作" || title="Sword Admin" ||body="sorry but avue-data"
+  rule: body="https://bladex.vip" || body="saber/iconfont.css" || body="Saber 将不能正常工作" || title="Sword Admin" || body="sorry but avue-data"
 - name: SpringBoot-Actuator
   rule: body="_links" && body="/actuator/health"
 - name: SpringBoot-Framework
@@ -6405,7 +6405,7 @@
 - name: Sundray - Enterprise Firewall
   rule: body="help = decodeURIComponent(version_info_ch)"
 - name: Sundray-Enterprise AP
-  rule: body="url = ''/cgi-bin/dispatcher.cgi?cmd=0&login_language=''+idx"  && body="/login-btn.png"
+  rule: body="url = ''/cgi-bin/dispatcher.cgi?cmd=0&login_language=''+idx" && body="/login-btn.png"
 - name: Sungoin-Traffic Management Platform
   rule: body="尚景流量管理平台"
 - name: Sunnada-centralized wireless controller
@@ -54645,7 +54645,7 @@
 - name: AladdinMiner
   rule: title="aladdinminer" && body="you need to enable javascript to run this app"
 - name: Alarm-Operation-MS
-  rule: body="var objret = FBaseJSonDeal"  && body="onkeydown=\"keyDown(event)\""
+  rule: body="var objret = FBaseJSonDeal" && body="onkeydown=\"keyDown(event)\""
 - name: Alarm-System
   rule: body="ThAlarmWS.asmx" && body="href=\"/aspnet_client/\">"
 - name: Alcatel_Lucent-EXT-COMM-Server
@@ -54719,7 +54719,7 @@
 - name: Apache Seata
   rule: body="img/seata_logo_small.jpeg" && title="seata"
 - name: Apache ShardingSphere
-  rule: title="ShardingSphere"||title="sharding-ui"
+  rule: title="ShardingSphere" || title="sharding-ui"
 - name: Apache-DolphinScheduler
   rule: body="dolphinscheduler/ui/favicon.png" || title="DolphinScheduler"
 - name: Apache-ShenYu
@@ -54929,7 +54929,7 @@
 - name: BsMultiSelect
   rule: body="bsmultiselect.js" || body="bsmultiselect.min.js"
 - name: BugFree
-  rule: body="id=\"logo\" alt=BugFree" || body="class=\"loginBgImage\" alt=\"BugFree" ||  title="BugFree" || body="name=\"BugUserPWD"
+  rule: body="id=\"logo\" alt=BugFree" || body="class=\"loginBgImage\" alt=\"BugFree" || title="BugFree" || body="name=\"BugUserPWD"
 - name: BugTracker.NET
   rule: body="href=\"btnet.css" || body="valign=middle><a href=http://ifdefined.com/bugtrackernet.html>" || body="<div class=logo>BugTracker.NET"
 - name: Building-Fire-Fighting-Cyber-Detection
@@ -55145,7 +55145,7 @@
 - name: Ceph
   rule: body="class=\"ceph-none-found\" rv-hide=\"rbd_pools"
 - name: Changjie CRM
-  rule: title="畅捷CRM"&&body="crm.chanjet.com"
+  rule: title="畅捷CRM" && body="crm.chanjet.com"
 - name: Chanjet-ENT-MGMT
   rule: title="畅捷通"
 - name: Chanjet-T3-Ent-MGMT
@@ -55569,7 +55569,7 @@
 - name: Django-Site-Admin
   rule: title="django site admin" || title="django 站点管理员"
 - name: DnP-Firewall
-  rule: title="Powered by DnP Firewall" || body="name=\"dnp_firewall_redirect" ||  body="<form name=dnp_firewall" || body="dnp_firewall_redirect"
+  rule: title="Powered by DnP Firewall" || body="name=\"dnp_firewall_redirect" || body="<form name=dnp_firewall" || body="dnp_firewall_redirect"
 - name: Doc-Sharing-Platform
   rule: body="rel=\"shortcut icon\" href=\"/static/css/cursor.css\""
 - name: DocMail
@@ -55689,7 +55689,7 @@
 - name: EasyImage-Simple-Picture-Bed
   rule: body="https://github.com/icret/easyimages2.0" || body="<meta name=\"author\" content=\"icret easyimage2.0" || body="/static/easyimage.js\"></script>"
 - name: EasyReport
-  rule: body="/images/login_bg_right.gif"||title="EasyReport"
+  rule: body="/images/login_bg_right.gif" || title="EasyReport"
 - name: EasySwoole
   rule: body="<a href=\"https://github.com/easy-swoole/easyswoole/\">git</a>" || body="<p>欢迎使用<b> easyswoole</b></p> " || body="<meta name=\"keywords\" content=\"easyswoole"
 - name: EasyTrace
@@ -56087,7 +56087,7 @@
 - name: Golden_Sec-Sec-Isolation-IES
   rule: body="金电网安安全隔离与信息交换系统" && body="jdwa/sysconf/oem"
 - name: Goldencis-NACP
-  rule: body="<div class=\"tit_b\"> 通过管理员分配的密码使用紧急入口。</div>"  && title="金盾内网安全网络准入控制系统"
+  rule: body="<div class=\"tit_b\"> 通过管理员分配的密码使用紧急入口。</div>" && title="金盾内网安全网络准入控制系统"
 - name: Goldlib-CMS
   rule: body="SpeakIntertScarch.aspx"
 - name: Gomining
@@ -56237,7 +56237,7 @@
 - name: HP-Switcher
   rule: 'body="src=\"/avct.js" && body="alt=\"HP\"" && body!="Server: couchdb"'
 - name: HRMS
-  rule: body="name=\"VTI-GROUP\"" &&  body="action=\"usercheck.jsp\""
+  rule: body="name=\"VTI-GROUP\"" && body="action=\"usercheck.jsp\""
 - name: HSE-Emergency-Command-APP
   rule: body="//================>功能函数---start" && body="alert(\"云台控制出错，错误码：\" + flag)"
 - name: HSP-Assist
@@ -56525,7 +56525,7 @@
 - name: I-love-Castle-Cloud-Platform
   rule: body="content=\"我爱考勤云平台" || body="我爱考勤云平台</span>" || title="我爱考勤云平台" || body="<input type=\"text\" class=\"form-control\" name=\"MobileNumber\" value=\"\" placeholder=\"手机号码\" />"
 - name: IBM Integrated Solutions Console
-  rule: body="wsmbanner.html"||title="Web-based System Manager Remote Client"
+  rule: body="wsmbanner.html" || title="Web-based System Manager Remote Client"
 - name: IBM Sterling B2B Integrator
   rule: body="IBM Sterling B2B Integrator"
 - name: IBM-Cognos
@@ -56955,7 +56955,7 @@
 - name: LYX-NSG-IBMS
   rule: title="Netoray NSG 上网行为管理系统" && body="莱克斯科技"
 - name: LanLing EIS Smart Collaboration Platform
-  rule: body="/scripts/jquery.landray.common.js" || body="v11_QRcodeBar clr" || title="智慧协同平台" && body="欢迎登录智慧协同平台" ||body="欢迎登录智慧协同平台"
+  rule: body="/scripts/jquery.landray.common.js" || body="v11_QRcodeBar clr" || title="智慧协同平台" && body="欢迎登录智慧协同平台" || body="欢迎登录智慧协同平台"
 - name: Landray-EIS
   rule: body="/scripts/jquery.landray.common.js" || body="v11_QRcodeBar clr"
 - name: Langxin Intelligent Human Resource Management System
@@ -57731,7 +57731,7 @@
 - name: Perfectone-VOIP-Phone
   rule: body="color=\"#FFFFFF\"><b>Login VoIP" || body="onload=\"JavaScript:document.loginform.user.focus()"
 - name: Perplexity-AI
-  rule: title="Perplexity" &&body="content=\"Perplexity AI unlocks the power of knowledge with information discovery and sharing."
+  rule: title="Perplexity" && body="content=\"Perplexity AI unlocks the power of knowledge with information discovery and sharing."
 - name: PhantomBot
   rule: body="https://github.com/phantombot/phantombot"
 - name: Pharmarack-Platform
@@ -57827,7 +57827,7 @@
 - name: Public-Sec-Checkpoint-DVS
   rule: body="content=\"公安检查站人脸/证件合一核录系统" && body="action=\"/Admin/Login/login"
 - name: Public-opinion-MP
-  rule: title="舆情监控平台"  && body="/mpoweb/a/login"
+  rule: title="舆情监控平台" && body="/mpoweb/a/login"
 - name: Pubwin-2009-Web-MGMT
   rule: title="pubwin2009 web管理"
 - name: Pure.css
@@ -57985,7 +57985,7 @@
 - name: Raritan-Products
   rule: title="AKC Client Check" || body="<!-- Raritan logo -->" || body="<div id=\"raritan_logo"
 - name: RavenDB
-  rule: title="Raven.Studio" &&  body="alt=\"RavenDB\""
+  rule: title="Raven.Studio" && body="alt=\"RavenDB\""
 - name: Reach-DSS-ENC-1100
   rule: title=":::Encoder(DSS-ENC-1100):::"
 - name: React.js
@@ -58221,7 +58221,7 @@
 - name: SUNCERE-Air-Quality-MP
   rule: body="技术支持：广东旭诚科技有限公司"
 - name: SUNDRAY-ENT-AP
-  rule: body="url = '/cgi-bin/dispatcher.cgi?cmd=0&login_language='+idx"  && body="/login-btn.png"
+  rule: body="url = '/cgi-bin/dispatcher.cgi?cmd=0&login_language='+idx" && body="/login-btn.png"
 - name: SUNDRAY-ENT-Firewall
   rule: body="help = decodeURIComponent(version_info_ch)"
 - name: SUNDRAY-Switch
@@ -58405,7 +58405,7 @@
 - name: Spring Framework
   rule: body="/vendor/symfony" || body="Symfony Exception"
 - name: Spring Security
-  rule: body="saber/iconfont.css" || body="Saber 将不能正常工作"||title="Sword Admin"||body="We're sorry but avue-data doesn't work"
+  rule: body="saber/iconfont.css" || body="Saber 将不能正常工作" || title="Sword Admin" || body="We're sorry but avue-data doesn't work"
 - name: Spring-Batch
   rule: title="Spring Batch Admin" || title="Spring Batch Lightmin"
 - name: SpringBlade
@@ -58719,7 +58719,7 @@
 - name: TestLink
   rule: body="testlink_library.js" || body="content=\"Martin Havlat\" />" || body="TestLink project <a href=\"http://testlink.sourceforge.net/docs/testLink.php\">Home</a><br />"
 - name: ThinkMail
-  rule: title="ThinkMail 企业邮箱" || body="href='http://www.thinkcloud.cn' target='_blank'>Thinkcloud</a>.All Right Reserved</div>" || body="app_download\":\"\",\"Thinkmail官网"  || body="/webmail\"+\"/common/validatecode.do" || body="/resource/se/common/jquery.js"
+  rule: title="ThinkMail 企业邮箱" || body="href='http://www.thinkcloud.cn' target='_blank'>Thinkcloud</a>.All Right Reserved</div>" || body="app_download\":\"\",\"Thinkmail官网" || body="/webmail\"+\"/common/validatecode.do" || body="/resource/se/common/jquery.js"
 - name: Thinker-Intelligent-GW-System
   rule: body="智能网关系统<BR>"
 - name: Three.js
@@ -58973,7 +58973,7 @@
 - name: Venustech-Tiangle-WAF
   rule: title="天镜web应用检测系统"
 - name: Venustech-Tianqing-WAF
-  rule: body="v2/global/vendor/modernizr/modernizr.js"  && body="天清Web应用安全网关"
+  rule: body="v2/global/vendor/modernizr/modernizr.js" && body="天清Web应用安全网关"
 - name: Venustech-Tianyi-CM-LAP
   rule: title="天玥集中管理与日志分析平台"
 - name: Venustech-Tianyi-IBMC
@@ -59275,7 +59275,7 @@
 - name: Yibai-ERP-MP
   rule: body="login-ts b1\" id=\"loginform_user_name_em_"
 - name: Yibao OA
-  rule: body="$.cookie(\\\\\\\"topvision_oaName" || title="欢迎登录易宝OA系统"&&body="顶讯"
+  rule: body="$.cookie(\\\\\\\"topvision_oaName" || title="欢迎登录易宝OA系统" && body="顶讯"
 - name: Yichao-CRM-Report-App
   rule: body="href=\"/css/vendors~index.acfeb.css\""
 - name: Yichao-Funding-EAS
@@ -60177,9 +60177,9 @@
 - name: poly-dst-mcs-VCS
   rule: body="document.location.href=\"/cgi-bin/cgiServer?_dstp_functionid=HOMEPAGE&language_type="
 - name: portainer
-  rule: title="Portainer" &&  body="href=\"ico/safari-pinned-tab.svg\""
+  rule: title="Portainer" && body="href=\"ico/safari-pinned-tab.svg\""
 - name: posterous
-  rule: body="content=\"Posterous"  || body="class=\"posterous_site_data" || header="_sharebymail_session_id="
+  rule: body="content=\"Posterous" || body="class=\"posterous_site_data" || header="_sharebymail_session_id="
 - name: pouchdb
   rule: body="pouchdb" && body="pouchdb authors"
 - name: ppoi.org-Online-Mining

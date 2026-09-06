@@ -15,6 +15,44 @@ import (
 	"cscan/internal/model"
 )
 
+func TestParsedConditionType(t *testing.T) {
+	tests := []struct {
+		name      string
+		condition string
+		want      string
+	}{
+		{name: "positive body", condition: `body="x"`, want: "body"},
+		{name: "negative body", condition: `body!="x"`, want: "body"},
+		{name: "negative title", condition: `title!="x"`, want: "title"},
+		{name: "negative header", condition: `header!="x"`, want: "header"},
+		{name: "negative server", condition: `server!="x"`, want: "server"},
+		{name: "equals in value", condition: `body="a=b"`, want: "body"},
+		{name: "outer parentheses", condition: `((header!="x"))`, want: "header"},
+		{name: "unknown format", condition: `not a condition`, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parsedConditionType(tt.condition); got != tt.want {
+				t.Fatalf("parsedConditionType(%q) = %q, want %q", tt.condition, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnknownConditionSummaryAcceptsNegativeConditions(t *testing.T) {
+	engine := NewCustomFingerprintEngine([]*model.Fingerprint{{
+		Name:    "negative conditions",
+		Rule:    `body!="x" && title!="x" && header!="x" && server!="x"`,
+		Enabled: true,
+	}})
+
+	total, types := engine.unknownConditionSummary(true, false)
+	if total != 0 || len(types) != 0 {
+		t.Fatalf("unknownConditionSummary() = (%d, %v), want (0, [])", total, types)
+	}
+}
+
 func TestExtractQuotedValueKeepsInnerDoubleQuotes(t *testing.T) {
 	tests := []struct {
 		name  string

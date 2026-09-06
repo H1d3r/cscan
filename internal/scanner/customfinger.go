@@ -121,12 +121,34 @@ func (e *CustomFingerprintEngine) unknownConditionSummary(includePassive, includ
 
 func parsedConditionType(condition string) string {
 	condition = strings.Trim(strings.TrimSpace(condition), "()")
-	for _, operator := range []string{"!=\"", "=\"", "="} {
-		if index := strings.Index(condition, operator); index > 0 {
-			return strings.ToLower(strings.TrimSpace(condition[:index]))
+
+	// Only inspect the expression prefix so '=' characters inside quoted values
+	// cannot be mistaken for the condition operator.
+	prefix := condition
+	if firstQuote := strings.IndexAny(condition, "'\""); firstQuote >= 0 {
+		prefix = condition[:firstQuote]
+	}
+
+	// Match != before =; otherwise body!="value" would be parsed as body!.
+	for _, operator := range []string{"!=", "="} {
+		if idx := strings.Index(prefix, operator); idx > 0 {
+			candidate := strings.TrimSpace(prefix[:idx])
+			if isSimpleIdentifier(candidate) {
+				return strings.ToLower(candidate)
+			}
 		}
 	}
 	return ""
+}
+
+// isSimpleIdentifier 检查是否为简单的标识符（仅字母、数字、下划线、连字符）
+func isSimpleIdentifier(s string) bool {
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func isSupportedConditionType(conditionType string) bool {
