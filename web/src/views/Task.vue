@@ -100,12 +100,12 @@
                 <el-button v-if="row.status === 'PAUSED'" type="success" link size="small" @click="handleResume(row)">{{
                   $t('task.resume') }}</el-button>
                 <el-button
-                  v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(row.status) && row.status !== 'SUCCESS' && row.status !== 'FAILURE' && row.status !== 'STOPPED'"
+                  v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(row.status)"
                   type="danger" link size="small" @click="handleStop(row)">{{ $t('task.stop') }}</el-button>
                 <el-button type="primary" link size="small" @click="showDetail(row)">{{ $t('task.detail') }}</el-button>
                 <el-button type="info" link size="small" @click="showLogs(row)">{{ $t('task.logs') }}</el-button>
                 <el-button type="info" link size="small" @click="viewReport(row)">{{ $t('task.report') }}</el-button>
-                <el-button v-if="['SUCCESS', 'FAILURE', 'STOPPED'].includes(row.status)" type="warning" link
+                <el-button v-if="isTerminalTaskStatus(row.status)" type="warning" link
                   size="small" @click="handleRetry(row)">{{ $t('task.retry') }}</el-button>
                 <el-button type="danger" link size="small" @click="handleDelete(row)">{{ $t('task.delete')
                 }}</el-button>
@@ -457,7 +457,7 @@
         </div>
       </div>
       <el-progress v-if="currentLogTask" :percentage="Math.min(currentLogTask.progress || 0, 100)"
-        :status="currentLogTask.status === 'SUCCESS' ? 'success' : (currentLogTask.status === 'FAILURE' ? 'exception' : '')"
+        :status="isSuccessLikeTaskStatus(currentLogTask.status) ? 'success' : (currentLogTask.status === 'FAILURE' ? 'exception' : '')"
         :stroke-width="8" style="margin-bottom: 10px" />
       <div class="log-container" ref="logContainerRef">
         <div v-if="filteredLogs.length === 0" class="log-empty">{{ $t('task.noLogs') }}</div>
@@ -485,6 +485,7 @@ import { Plus, Delete, Search, Document, Refresh } from '@element-plus/icons-vue
 import ScanWorkflow from '@/components/ScanWorkflow.vue'
 import { getTaskList, createTask, deleteTask, batchDeleteTask, retryTask, startTask, pauseTask, resumeTask, stopTask, updateTask, getTaskLogs, getWorkerList, saveScanConfig, getScanConfig } from '@/api/task'
 import { validateTargets, formatValidationErrors } from '@/utils/target'
+import { isTerminalTaskStatus, isSuccessLikeTaskStatus } from '@/utils/taskStatus'
 import request from '@/api/request'
 
 const router = useRouter()
@@ -707,7 +708,7 @@ async function loadWorkers() {
 }
 
 function getStatusType(status, row) {
-  const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
+  const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', PARTIAL: 'success', COMPLETED: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
 
   // 如果有状态值，直接返回映射
   if (status && map[status]) {

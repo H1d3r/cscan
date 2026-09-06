@@ -40,6 +40,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CircleCheck, Loading, CircleClose, Remove, Clock, Operation } from '@element-plus/icons-vue'
+import { isTerminalTaskStatus, isSuccessLikeTaskStatus } from '@/utils/taskStatus'
 
 const { t } = useI18n()
 
@@ -118,9 +119,9 @@ function getPhaseStatus(phaseKey) {
   const taskStatus = props.status
   const phases = enabledPhaseKeys.value
   
-  // 任务已完成
-  if (['SUCCESS', 'FAILURE', 'STOPPED', 'REVOKED'].includes(taskStatus)) {
-    if (taskStatus === 'SUCCESS') {
+  // 任务已结束
+  if (isTerminalTaskStatus(taskStatus)) {
+    if (isSuccessLikeTaskStatus(taskStatus)) {
       return 'success'
     }
     // 失败/停止时，当前阶段之前的都是成功，当前阶段是失败

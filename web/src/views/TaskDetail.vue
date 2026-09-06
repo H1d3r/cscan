@@ -23,14 +23,14 @@
           {{ $t('task.resume') }}
         </el-button>
         <el-button
-          v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(task.status) && !['SUCCESS', 'FAILURE', 'STOPPED'].includes(task.status)"
+          v-if="['STARTED', 'PAUSED', 'PENDING', 'CREATED', ''].includes(task.status)"
           type="danger"
           size="small"
           @click="handleStop"
         >
           {{ $t('task.stop') }}
         </el-button>
-        <el-button v-if="['SUCCESS', 'FAILURE', 'STOPPED'].includes(task.status)" type="warning" size="small" @click="handleRetry">
+        <el-button v-if="isTerminalTaskStatus(task.status)" type="warning" size="small" @click="handleRetry">
           {{ $t('task.retry') }}
         </el-button>
         <el-button size="small" @click="goEdit">{{ $t('task.edit') }}</el-button>
@@ -110,7 +110,7 @@
           <div class="time-content">
             <span class="time-label">{{ $t('task.endTime') }}</span>
             <span class="time-value">
-              {{ ['SUCCESS', 'FAILURE', 'STOPPED'].includes(task.status) ? (task.endTime || '-') : '-' }}
+              {{ isTerminalTaskStatus(task.status) ? (task.endTime || '-') : '-' }}
             </span>
           </div>
         </div>
@@ -213,7 +213,7 @@
               </div>
               <div class="stat-item">
                 <span class="stat-label">{{ $t('task.currentPhase') }}</span>
-                <span class="stat-value">{{ task.currentPhase || '-' }}</span>
+                <span class="stat-value">{{ localizeTaskPhase(task.currentPhase, t) || '-' }}</span>
               </div>
             </div>
           </div>
@@ -345,6 +345,7 @@ import {
   getTaskDetail, startTask, pauseTask, resumeTask, stopTask,
   retryTask, deleteTask, getTaskLogs
 } from '@/api/task'
+import { isTerminalTaskStatus, localizeTaskPhase } from '@/utils/taskStatus'
 
 const route = useRoute()
 const router = useRouter()
@@ -463,7 +464,7 @@ function formatLogTime(ts) {
 }
 
 function getStatusType(status, row) {
-  const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
+  const map = { CREATED: 'info', PENDING: 'warning', STARTED: 'primary', PAUSED: 'warning', SUCCESS: 'success', PARTIAL: 'success', COMPLETED: 'success', FAILURE: 'danger', STOPPED: 'info', REVOKED: 'info' }
   if (status && map[status]) return map[status]
   if (!status && row) {
     if (row.progress >= 100 || (row.subTaskCount > 0 && row.subTaskDone >= row.subTaskCount)) return 'success'
@@ -482,6 +483,8 @@ function getProgressColor(status) {
     STARTED: getVar('--status-primary') || '#409EFF',
     PAUSED: getVar('--status-warning') || '#E6A23C',
     SUCCESS: getVar('--status-success') || '#67C23A',
+    PARTIAL: getVar('--status-success') || '#67C23A',
+    COMPLETED: getVar('--status-success') || '#67C23A',
     FAILURE: getVar('--status-danger') || '#F56C6C',
     STOPPED: getVar('--status-info') || '#909399',
     REVOKED: getVar('--status-info') || '#909399'
