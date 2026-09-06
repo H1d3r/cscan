@@ -17,7 +17,7 @@ func TestPortScanConfigTimeoutCompatibility(t *testing.T) {
 		{
 			name:               "defaults",
 			configJSON:         `{"portscan":{"enable":true}}`,
-			wantTargetTimeout:  60,
+			wantTargetTimeout:  120,
 			wantProbeTimeoutMs: 1000,
 		},
 		{
@@ -47,7 +47,7 @@ func TestPortScanConfigTimeoutCompatibility(t *testing.T) {
 		{
 			name:               "obsolete aggregate timeout is ignored",
 			configJSON:         `{"portscan":{"aggregatedTimeout":999}}`,
-			wantTargetTimeout:  60,
+			wantTargetTimeout:  120,
 			wantProbeTimeoutMs: 1000,
 		},
 	}

@@ -648,7 +648,7 @@ type DirScanConfig struct {
 }
 
 const (
-	defaultPortScanTargetTimeoutSeconds  = 60
+	defaultPortScanTargetTimeoutSeconds  = 120
 	defaultNaabuProbeTimeoutMilliseconds = 1000
 	defaultNaabuRetries                  = 2
 )

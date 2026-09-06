@@ -339,7 +339,7 @@
               <el-row :gutter="20" v-if="form.portscanTool === 'naabu'">
                 <el-col :span="12">
                   <el-form-item :label="$t('task.workers')">
-                    <el-input-number v-model="form.portscanWorkers" :min="10" :max="200" style="width:100%" />
+                    <el-input-number v-model="form.portscanWorkers" :min="10" :max="500" style="width:100%" />
                     <span class="form-hint">{{ $t('task.internalThreads') }}</span>
                   </el-form-item>
                 </el-col>
@@ -361,7 +361,7 @@
                 </el-col>
                 <el-col :span="12">
                   <el-form-item :label="$t('task.portscanTargetTimeout')">
-                    <el-input-number v-model="form.portscanTargetTimeout" :min="5" :max="1200" style="width:100%" />
+                    <el-input-number v-model="form.portscanTargetTimeout" :min="5" :max="3600" style="width:100%" />
                     <span class="form-hint">{{ $t('task.portscanTargetTimeoutHint') }}</span>
                   </el-form-item>
                 </el-col>
@@ -1832,18 +1832,23 @@ async function validateCron() {
   }
 }
 
-// 端口范围与单目标扫描上限联动（推荐值）
-const PORT_TIMEOUT_MAP = {
-  'top100': 120,
-  'top1000': 200,
-  '80,443,8080,8443': 60,
-  '1-65535': 900,
+// 端口范围与推荐扫描参数联动（基于5并发CLI进程计算）
+const PORT_SCAN_PRESETS = {
+  '80,443,8080,8443': { targetTimeout: 60,  probeTimeoutMs: 500, workers: 50,  retries: 1, rate: 3000 },
+  'top100':           { targetTimeout: 120, probeTimeoutMs: 500, workers: 50,  retries: 1, rate: 3000 },
+  'top1000':          { targetTimeout: 240, probeTimeoutMs: 500, workers: 80,  retries: 1, rate: 5000 },
+  '1-65535':          { targetTimeout: 900, probeTimeoutMs: 500, workers: 120, retries: 1, rate: 10000 },
 }
 let isLoadingConfig = false
 watch(() => form.ports, (val) => {
-  if (!isLoadingConfig && PORT_TIMEOUT_MAP[val] !== undefined) {
-    form.portscanTargetTimeout = PORT_TIMEOUT_MAP[val]
-  }
+  if (isLoadingConfig) return
+  const preset = PORT_SCAN_PRESETS[val]
+  if (!preset) return
+  form.portscanTargetTimeout = preset.targetTimeout
+  form.portscanProbeTimeoutMs = preset.probeTimeoutMs
+  form.portscanWorkers = preset.workers
+  form.portscanRetries = preset.retries
+  form.portscanRate = preset.rate
 })
 
 // Cron 表达式实时校验（输入防抖 400ms，避免频繁请求后端）

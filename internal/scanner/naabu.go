@@ -26,7 +26,7 @@ var ipLocator = geolocation.NewIPLocator()
 
 const (
 	// DefaultPortScanTargetTimeoutSeconds 是单个目标完整端口扫描的默认硬上限。
-	DefaultPortScanTargetTimeoutSeconds = 60
+	DefaultPortScanTargetTimeoutSeconds = 120
 	// DefaultNaabuProbeTimeoutMilliseconds 是 naabu 单次端口探测的默认等待时间。
 	DefaultNaabuProbeTimeoutMilliseconds = 1000
 	maxNaabuProcessConcurrency           = 5
