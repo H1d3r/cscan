@@ -11,24 +11,36 @@ import (
 
 	"cscan/internal/model"
 	"cscan/internal/scanner"
+	"cscan/internal/scheduler"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // WorkerHTTPClient Worker HTTP 客户端
 type WorkerHTTPClient struct {
-	baseURL    string
-	installKey string
-	httpClient *http.Client
-	workerName string
+	baseURL      string
+	installKey   string
+	httpClient   *http.Client
+	workerName   string
+	instanceID   string
+	taskProtocol int
 }
 
-// NewWorkerHTTPClient 创建 Worker HTTP 客户端
+// NewWorkerHTTPClient retains constructor compatibility while creating a v1
+// process identity. Worker construction should use NewWorkerHTTPClientForInstance
+// so HTTP and direct Redis transports share one identity.
 func NewWorkerHTTPClient(baseURL, installKey, workerName string) *WorkerHTTPClient {
+	return NewWorkerHTTPClientForInstance(baseURL, installKey, workerName, uuid.NewString(), scheduler.TaskProtocolV1)
+}
+
+func NewWorkerHTTPClientForInstance(baseURL, installKey, workerName, instanceID string, taskProtocol int) *WorkerHTTPClient {
 	return &WorkerHTTPClient{
-		baseURL:    baseURL,
-		installKey: installKey,
-		workerName: workerName,
+		baseURL:      baseURL,
+		installKey:   installKey,
+		workerName:   workerName,
+		instanceID:   instanceID,
+		taskProtocol: taskProtocol,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -39,28 +51,35 @@ func NewWorkerHTTPClient(baseURL, installKey, workerName string) *WorkerHTTPClie
 
 // TaskCheckReq 任务拉取请求
 type TaskCheckReq struct {
-	WorkerName string `json:"workerName"`
+	WorkerName   string `json:"workerName"`
+	InstanceID   string `json:"instanceId"`
+	TaskProtocol int    `json:"taskProtocol"`
 }
 
 // TaskCheckResp 任务拉取响应
 type TaskCheckResp struct {
-	Code       int    `json:"code"`
-	Msg        string `json:"msg"`
-	IsExist    bool   `json:"isExist"`
-	IsFinished bool   `json:"isFinished"`
-	TaskId     string `json:"taskId"`
-	MainTaskId string `json:"mainTaskId"`
-	Config     string `json:"config"`
+	Code               int    `json:"code"`
+	Msg                string `json:"msg"`
+	IsExist            bool   `json:"isExist"`
+	IsFinished         bool   `json:"isFinished"`
+	TaskId             string `json:"taskId"`
+	MainTaskId         string `json:"mainTaskId"`
+	Config             string `json:"config"`
+	LeaseToken         string `json:"leaseToken"`
+	DispatchGeneration string `json:"dispatchGeneration"`
 }
 
 // TaskUpdateReq 任务状态更新请求
 type TaskUpdateReq struct {
-	TaskId   string `json:"taskId"`
-	State    string `json:"state"`
-	Worker   string `json:"worker"`
-	Result   string `json:"result"`
-	Progress int    `json:"progress"`
-	Phase    string `json:"phase"`
+	TaskId     string `json:"taskId"`
+	MainTaskId string `json:"mainTaskId,omitempty"`
+	LeaseToken string `json:"leaseToken,omitempty"`
+	State      string `json:"state"`
+	Worker     string `json:"worker"`
+	Result     string `json:"result"`
+	Progress   int    `json:"progress"`
+	Phase      string `json:"phase"`
+	TaskState  string `json:"taskState,omitempty"`
 }
 
 // TaskUpdateResp 任务状态更新响应
@@ -182,6 +201,8 @@ type VulReverifyResp struct {
 // HeartbeatReq 心跳请求
 type HeartbeatReq struct {
 	WorkerName         string  `json:"workerName"`
+	InstanceID         string  `json:"instanceId"`
+	TaskProtocol       int     `json:"taskProtocol"`
 	IP                 string  `json:"ip"`
 	CpuLoad            float64 `json:"cpuLoad"`
 	MemUsed            float64 `json:"memUsed"`
@@ -207,6 +228,7 @@ type HeartbeatResp struct {
 type SubTaskDoneReq struct {
 	TaskId      string                  `json:"taskId"`
 	MainTaskId  string                  `json:"mainTaskId"`
+	LeaseToken  string                  `json:"leaseToken"`
 	Phase       string                  `json:"phase"`
 	IsCompleted bool                    `json:"isCompleted"`
 	IncrAmount  int                     `json:"incrAmount"`
@@ -223,6 +245,7 @@ type SubTaskDoneResp struct {
 	SubTaskCount        int32                  `json:"subTaskCount"`
 	AllDone             bool                   `json:"allDone"`
 	Recorded            bool                   `json:"recorded,omitempty"`
+	LeaseClosed         bool                   `json:"leaseClosed,omitempty"`
 	Finalized           bool                   `json:"finalized,omitempty"`
 	FinalizationPending bool                   `json:"finalizationPending,omitempty"`
 	ScanSummary         *model.TaskScanSummary `json:"scanSummary,omitempty"`
@@ -399,7 +422,9 @@ func (c *WorkerHTTPClient) doRequestOnce(ctx context.Context, method, path strin
 // CheckTask 任务拉取
 func (c *WorkerHTTPClient) CheckTask(ctx context.Context) (*TaskCheckResp, error) {
 	req := &TaskCheckReq{
-		WorkerName: c.workerName,
+		WorkerName:   c.workerName,
+		InstanceID:   c.instanceID,
+		TaskProtocol: c.taskProtocol,
 	}
 
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/check", req)
@@ -410,6 +435,9 @@ func (c *WorkerHTTPClient) CheckTask(ctx context.Context) (*TaskCheckResp, error
 	var resp TaskCheckResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+	if resp.Code != 0 {
+		return &resp, fmt.Errorf("task check rejected: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 
 	return &resp, nil
@@ -427,7 +455,26 @@ func (c *WorkerHTTPClient) UpdateTask(ctx context.Context, req *TaskUpdateReq) (
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
 
+	if resp.Code != 0 || !resp.Success {
+		if resp.Code == http.StatusLocked {
+			return &resp, scheduler.ErrTaskParentFenced
+		}
+		if resp.Code == http.StatusConflict {
+			return &resp, scheduler.ErrTaskLeaseConflict
+		}
+		if resp.Code == http.StatusTooEarly {
+			return &resp, scheduler.ErrTaskOperationBusy
+		}
+		return &resp, fmt.Errorf("task update rejected: code=%d msg=%s", resp.Code, resp.Msg)
+	}
 	return &resp, nil
+}
+
+// RenewTaskLease reuses the task-update endpoint with only taskId and the
+// current lease token populated.
+func (c *WorkerHTTPClient) RenewTaskLease(ctx context.Context, taskID, leaseToken string) error {
+	_, err := c.UpdateTask(ctx, &TaskUpdateReq{TaskId: taskID, LeaseToken: leaseToken})
+	return err
 }
 
 func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverifyReq) (*VulReverifyResp, error) {
@@ -446,6 +493,12 @@ func (c *WorkerHTTPClient) SaveVulReverify(ctx context.Context, req *VulReverify
 
 // Heartbeat 心跳
 func (c *WorkerHTTPClient) Heartbeat(ctx context.Context, req *HeartbeatReq) (*HeartbeatResp, error) {
+	if req == nil {
+		return nil, fmt.Errorf("heartbeat request is required")
+	}
+	req.WorkerName = c.workerName
+	req.InstanceID = c.instanceID
+	req.TaskProtocol = c.taskProtocol
 	// 心跳不做内部重试（调用方 sendHeartbeatWithRetry 已有重试逻辑）
 	respBody, err := c.doRequestOnce(ctx, http.MethodPost, "/api/v1/worker/heartbeat", req)
 	if err != nil {
@@ -455,6 +508,9 @@ func (c *WorkerHTTPClient) Heartbeat(ctx context.Context, req *HeartbeatReq) (*H
 	var resp HeartbeatResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+	if resp.Code != 0 {
+		return &resp, fmt.Errorf("heartbeat rejected: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 
 	return &resp, nil
@@ -472,14 +528,26 @@ func (c *WorkerHTTPClient) IncrSubTaskDone(ctx context.Context, req *SubTaskDone
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
 
+	if resp.Code != 0 || !resp.Success {
+		if resp.Code == http.StatusLocked {
+			return &resp, scheduler.ErrTaskParentFenced
+		}
+		if resp.Code == http.StatusConflict {
+			return &resp, scheduler.ErrTaskLeaseConflict
+		}
+		if resp.Code == http.StatusTooEarly {
+			return &resp, scheduler.ErrTaskOperationBusy
+		}
+		return &resp, fmt.Errorf("subtask report rejected: code=%d msg=%s", resp.Code, resp.Msg)
+	}
 	return &resp, nil
 }
 
-// ==================== Worker Offline Notification ====================
-
 // WorkerOfflineReq Worker离线通知请求
 type WorkerOfflineReq struct {
-	WorkerName string `json:"workerName"`
+	WorkerName   string `json:"workerName"`
+	InstanceID   string `json:"instanceId"`
+	TaskProtocol int    `json:"taskProtocol"`
 }
 
 // WorkerOfflineResp Worker离线通知响应
@@ -492,7 +560,9 @@ type WorkerOfflineResp struct {
 // NotifyOffline 通知服务器Worker即将离线
 func (c *WorkerHTTPClient) NotifyOffline(ctx context.Context) (*WorkerOfflineResp, error) {
 	req := &WorkerOfflineReq{
-		WorkerName: c.workerName,
+		WorkerName:   c.workerName,
+		InstanceID:   c.instanceID,
+		TaskProtocol: c.taskProtocol,
 	}
 
 	// 使用较短的超时，避免阻塞停止流程
@@ -508,38 +578,37 @@ func (c *WorkerHTTPClient) NotifyOffline(ctx context.Context) (*WorkerOfflineRes
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
+	if resp.Code != 0 || !resp.Success {
+		return &resp, fmt.Errorf("offline notification rejected: code=%d msg=%s", resp.Code, resp.Msg)
+	}
 
 	return &resp, nil
 }
 
 // ==================== Task Control Polling ====================
 
-// TaskControlReq 任务控制信号请求
+// TaskControlReq polls controls for exact task generations.
 type TaskControlReq struct {
-	WorkerName string   `json:"workerName"`
-	TaskIds    []string `json:"taskIds"` // 当前正在执行的任务ID列表
+	WorkerName string                        `json:"workerName"`
+	Targets    []scheduler.TaskControlTarget `json:"targets"`
 }
 
-// TaskControlSignal 单个任务的控制信号
-type TaskControlSignal struct {
-	TaskId string `json:"taskId"`
-	Action string `json:"action"` // STOP, PAUSE, RESUME
-}
-
-// TaskControlResp 任务控制信号响应
+// TaskControlResp carries the strict Redis/WebSocket control envelope.
 type TaskControlResp struct {
-	Code    int                 `json:"code"`
-	Msg     string              `json:"msg"`
-	Success bool                `json:"success"`
-	Signals []TaskControlSignal `json:"signals"`
+	Code    int                             `json:"code"`
+	Msg     string                          `json:"msg"`
+	Success bool                            `json:"success"`
+	Signals []scheduler.TaskControlEnvelope `json:"signals"`
 }
 
 // GetTaskControlSignals 获取任务控制信号（HTTP轮询）
-func (c *WorkerHTTPClient) GetTaskControlSignals(ctx context.Context, taskIds []string) (*TaskControlResp, error) {
-	req := &TaskControlReq{
-		WorkerName: c.workerName,
-		TaskIds:    taskIds,
+func (c *WorkerHTTPClient) GetTaskControlSignals(ctx context.Context, targets []scheduler.TaskControlTarget) (*TaskControlResp, error) {
+	for _, target := range targets {
+		if err := target.Validate(); err != nil {
+			return nil, err
+		}
 	}
+	req := &TaskControlReq{WorkerName: c.workerName, Targets: targets}
 
 	// 任务控制轮询不做内部重试（调用方 controlPollingLoop 已有周期性重试）
 	respBody, err := c.doRequestOnce(ctx, http.MethodPost, "/api/v1/worker/task/control", req)
@@ -551,7 +620,14 @@ func (c *WorkerHTTPClient) GetTaskControlSignals(ctx context.Context, taskIds []
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
-
+	if resp.Code != 0 || !resp.Success {
+		return &resp, fmt.Errorf("task control polling rejected: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	for index := range resp.Signals {
+		if err := resp.Signals[index].Validate(); err != nil {
+			return nil, fmt.Errorf("invalid task control envelope: %w", err)
+		}
+	}
 	return &resp, nil
 }
 
@@ -641,7 +717,9 @@ type SaveDirScanResultReq struct {
 
 // TaskRecoveryReq 任务恢复请求
 type TaskRecoveryReq struct {
-	WorkerName string `json:"workerName"`
+	WorkerName   string `json:"workerName"`
+	InstanceID   string `json:"instanceId"`
+	TaskProtocol int    `json:"taskProtocol"`
 }
 
 // RecoveredTaskInfo 恢复的任务信息
@@ -664,7 +742,9 @@ type TaskRecoveryResp struct {
 // RecoverTasks Worker 启动时恢复未完成的任务
 func (c *WorkerHTTPClient) RecoverTasks(ctx context.Context) (*TaskRecoveryResp, error) {
 	req := &TaskRecoveryReq{
-		WorkerName: c.workerName,
+		WorkerName:   c.workerName,
+		InstanceID:   c.instanceID,
+		TaskProtocol: c.taskProtocol,
 	}
 
 	respBody, err := c.doRequest(ctx, http.MethodPost, "/api/v1/worker/task/recovery", req)
@@ -675,6 +755,9 @@ func (c *WorkerHTTPClient) RecoverTasks(ctx context.Context) (*TaskRecoveryResp,
 	var resp TaskRecoveryResp
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
+	}
+	if resp.Code != 0 || !resp.Success {
+		return &resp, fmt.Errorf("task recovery rejected: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 
 	return &resp, nil

@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cscan/internal/scheduler"
+
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -39,11 +41,8 @@ type WSAuthPayload struct {
 	InstallKey string `json:"installKey"`
 }
 
-// WSControlPayload 控制信号载荷
-type WSControlPayload struct {
-	TaskId string `json:"taskId"`
-	Action string `json:"action"` // STOP, PAUSE, RESUME
-}
+// WSControlPayload is the strict generation-bearing task control envelope.
+type WSControlPayload = scheduler.TaskControlEnvelope
 
 // ==================== WebSocket Client ====================
 
@@ -73,8 +72,8 @@ func DefaultWSClientConfig(serverURL, workerName, installKey string) *WSClientCo
 	}
 }
 
-// ControlHandler 控制信号处理函数
-type ControlHandler func(taskId, action string)
+// ControlHandler receives only a validated exact-generation envelope.
+type ControlHandler func(envelope *scheduler.TaskControlEnvelope)
 
 // WorkerControlHandler Worker级别控制处理函数类型
 type WorkerControlHandler func(action string, param string)
@@ -735,17 +734,17 @@ func (c *WorkerWSClient) handleControl(payload json.RawMessage) {
 		}
 	}
 
-	// 解析为任务级别控制命�?
-	var controlPayload WSControlPayload
-	if err := json.Unmarshal(payload, &controlPayload); err != nil {
-		logx.Infof("[WSClient] Invalid control payload: %v", err)
+	// Task-level controls are strict JSON and must carry the exact generation.
+	envelope, err := scheduler.ParseTaskControlEnvelope(payload)
+	if err != nil {
+		logx.Infof("[WSClient] Rejected invalid task control payload: %v", err)
 		return
 	}
 
-	logx.Infof("[WSClient] Received task control signal: taskId=%s, action=%s", controlPayload.TaskId, controlPayload.Action)
-
+	logx.Infof("[WSClient] Received task control signal: taskId=%s generation=%s action=%s",
+		envelope.TaskID, envelope.DispatchGeneration, envelope.Action)
 	if c.controlHandler != nil {
-		c.controlHandler(controlPayload.TaskId, controlPayload.Action)
+		c.controlHandler(envelope)
 	}
 }
 

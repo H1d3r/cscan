@@ -152,7 +152,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 		Options:    opts,
 		MainTaskId: task.MainTaskId,
 		TaskLogger: taskLogger,
-		OnProgress: w.makeOnProgress(task.MainTaskId, "目录扫描"),
+		OnProgress: w.makeOnProgress(task, "目录扫描"),
 		OnTargetDone: func(target string, assets []*scanner.Asset) {
 			// 流式入库：每完成一个目标立即保存
 			w.saveDirScanResults(ctx, task, assets)
@@ -165,7 +165,7 @@ func (w *Worker) executeDirScan(ctx context.Context, task *scheduler.TaskInfo, a
 	}
 
 	// 检查是否被停止
-	if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+	if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 		w.taskLog(task.TaskId, LevelInfo, "Task stopped")
 		return nil
 	}

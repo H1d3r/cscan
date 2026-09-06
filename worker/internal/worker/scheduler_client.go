@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"cscan/internal/notification"
 	"cscan/internal/scheduler"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
@@ -19,95 +21,141 @@ import (
 // SchedulerClient Worker 直连 Redis 调度层客户端
 // 替代原 HTTP→API→RPC 链路，直接操作 Redis 完成任务拉取/心跳/进度上报
 type SchedulerClient struct {
-	rdb         *redis.Client
-	workerName  string
-	scheduler   *scheduler.Scheduler
-	recoveryMgr *scheduler.TaskRecoveryManager
-	mongoDB     *mongo.Database
-	notifySvc   *notification.Service // 通知服务（任务完成/失败触发通知）
+	rdb          *redis.Client
+	workerName   string
+	instanceID   string
+	taskProtocol int
+	scheduler    *scheduler.Scheduler
+	recoveryMgr  *scheduler.TaskRecoveryManager
+	mongoDB      *mongo.Database
+	executorTask *model.ExecutorTaskModel
+	notifySvc    *notification.Service // 通知服务（任务完成/失败触发通知）
 }
 
-// NewSchedulerClient 创建调度客户端
-// mongoDB 仅用于 MainTask 状态写（IncrSubTaskDone / current_phase / progress /
-// MarkTaskCompleted），应传入独立状态连接池（独立持久化），与结果数据写隔离，
-// 避免数据写入过载时状态回写被饿死。
-func NewSchedulerClient(rdb *redis.Client, workerName string, mongoDB *mongo.Database) *SchedulerClient {
+// NewSchedulerClient creates a v1 direct scheduler client with a generated
+// process instance. Worker construction should use NewSchedulerClientForInstance
+// so every transport shares the same immutable identity.
+func NewSchedulerClient(rdb *redis.Client, workerName string, mongoDB *mongo.Database) (*SchedulerClient, error) {
+	return NewSchedulerClientForInstance(rdb, workerName, uuid.NewString(), scheduler.TaskProtocolV1, mongoDB)
+}
+
+// NewSchedulerClientForInstance creates a direct scheduler client for one
+// immutable worker process identity.
+func NewSchedulerClientForInstance(
+	rdb *redis.Client,
+	workerName, instanceID string,
+	taskProtocol int,
+	mongoDB *mongo.Database,
+) (*SchedulerClient, error) {
+	if workerName == "" {
+		return nil, fmt.Errorf("worker name is required")
+	}
+	if _, err := uuid.Parse(instanceID); err != nil {
+		return nil, fmt.Errorf("invalid worker instance id: %w", err)
+	}
+	if taskProtocol != scheduler.TaskProtocolV1 {
+		return nil, fmt.Errorf("unsupported task protocol %d", taskProtocol)
+	}
+
 	ctx := context.Background()
 	s := scheduler.NewScheduler(rdb)
 	recoveryMgr := scheduler.NewTaskRecoveryManager(rdb, ctx, s)
+	executorTask := model.NewExecutorTaskModel(mongoDB)
+	migrationCtx, cancel := context.WithTimeout(ctx, 35*time.Minute)
+	defer cancel()
+	if err := executorTask.MigrateAndEnsureUniqueIndex(migrationCtx); err != nil {
+		return nil, fmt.Errorf("migrate executor task snapshots: %w", err)
+	}
 
 	return &SchedulerClient{
-		rdb:         rdb,
-		workerName:  workerName,
-		scheduler:   s,
-		recoveryMgr: recoveryMgr,
-		mongoDB:     mongoDB,
-	}
+		rdb:          rdb,
+		workerName:   workerName,
+		instanceID:   instanceID,
+		taskProtocol: taskProtocol,
+		scheduler:    s,
+		recoveryMgr:  recoveryMgr,
+		mongoDB:      mongoDB,
+		executorTask: executorTask,
+	}, nil
 }
 
 // CheckTaskResponse 拉取任务响应（对齐原 HTTP TaskCheckResp）
 type CheckTaskResponse struct {
-	IsExist    bool
-	IsFinished bool
-	TaskId     string
-	MainTaskId string
-	Config     string
+	IsExist            bool
+	IsFinished         bool
+	TaskId             string
+	MainTaskId         string
+	Config             string
+	LeaseToken         string
+	DispatchGeneration string
 }
 
-// CheckTask 拉取任务（Lua 原子出队 + Pub/Sub 长轮询）
-// 复用 scheduler.PopTaskForWorker(workerName)，队空则 subscribe cscan:task:available 最长 25 秒
+// CheckTask pulls only a generation accepted by the durable parent. A popped
+// stale/terminal generation is exact-discarded; a transient Mongo failure is
+// exact-requeued and is never handed to the worker.
 func (c *SchedulerClient) CheckTask(ctx context.Context) (*CheckTaskResponse, error) {
-	// 1. 尝试原子弹出
-	task, err := c.scheduler.PopTaskForWorker(ctx, c.workerName)
-	if err != nil {
-		return nil, fmt.Errorf("PopTaskForWorker: %w", err)
+	if c.taskProtocol != scheduler.TaskProtocolV1 || c.instanceID == "" {
+		return nil, fmt.Errorf("direct task acquisition requires leased-task-v1 instance identity")
 	}
-
-	if task != nil {
-		// 记录任务开始执行（写 cscan:task:execution:{taskId}）
-		if err := c.recoveryMgr.RecordTaskStart(task.TaskId, c.workerName); err != nil {
-			logx.Errorf("[SchedulerClient] RecordTaskStart failed: %v", err)
-		}
-
-		// 将主任务状态置 STARTED（写 MongoDB）
-		c.updateMainTaskStatus(ctx, task.MainTaskId, model.TaskStatusStarted, "")
-
-		return &CheckTaskResponse{
-			IsExist:    true,
-			IsFinished: false,
-			TaskId:     task.TaskId,
-			MainTaskId: task.MainTaskId,
-			Config:     task.Config,
-		}, nil
+	if task, err := c.popAcceptedTask(ctx); err != nil {
+		return nil, err
+	} else if task != nil {
+		return checkTaskResponse(task), nil
 	}
-
-	// 2. 队列空，Pub/Sub 长轮询等待（最长 25 秒）
 	if err := c.waitForTaskAvailable(ctx, 25*time.Second); err != nil {
 		return nil, err
 	}
-
-	// 3. 被唤醒后再次尝试弹出
-	task, err = c.scheduler.PopTaskForWorker(ctx, c.workerName)
-	if err != nil {
-		return nil, fmt.Errorf("PopTaskForWorker (retry): %w", err)
+	if task, err := c.popAcceptedTask(ctx); err != nil {
+		return nil, err
+	} else if task != nil {
+		return checkTaskResponse(task), nil
 	}
-
-	if task != nil {
-		if err := c.recoveryMgr.RecordTaskStart(task.TaskId, c.workerName); err != nil {
-			logx.Errorf("[SchedulerClient] RecordTaskStart failed: %v", err)
-		}
-		c.updateMainTaskStatus(ctx, task.MainTaskId, model.TaskStatusStarted, "")
-
-		return &CheckTaskResponse{
-			IsExist:    true,
-			IsFinished: false,
-			TaskId:     task.TaskId,
-			MainTaskId: task.MainTaskId,
-			Config:     task.Config,
-		}, nil
-	}
-
 	return &CheckTaskResponse{IsExist: false}, nil
+}
+
+func checkTaskResponse(task *scheduler.TaskInfo) *CheckTaskResponse {
+	return &CheckTaskResponse{
+		IsExist:            true,
+		IsFinished:         false,
+		TaskId:             task.TaskId,
+		MainTaskId:         task.MainTaskId,
+		Config:             task.Config,
+		LeaseToken:         task.LeaseToken,
+		DispatchGeneration: task.DispatchGeneration,
+	}
+}
+
+func (c *SchedulerClient) popAcceptedTask(ctx context.Context) (*scheduler.TaskInfo, error) {
+	for attempt := 0; attempt < 100; attempt++ {
+		task, err := c.scheduler.PopTaskForWorkerInstance(ctx, c.workerName, c.instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("PopTaskForWorkerInstance: %w", err)
+		}
+		if task == nil {
+			return nil, nil
+		}
+		if !isValidObjectID(task.MainTaskId) {
+			return task, nil
+		}
+
+		mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, claimErr := model.NewMainTaskModel(c.mongoDB).ClaimTaskStarted(mongoCtx, task.MainTaskId, task.DispatchGeneration)
+		cancel()
+		if claimErr == nil {
+			return task, nil
+		}
+		if errors.Is(claimErr, model.ErrTaskDispatchConflict) {
+			if discardErr := c.scheduler.DiscardExactTask(ctx, task); discardErr != nil {
+				return nil, fmt.Errorf("discard rejected dispatch %s: %w", task.TaskId, discardErr)
+			}
+			continue
+		}
+		if _, requeueErr := c.scheduler.RequeueExactTask(ctx, task); requeueErr != nil {
+			return nil, fmt.Errorf("parent claim failed (%v) and exact requeue failed: %w", claimErr, requeueErr)
+		}
+		return nil, fmt.Errorf("claim durable parent generation: %w", claimErr)
+	}
+	return nil, fmt.Errorf("too many rejected queued task generations")
 }
 
 // waitForTaskAvailable 订阅 cscan:task:available 频道，最长等待指定时长
@@ -131,93 +179,182 @@ func (c *SchedulerClient) waitForTaskAvailable(ctx context.Context, timeout time
 	}
 }
 
-// UpdateTask 更新任务状态
-// 写 Redis status/progress + 终态清理 + MongoDB 主任务更新
-func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, state string, progress int, phase string) error {
-	var firstErr error
-
-	// 更新恢复管理器进度
-	if phase != "" {
-		if err := c.recoveryMgr.UpdateTaskProgress(taskID, phase, progress); err != nil {
-			logx.Errorf("[SchedulerClient] UpdateTaskProgress failed: %v", err)
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
+func directDispatchError(err error) error {
+	switch {
+	case errors.Is(err, model.ErrTaskParentFenced):
+		return scheduler.ErrTaskParentFenced
+	case errors.Is(err, model.ErrTaskDispatchConflict):
+		return scheduler.ErrTaskLeaseConflict
+	default:
+		return err
 	}
-
-	// 从 processing 集合移除（终态时）
-	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusPartial || state == scheduler.TaskStatusFailure {
-		if err := c.rdb.SRem(ctx, "cscan:task:processing", taskID).Err(); err != nil {
-			logx.Errorf("[SchedulerClient] SRem processing failed: %v", err)
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
-
-	// 写 Redis status（24h TTL）
-	statusKey := "cscan:task:status:" + taskID
-	statusData := map[string]interface{}{
-		"taskId": taskID,
-		"state":  state,
-		"worker": c.workerName,
-	}
-	statusJson, _ := json.Marshal(statusData)
-	if err := c.rdb.Set(ctx, statusKey, statusJson, 24*time.Hour).Err(); err != nil {
-		logx.Errorf("[SchedulerClient] Set status failed: %v", err)
-		if firstErr == nil {
-			firstErr = err
-		}
-	}
-
-	// 写 Redis progress（24h TTL）
-	if phase != "" {
-		progressKey := "cscan:task:progress:" + taskID
-		progressData := map[string]interface{}{
-			"currentPhase": phase,
-		}
-		progressJson, _ := json.Marshal(progressData)
-		if err := c.rdb.Set(ctx, progressKey, progressJson, 24*time.Hour).Err(); err != nil {
-			logx.Errorf("[SchedulerClient] Set progress failed: %v", err)
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
-	}
-
-	// 终态：清理 execution info + taskInfo + 加入 completed 集合
-	if state == scheduler.TaskStatusSuccess || state == scheduler.TaskStatusPartial || state == scheduler.TaskStatusFailure {
-		c.recoveryMgr.RemoveTaskExecution(taskID)
-
-		taskInfoKey := "cscan:task:info:" + taskID
-		// 读取 taskInfo 用于 MongoDB 更新
-		taskInfoData, _ := c.rdb.Get(ctx, taskInfoKey).Result()
-		c.rdb.Del(ctx, taskInfoKey)
-
-		completedKey := "cscan:task:completed"
-		taskInfo := scheduler.TaskInfo{TaskId: taskID}
-		taskJson, _ := json.Marshal(taskInfo)
-		c.rdb.SAdd(ctx, completedKey, string(taskJson))
-
-		// MongoDB 主任务更新
-		c.updateMainTaskFromTaskInfo(ctx, taskInfoData, state, phase)
-	} else if state != "" {
-		// 非终态（如 STARTED、PAUSED）：从 taskInfo 读取 mainTaskId 更新 MongoDB
-		taskInfoKey := "cscan:task:info:" + taskID
-		taskInfoData, _ := c.rdb.Get(ctx, taskInfoKey).Result()
-		c.updateMainTaskFromTaskInfo(ctx, taskInfoData, state, phase)
-	}
-
-	return firstErr
 }
 
-// KeepAlive 心跳（对齐原 RPC KeepAlive）
-// 直接写 cscan:worker:{name}（60s TTL）+ SADD cscan:workers
+func directDispatchStateError(task *model.MainTask, generation string) error {
+	return directDispatchError(model.DispatchStateError(task, generation))
+}
+
+func directCompletionDispatchState(task *model.MainTask, generation string) (semanticTerminal, runnable bool, err error) {
+	if task == nil || task.DispatchGeneration != generation {
+		return false, false, scheduler.ErrTaskLeaseConflict
+	}
+	if model.IsSemanticTerminalTaskStatus(task.Status) {
+		return true, false, nil
+	}
+	if model.HasExactControlIntent(task, generation, model.TaskControlActionPause) ||
+		model.HasExactControlIntent(task, generation, model.TaskControlActionStop) {
+		return false, false, scheduler.ErrTaskParentFenced
+	}
+	if model.IsRunnableTaskStatus(task.Status) {
+		return false, true, nil
+	}
+	return false, false, scheduler.ErrTaskLeaseConflict
+}
+
+// UpdateTask 更新任务状态。
+// taskState 是仅供 PAUSED 状态使用的可恢复快照，不能与阶段或结果字段混用。
+func (c *SchedulerClient) UpdateTask(ctx context.Context, taskID, leaseToken, state string, progress int, phase, taskState string) error {
+	if state == model.TaskStatusPaused && taskState == "" {
+		return fmt.Errorf("paused task update requires a resumable snapshot")
+	}
+	if taskState != "" {
+		if state != model.TaskStatusPaused {
+			return fmt.Errorf("task state is only valid when task is paused")
+		}
+		if !json.Valid([]byte(taskState)) {
+			return fmt.Errorf("task state must be valid JSON")
+		}
+		return c.PauseTask(ctx, taskID, "", leaseToken, phase, taskState)
+	}
+	if c.scheduler == nil || taskID == "" || leaseToken == "" {
+		return scheduler.ErrTaskLeaseConflict
+	}
+
+	updateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	terminal := state == model.TaskStatusSuccess || state == model.TaskStatusPartial ||
+		state == model.TaskStatusFailure || state == model.TaskStatusStopped ||
+		state == model.TaskStatusRevoked || state == "COMPLETED"
+	var operation *scheduler.LeaseOperation
+	var err error
+	if state == model.TaskStatusStopped {
+		operation, err = c.scheduler.BeginStoppedTask(updateCtx, taskID, leaseToken)
+	} else {
+		operation, err = c.scheduler.BeginLeaseOperation(updateCtx, taskID, leaseToken)
+	}
+	if err != nil {
+		if errors.Is(err, scheduler.ErrTaskLeaseConflict) && terminal {
+			if _, confirmErr := c.scheduler.ConfirmClosedTaskLease(updateCtx, taskID, leaseToken, state); confirmErr == nil {
+				return nil
+			} else if !errors.Is(confirmErr, scheduler.ErrTaskLeaseConflict) {
+				return fmt.Errorf("confirm guarded terminal task update: %w", confirmErr)
+			}
+		}
+		return err
+	}
+	if operation == nil {
+		return nil
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer releaseCancel()
+		if releaseErr := c.scheduler.ReleaseLeaseOperation(releaseCtx, operation); releaseErr != nil {
+			logx.Errorf("[SchedulerClient] release task update guard failed: %v", releaseErr)
+		}
+	}()
+
+	var leasedTask scheduler.TaskInfo
+	if err := json.Unmarshal([]byte(operation.TaskInfoData), &leasedTask); err != nil {
+		return fmt.Errorf("%w: decode guarded task payload: %v", scheduler.ErrTaskLeaseConflict, err)
+	}
+	if leasedTask.TaskId != taskID || leasedTask.DispatchGeneration != operation.DispatchGeneration ||
+		operation.WorkerName != c.workerName || operation.InstanceID != c.instanceID ||
+		operation.TaskProtocol != c.taskProtocol || operation.TaskProtocol != scheduler.TaskProtocolV1 {
+		return scheduler.ErrTaskLeaseConflict
+	}
+
+	if isValidObjectID(leasedTask.MainTaskId) {
+		if operation.DispatchGeneration == "" {
+			return scheduler.ErrTaskLeaseConflict
+		}
+		taskModel := model.NewMainTaskModel(c.mongoDB)
+		if terminal {
+			nextState := state
+			if nextState == "COMPLETED" {
+				nextState = model.TaskStatusSuccess
+			}
+			if nextState == model.TaskStatusStopped || nextState == model.TaskStatusRevoked {
+				current, findErr := taskModel.FindById(updateCtx, leasedTask.MainTaskId)
+				if findErr != nil {
+					return findErr
+				}
+				if nextState == model.TaskStatusStopped {
+					if !model.HasExactControlIntent(current, operation.DispatchGeneration, model.TaskControlActionStop) {
+						return directDispatchStateError(current, operation.DispatchGeneration)
+					}
+				} else if current == nil || current.DispatchGeneration != operation.DispatchGeneration ||
+					current.Status != nextState {
+					return directDispatchStateError(current, operation.DispatchGeneration)
+				}
+			} else {
+				fields := bson.M{"progress": 100, "end_time": time.Now()}
+				if phase != "" {
+					fields["current_phase"] = phase
+				}
+				matched, transitionErr := taskModel.TransitionDispatchStatus(updateCtx, leasedTask.MainTaskId,
+					operation.DispatchGeneration, []string{model.TaskStatusPending, model.TaskStatusStarted}, nextState, fields)
+				if transitionErr != nil {
+					return transitionErr
+				}
+				if !matched {
+					current, findErr := taskModel.FindById(updateCtx, leasedTask.MainTaskId)
+					if findErr != nil {
+						return findErr
+					}
+					if current == nil || current.DispatchGeneration != operation.DispatchGeneration ||
+						current.Status != nextState {
+						return directDispatchStateError(current, operation.DispatchGeneration)
+					}
+				}
+			}
+		} else if phase != "" || progress > 0 {
+			matched, updateErr := taskModel.UpdateDispatchProgress(updateCtx, leasedTask.MainTaskId,
+				operation.DispatchGeneration, phase, progress)
+			if updateErr != nil {
+				return directDispatchError(updateErr)
+			}
+			if !matched {
+				current, findErr := taskModel.FindById(updateCtx, leasedTask.MainTaskId)
+				if findErr != nil {
+					return findErr
+				}
+				return directDispatchStateError(current, operation.DispatchGeneration)
+			}
+		}
+	}
+
+	if state == model.TaskStatusStopped {
+		return c.scheduler.FinalizeStoppedTask(updateCtx, operation, operation.WorkerName, "", phase)
+	}
+	_, err = c.scheduler.UpdateLeasedTaskWithOperation(
+		updateCtx, operation, operation.WorkerName, state, "", phase, progress,
+	)
+	return err
+}
+
+// RenewTaskLease refreshes the exact child execution without changing task
+// status, phase, or progress.
+func (c *SchedulerClient) RenewTaskLease(ctx context.Context, taskID, leaseToken string) error {
+	return c.scheduler.RenewTaskLease(ctx, taskID, leaseToken)
+}
+
+// KeepAlive writes both the logical-name heartbeat retained for UI
+// compatibility and the immutable per-instance liveness key used by recovery.
 func (c *SchedulerClient) KeepAlive(ctx context.Context, cpuLoad, memUsed float64, taskStarted, taskExecuted int, concurrency int) error {
-	workerKey := "cscan:worker:" + c.workerName
 	workerData := map[string]interface{}{
 		"workerName":         c.workerName,
+		"instanceId":         c.instanceID,
+		"taskProtocol":       c.taskProtocol,
 		"cpuLoad":            cpuLoad,
 		"memUsed":            memUsed,
 		"taskStartedNumber":  taskStarted,
@@ -227,14 +364,18 @@ func (c *SchedulerClient) KeepAlive(ctx context.Context, cpuLoad, memUsed float6
 		"updateTime":         time.Now().Format("2006-01-02 15:04:05"),
 		"status":             "online",
 	}
-	workerJson, _ := json.Marshal(workerData)
-	if err := c.rdb.Set(ctx, workerKey, workerJson, 60*time.Second).Err(); err != nil {
-		return fmt.Errorf("set worker heartbeat: %w", err)
+	workerJSON, err := json.Marshal(workerData)
+	if err != nil {
+		return fmt.Errorf("marshal worker heartbeat: %w", err)
 	}
 
-	// 添加到 Worker 集合
-	c.rdb.SAdd(ctx, "cscan:workers", c.workerName)
-
+	pipe := c.rdb.TxPipeline()
+	pipe.Set(ctx, "cscan:worker:"+c.workerName, workerJSON, 60*time.Second)
+	pipe.Set(ctx, "cscan:worker:instance:"+c.instanceID, workerJSON, 60*time.Second)
+	pipe.SAdd(ctx, "cscan:workers", c.workerName)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("write worker heartbeat: %w", err)
+	}
 	return nil
 }
 
@@ -280,26 +421,104 @@ type IncrSubTaskDoneResponse struct {
 	SubTaskCount        int
 	AllDone             bool
 	Recorded            bool
+	LeaseClosed         bool
 	Finalized           bool
 	FinalizationPending bool
 	ScanSummary         *model.TaskScanSummary
 }
 
-// IncrSubTaskDone 递增子任务完成数
-// 原子递增 MongoDB MainTaskModel.IncrSubTaskDoneAtomic + 更新 progress / current_phase
-// 全部完成时 MarkTaskCompleted
-func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTaskID, moduleName string, incrAmount int, phaseResult *PhaseResult) (*IncrSubTaskDoneResponse, error) {
-	if mainTaskID == "" {
-		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true}, nil
+// IncrSubTaskDone holds an exact-lease Redis operation guard across every
+// bounded Mongo mutation. Once the phase write installs durable reconciliation
+// ownership, a completed child may release its exact lease while semantic
+// finalization continues asynchronously.
+func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTaskID, leaseToken, moduleName string, isCompleted bool, incrAmount int, phaseResult *PhaseResult) (*IncrSubTaskDoneResponse, error) {
+	if mainTaskID == "" || subTaskID == "" || leaseToken == "" || c.scheduler == nil {
+		return nil, scheduler.ErrTaskLeaseConflict
 	}
+	reportCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	operation, err := c.scheduler.BeginLeaseOperation(reportCtx, subTaskID, leaseToken)
+	if err != nil {
+		if errors.Is(err, scheduler.ErrTaskLeaseConflict) && isCompleted {
+			closedTask, confirmErr := c.scheduler.ConfirmClosedTaskLease(reportCtx, subTaskID, leaseToken, "COMPLETED")
+			if confirmErr == nil {
+				if closedTask.MainTaskId != mainTaskID {
+					return nil, scheduler.ErrTaskLeaseConflict
+				}
+				if !isValidObjectID(mainTaskID) {
+					return &IncrSubTaskDoneResponse{
+						SubTaskDone: 1, SubTaskCount: 1, AllDone: true,
+						Recorded: true, LeaseClosed: true, Finalized: true,
+					}, nil
+				}
+				task, findErr := model.NewMainTaskModel(c.mongoDB).FindById(reportCtx, mainTaskID)
+				if findErr != nil {
+					return nil, findErr
+				}
+				if task == nil || closedTask.DispatchGeneration == "" || task.DispatchGeneration != closedTask.DispatchGeneration {
+					return nil, scheduler.ErrTaskLeaseConflict
+				}
+				semanticTerminal, runnable, stateErr := directCompletionDispatchState(task, closedTask.DispatchGeneration)
+				if stateErr != nil {
+					return nil, stateErr
+				}
+				allDone := task.SubTaskDone >= task.SubTaskCount
+				return &IncrSubTaskDoneResponse{
+					SubTaskDone: task.SubTaskDone, SubTaskCount: task.SubTaskCount,
+					AllDone: allDone, Recorded: true, LeaseClosed: true,
+					Finalized: semanticTerminal, FinalizationPending: runnable && allDone, ScanSummary: task.ScanSummary,
+				}, nil
+			}
+			if !errors.Is(confirmErr, scheduler.ErrTaskLeaseConflict) {
+				return nil, fmt.Errorf("confirm completed task lease: %w", confirmErr)
+			}
+		}
+		return nil, err
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer releaseCancel()
+		if releaseErr := c.scheduler.ReleaseLeaseOperation(releaseCtx, operation); releaseErr != nil {
+			logx.Errorf("[SchedulerClient] release phase operation guard failed: %v", releaseErr)
+		}
+	}()
 
-	// 快速验证类任务（UUID 格式）跳过 MongoDB 操作
+	var leasedTask scheduler.TaskInfo
+	if err := json.Unmarshal([]byte(operation.TaskInfoData), &leasedTask); err != nil {
+		return nil, fmt.Errorf("%w: decode leased task payload: %v", scheduler.ErrTaskLeaseConflict, err)
+	}
+	if leasedTask.TaskId != subTaskID || leasedTask.MainTaskId != mainTaskID {
+		return nil, fmt.Errorf("%w: leased task identity does not match phase report", scheduler.ErrTaskLeaseConflict)
+	}
+	closeCompletedLease := func() (bool, error) {
+		if !isCompleted {
+			return false, nil
+		}
+		if _, closeErr := c.scheduler.UpdateLeasedTaskWithOperation(
+			reportCtx, operation, operation.WorkerName, "COMPLETED", "", moduleName, 100,
+		); closeErr != nil {
+			if _, confirmErr := c.scheduler.ConfirmClosedTaskLease(reportCtx, subTaskID, leaseToken, "COMPLETED"); confirmErr == nil {
+				return true, nil
+			}
+			return false, closeErr
+		}
+		return true, nil
+	}
 	if !isValidObjectID(mainTaskID) {
-		return &IncrSubTaskDoneResponse{SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true}, nil
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close quick validation task lease: %w", closeErr)
+		}
+		return &IncrSubTaskDoneResponse{
+			SubTaskDone: 1, SubTaskCount: 1, AllDone: true,
+			Recorded: true, LeaseClosed: leaseClosed, Finalized: true,
+		}, nil
+	}
+	if leasedTask.DispatchGeneration == "" || leasedTask.DispatchGeneration != operation.DispatchGeneration {
+		return nil, scheduler.ErrTaskLeaseConflict
 	}
 
 	taskModel := model.NewMainTaskModel(c.mongoDB)
-
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
@@ -312,197 +531,262 @@ func (c *SchedulerClient) IncrSubTaskDone(ctx context.Context, mainTaskID, subTa
 	}
 	phaseSummary := phaseResult.TaskSummary(subTaskID)
 	phaseSummary.Weight = incrAmount
-	reportKey := model.TaskPhaseReportKey(subTaskID, canonicalPhase)
-	task, recorded, err := taskModel.RecordPhaseSummaryAtomic(ctx, mainTaskID, reportKey, phaseSummary, incrAmount)
-	if err != nil {
-		return nil, fmt.Errorf("RecordPhaseSummaryAtomic: %w", err)
+	phaseSummary.LeaseGeneration = scheduler.LeaseGenerationHash(leaseToken)
+	reportIdentity := canonicalPhase
+	if isCompleted {
+		reportIdentity = "complete"
+	} else if reportIdentity == "complete" {
+		// Only an explicit completed report may own the canonical final key.
+		reportIdentity = "complete-intermediate"
 	}
-
-	if phaseSummary.Weight != incrAmount {
-		phaseSummary.Weight = incrAmount
+	reportKey := model.TaskPhaseReportKey(subTaskID, reportIdentity)
+	task, recorded, err := taskModel.RecordPhaseSummaryForDispatch(reportCtx, mainTaskID,
+		leasedTask.DispatchGeneration, reportKey, phaseSummary, incrAmount)
+	if err != nil {
+		if errors.Is(err, model.ErrTaskDispatchConflict) || errors.Is(err, model.ErrTaskParentFenced) {
+			current, findErr := taskModel.FindById(reportCtx, mainTaskID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			return nil, directDispatchStateError(current, leasedTask.DispatchGeneration)
+		}
+		return nil, fmt.Errorf("RecordPhaseSummaryForDispatch: %w", err)
+	}
+	if !recorded {
+		logx.Infof("[SchedulerClient] duplicate phase report accepted without payload overwrite, mainTaskId=%s taskId=%s phase=%s",
+			mainTaskID, subTaskID, canonicalPhase)
 	}
 
 	allDone := task.SubTaskDone >= task.SubTaskCount
-
-	// 计算进度
+	if model.IsSemanticTerminalTaskStatus(task.Status) {
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close completed task lease: %w", closeErr)
+		}
+		return &IncrSubTaskDoneResponse{
+			SubTaskDone: task.SubTaskDone, SubTaskCount: task.SubTaskCount, AllDone: allDone,
+			Recorded: true, LeaseClosed: leaseClosed, Finalized: true, ScanSummary: task.ScanSummary,
+		}, nil
+	}
 	progress := calculateProgress(task.SubTaskDone, task.SubTaskCount)
-
-	// 更新进度和阶段
-	if err := taskModel.Update(ctx, mainTaskID, bson.M{
-		"progress":      progress,
-		"current_phase": moduleName,
-	}); err != nil {
-		logx.Errorf("[SchedulerClient] update progress failed: %v", err)
+	matched, err := taskModel.UpdateDispatchProgress(reportCtx, mainTaskID,
+		leasedTask.DispatchGeneration, moduleName, progress)
+	if err != nil {
+		return nil, fmt.Errorf("update conditional task progress: %w", err)
+	}
+	if !matched {
+		current, findErr := taskModel.FindById(reportCtx, mainTaskID)
+		if findErr != nil {
+			return nil, findErr
+		}
+		semanticTerminal, _, stateErr := directCompletionDispatchState(current, leasedTask.DispatchGeneration)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if !semanticTerminal {
+			return nil, scheduler.ErrTaskLeaseConflict
+		}
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close exact lease after sibling finalization: %w", closeErr)
+		}
+		return &IncrSubTaskDoneResponse{
+			SubTaskDone: current.SubTaskDone, SubTaskCount: current.SubTaskCount,
+			AllDone: current.SubTaskDone >= current.SubTaskCount, Recorded: true, LeaseClosed: leaseClosed,
+			Finalized: true, ScanSummary: current.ScanSummary,
+		}, nil
 	}
 
-	// 更新恢复管理器进度
-	if err := c.recoveryMgr.UpdateTaskProgress(mainTaskID, moduleName, progress); err != nil {
-		logx.Errorf("[SchedulerClient] UpdateTaskProgress failed: %v", err)
-	}
-
-	// Completion count only opens the finalization gate; phase summaries decide outcome.
 	var finalSummary *model.TaskScanSummary
 	finalized := false
 	finalizationPending := false
+	closeLease := !allDone
 	if allDone {
-		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummary(ctx, mainTaskID)
-		if finalizeErr != nil {
-			finalizationPending = true
-			logx.Errorf("[SchedulerClient] semantic finalization failed; phase report remains acknowledged and finalization is retryable: %v", finalizeErr)
-		} else {
+		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummaryForDispatch(
+			reportCtx, mainTaskID, leasedTask.DispatchGeneration)
+		switch {
+		case finalizeErr == nil:
 			finalSummary = summary
-			terminal := model.IsTerminalTaskStatus(task.Status)
-			finalized = updated || terminal
-			if !updated && !terminal {
-				finalizationPending = true
-			}
-			if updated {
-				// The atomic terminal transition is the exactly-once notification gate.
-				if c.notifySvc != nil {
-					if nerr := c.notifySvc.NotifyTaskCompleted(ctx, mainTaskID, summary.Outcome); nerr != nil {
-						logx.Errorf("[SchedulerClient] NotifyTaskCompleted failed: %v", nerr)
-					}
+			finalized = true
+			closeLease = true
+			if updated && c.notifySvc != nil {
+				if nerr := c.notifySvc.NotifyTaskCompleted(reportCtx, mainTaskID, summary.Outcome); nerr != nil {
+					logx.Errorf("[SchedulerClient] NotifyTaskCompleted failed: %v", nerr)
 				}
+			}
+		case errors.Is(finalizeErr, model.ErrTaskFinalizationPending):
+			finalSummary = summary
+			finalizationPending = true
+			current, findErr := taskModel.FindById(reportCtx, mainTaskID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			semanticTerminal, runnable, stateErr := directCompletionDispatchState(current, leasedTask.DispatchGeneration)
+			if stateErr != nil {
+				return nil, stateErr
+			}
+			if semanticTerminal {
+				finalized = true
+				finalizationPending = false
+				finalSummary = current.ScanSummary
+			}
+			closeLease = semanticTerminal || runnable
+		default:
+			if errors.Is(finalizeErr, model.ErrTaskDispatchConflict) || errors.Is(finalizeErr, model.ErrTaskParentFenced) {
+				current, findErr := taskModel.FindById(reportCtx, mainTaskID)
+				if findErr != nil {
+					return nil, findErr
+				}
+				return nil, directDispatchStateError(current, leasedTask.DispatchGeneration)
+			}
+			finalizationPending = true
+			logx.Errorf("[SchedulerClient] semantic finalization failed; durable reconciliation retains ownership: %v", finalizeErr)
+			current, findErr := taskModel.FindById(reportCtx, mainTaskID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			semanticTerminal, _, stateErr := directCompletionDispatchState(current, leasedTask.DispatchGeneration)
+			if stateErr != nil {
+				return nil, stateErr
+			}
+			if semanticTerminal {
+				finalized = true
+				finalizationPending = false
+				finalSummary = current.ScanSummary
+				closeLease = true
 			}
 		}
 	}
 
+	leaseClosed := false
+	if closeLease {
+		leaseClosed, err = closeCompletedLease()
+		if err != nil {
+			return nil, fmt.Errorf("close completed task lease: %w", err)
+		}
+	}
 	return &IncrSubTaskDoneResponse{
 		SubTaskDone: task.SubTaskDone, SubTaskCount: task.SubTaskCount, AllDone: allDone,
-		Recorded: recorded, Finalized: finalized, FinalizationPending: finalizationPending, ScanSummary: finalSummary,
+		Recorded: true, LeaseClosed: leaseClosed, Finalized: finalized,
+		FinalizationPending: finalizationPending, ScanSummary: finalSummary,
 	}, nil
 }
 
-// NotifyOffline 通知离线（对齐原 HTTP NotifyOffline）
-// 直接删除 Redis 中的 Worker 状态
+var notifyWorkerOfflineScript = redis.NewScript(`
+	local function ownedByInstance(value)
+		if not value then
+			return false
+		end
+		local decoded = nil
+		pcall(function() decoded = cjson.decode(value) end)
+		return decoded and (decoded.instanceId or '') == ARGV[1] and (decoded.workerName or '') == ARGV[2]
+	end
+
+	local removedInstance = 0
+	if ownedByInstance(redis.call('GET', KEYS[1])) then
+		redis.call('DEL', KEYS[1])
+		removedInstance = 1
+	end
+	if ownedByInstance(redis.call('GET', KEYS[2])) then
+		redis.call('DEL', KEYS[2])
+		redis.call('SREM', KEYS[3], ARGV[2])
+		redis.call('DEL', KEYS[4])
+	end
+	return removedInstance
+`)
+
+// NotifyOffline compare-and-deletes only this process instance. It never
+// removes a same-name heartbeat written by another process generation.
 func (c *SchedulerClient) NotifyOffline(ctx context.Context) error {
-	workerKey := "cscan:worker:" + c.workerName
-	c.rdb.Del(ctx, workerKey)
-	c.rdb.SRem(ctx, "cscan:workers", c.workerName)
-	controlKey := "cscan:worker:control:" + c.workerName
-	c.rdb.Del(ctx, controlKey)
-	logx.Infof("[SchedulerClient] Worker %s offline, deleted from Redis", c.workerName)
+	_, err := notifyWorkerOfflineScript.Run(ctx, c.rdb, []string{
+		"cscan:worker:instance:" + c.instanceID,
+		"cscan:worker:" + c.workerName,
+		"cscan:workers",
+		"cscan:worker:control:" + c.workerName,
+	}, c.instanceID, c.workerName).Int()
+	if err != nil {
+		return fmt.Errorf("compare-delete worker heartbeat: %w", err)
+	}
+	logx.Infof("[SchedulerClient] Worker %s instance %s offline", c.workerName, c.instanceID)
 	return nil
 }
 
-// RequeueTask 将已弹出到 processing 的任务重新入队
-// 用于本地入队失败时回滚：PushTask 回到队列 + SRem 移除 processing 标记
+// RequeueTask 将已弹出到 processing 的任务按当前 lease 原子退回队列。
 func (c *SchedulerClient) RequeueTask(ctx context.Context, task *scheduler.TaskInfo) error {
 	if c.scheduler == nil {
 		return fmt.Errorf("scheduler not available")
 	}
-	if err := c.scheduler.PushTask(ctx, task); err != nil {
-		return fmt.Errorf("push task back failed: %w", err)
+	moved, err := c.scheduler.RequeueExactTask(ctx, task)
+	if err != nil {
+		return fmt.Errorf("requeue leased task: %w", err)
 	}
-	if err := c.rdb.SRem(ctx, "cscan:task:processing", task.TaskId).Err(); err != nil {
-		logx.Errorf("[SchedulerClient] RequeueTask: SRem processing failed for %s: %v", task.TaskId, err)
+	if !moved {
+		return fmt.Errorf("requeue leased task was not committed")
 	}
 	return nil
 }
 
-// GetCancelSignalKey 获取控制信号 Key（复用 scheduler）
-func (c *SchedulerClient) GetCancelSignalKey(taskId string) string {
-	return c.scheduler.GetCancelSignalKey(taskId)
+// GetTaskControlSignals reads durable exact-generation control keys. Pub/Sub
+// remains a latency optimization; this lookup repairs registration/reconnect races.
+func (c *SchedulerClient) GetTaskControlSignals(
+	ctx context.Context,
+	targets []scheduler.TaskControlTarget,
+) ([]scheduler.TaskControlEnvelope, error) {
+	signals := make([]scheduler.TaskControlEnvelope, 0, len(targets))
+	for _, target := range targets {
+		if err := target.Validate(); err != nil {
+			return nil, err
+		}
+		envelope, err := c.scheduler.GetTaskControl(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		if envelope != nil {
+			signals = append(signals, *envelope)
+		}
+	}
+	return signals, nil
 }
 
-// SubscribeCancel 订阅取消信号（复用 scheduler）
-func (c *SchedulerClient) SubscribeCancel(ctx context.Context) <-chan *scheduler.CancelSignal {
-	return c.scheduler.SubscribeCancelSignals(ctx)
+// SubscribeTaskControls subscribes to strict generation-bearing controls.
+func (c *SchedulerClient) SubscribeTaskControls(ctx context.Context) <-chan *scheduler.TaskControlEnvelope {
+	return c.scheduler.SubscribeTaskControls(ctx)
 }
 
 // ==================== 内部辅助方法 ====================
 
-// updateMainTaskStatus 更新 MongoDB 主任务状态
-func (c *SchedulerClient) updateMainTaskStatus(ctx context.Context, mainTaskID, state, phase string) {
-	if mainTaskID == "" || !isValidObjectID(mainTaskID) {
-		return
-	}
-	taskModel := model.NewMainTaskModel(c.mongoDB)
-	now := time.Now()
-
-	switch state {
-	case model.TaskStatusStarted:
-		task, err := taskModel.FindById(ctx, mainTaskID)
-		if err != nil {
-			logx.Errorf("[SchedulerClient] find task failed: %v", err)
-			return
-		}
-		if task == nil {
-			logx.Errorf("[SchedulerClient] main task not found: %s", mainTaskID)
-			return
-		}
-		if task.Status == model.TaskStatusStarted {
-			return // 已经是 STARTED，不重复设置
-		}
-		update := bson.M{
-			"status":     state,
-			"start_time": now,
-		}
-		if phase != "" {
-			update["current_phase"] = phase
-		}
-		if err := taskModel.Update(ctx, mainTaskID, update); err != nil {
-			logx.Errorf("[SchedulerClient] update task status failed: %v", err)
-		}
-	}
-}
-
-// updateMainTaskFromTaskInfo 从 Redis taskInfo 更新 MongoDB 主任务
-func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskInfoData, state, phase string) {
+// updateMainTaskFromTaskInfo applies only nonterminal metadata to the active
+// durable dispatch. Scan terminal state remains owned by semantic summaries.
+func (c *SchedulerClient) updateMainTaskFromTaskInfo(ctx context.Context, taskInfoData, phase string) error {
 	if taskInfoData == "" {
-		return
+		return nil
 	}
-
-	var taskInfo map[string]interface{}
+	var taskInfo scheduler.TaskInfo
 	if err := json.Unmarshal([]byte(taskInfoData), &taskInfo); err != nil {
-		logx.Errorf("[SchedulerClient] parse taskInfo failed: %v", err)
-		return
+		return fmt.Errorf("parse taskInfo: %w", err)
 	}
-
-	mainTaskId, _ := taskInfo["mainTaskId"].(string)
-	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
-		return
+	if taskInfo.MainTaskId == "" || !isValidObjectID(taskInfo.MainTaskId) {
+		return nil
 	}
-
-	taskModel := model.NewMainTaskModel(c.mongoDB)
-	now := time.Now()
-	update := bson.M{}
-
-	switch state {
-	case model.TaskStatusSuccess:
-		// Sub-task SUCCESS only closes executor/Redis bookkeeping. The main task
-		// is finalized exclusively from persisted phase summaries.
-		return
-	case model.TaskStatusFailure:
-		subTaskCount := 1
-		if count, ok := taskInfo["subTaskCount"].(float64); ok {
-			subTaskCount = int(count)
+	if taskInfo.DispatchGeneration == "" {
+		return scheduler.ErrTaskLeaseConflict
+	}
+	if phase == "" {
+		return nil
+	}
+	matched, err := model.NewMainTaskModel(c.mongoDB).UpdateActiveDispatchFields(ctx,
+		taskInfo.MainTaskId, taskInfo.DispatchGeneration, bson.M{"current_phase": phase})
+	if err != nil {
+		return err
+	}
+	if !matched {
+		current, findErr := model.NewMainTaskModel(c.mongoDB).FindById(ctx, taskInfo.MainTaskId)
+		if findErr != nil {
+			return findErr
 		}
-		if subTaskCount <= 1 {
-			update["status"] = state
-			update["end_time"] = now
-		}
-
-	case model.TaskStatusStarted:
-		// 已在 updateMainTaskStatus 处理
-		return
-	case model.TaskStatusPaused:
-		update["status"] = state
-	case "":
-		// 仅更新阶段
-	default:
-		update["status"] = state
+		return directDispatchStateError(current, taskInfo.DispatchGeneration)
 	}
-
-	if phase != "" {
-		update["current_phase"] = phase
-	}
-
-	if len(update) > 0 {
-		if err := taskModel.Update(ctx, mainTaskId, update); err != nil {
-			logx.Errorf("[SchedulerClient] update main task failed: %v", err)
-		}
-	}
+	return nil
 }
 
 // calculateProgress 计算进度百分比

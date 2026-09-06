@@ -407,7 +407,10 @@ func main() {
 	// 初始化 Redis 直连（Phase 2：任务调度层直连 Redis）
 	rdb := connectWorkerRedis()
 	if rdb != nil {
-		w.SetRedis(rdb)
+		if err := w.SetRedis(rdb); err != nil {
+			logx.Errorf("❌ Initialize direct scheduler failed: %v; falling back to HTTP scheduling", err)
+			rdb = nil
+		}
 	} else {
 		logx.Error("❌ Error: Failed to connect to Redis, falling back to HTTP scheduling")
 	}
@@ -420,7 +423,11 @@ func main() {
 	}
 
 	// 启动Worker
-	w.Start()
+	if err := w.Start(); err != nil {
+		logx.Errorf("❌ Start worker failed: %v", err)
+		w.Stop()
+		os.Exit(1)
+	}
 
 	fmt.Println("---------------------------------------------------------")
 	logx.Infof("✅ Worker is running successfully")

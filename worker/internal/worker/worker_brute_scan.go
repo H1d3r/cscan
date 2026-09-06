@@ -184,7 +184,7 @@ func (w *Worker) executeBruteScan(ctx context.Context, task *scheduler.TaskInfo,
 		Assets:     bruteAssets,
 		Options:    bruteScanConfig,
 		MainTaskId: task.MainTaskId,
-		OnProgress: w.makeOnProgress(task.MainTaskId, "弱口令扫描"),
+		OnProgress: w.makeOnProgress(task, "弱口令扫描"),
 		TaskLogger: func(level, format string, args ...interface{}) {
 			w.taskLog(task.TaskId, level, format, args...)
 		},

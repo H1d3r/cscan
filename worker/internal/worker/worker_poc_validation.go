@@ -19,7 +19,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		if r := recover(); r != nil {
 			w.taskLog(task.TaskId, LevelError, "POC validation task panic recovered: %v, stack: %s", r, string(getStackTrace()))
 			batchId, _ := taskConfig["batchId"].(string)
-			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, fmt.Sprintf("POC validation panic: %v", r))
+			w.savePocValidationResult(ctx, task, batchId, nil, fmt.Sprintf("POC validation panic: %v", r))
 		}
 	}()
 
@@ -33,7 +33,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 	if url == "" {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC验证失败: URL为空", task.TaskId)
-		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "URL为空")
+		w.savePocValidationResult(ctx, task, batchId, nil, "URL为空")
 		return
 	}
 
@@ -44,7 +44,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 	nucleiScanner, ok := w.scanners["nuclei"]
 	if !ok {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC验证失败: Nuclei扫描器未初始化", task.TaskId)
-		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "Nuclei扫描器未初始化")
+		w.savePocValidationResult(ctx, task, batchId, nil, "Nuclei扫描器未初始化")
 		return
 	}
 
@@ -58,17 +58,17 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		resp, err := w.loadPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: failed to get POC - %v", task.TaskId, err)
-			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "Failed to get POC: "+err.Error())
+			w.savePocValidationResult(ctx, task, batchId, nil, "Failed to get POC: "+err.Error())
 			return
 		}
 		if !resp.Success {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: POC not found - %s", task.TaskId, resp.Msg)
-			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "POC not found: "+resp.Msg)
+			w.savePocValidationResult(ctx, task, batchId, nil, "POC not found: "+resp.Msg)
 			return
 		}
 		if resp.Content == "" {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: POC content is empty", task.TaskId)
-			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "POC content is empty")
+			w.savePocValidationResult(ctx, task, batchId, nil, "POC content is empty")
 			return
 		}
 		templates = []string{resp.Content}
@@ -102,7 +102,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 		if len(templates) == 0 && len(templateRefs) == 0 {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: no POC templates found", task.TaskId)
-			w.savePocValidationResult(ctx, task.TaskId, batchId, nil, "No POC templates found")
+			w.savePocValidationResult(ctx, task, batchId, nil, "No POC templates found")
 			return
 		}
 	}
@@ -128,7 +128,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC validation failed: %v", task.TaskId, err)
-		w.savePocValidationResult(ctx, task.TaskId, batchId, nil, fmt.Sprintf("Scan failed: %v", err))
+		w.savePocValidationResult(ctx, task, batchId, nil, fmt.Sprintf("Scan failed: %v", err))
 		return
 	}
 
@@ -181,7 +181,7 @@ func (w *Worker) executePocValidateTask(ctx context.Context, task *scheduler.Tas
 		w.taskLog(task.TaskId, LevelInfo, "[%s] No vulnerability found", task.TaskId)
 	}
 
-	w.savePocValidationResult(ctx, task.TaskId, batchId, validationResults, "")
+	w.savePocValidationResult(ctx, task, batchId, validationResults, "")
 }
 
 // executeVulnReverifyTask 执行单条漏洞复验（复测）任务
@@ -337,7 +337,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	defer func() {
 		if r := recover(); r != nil {
 			w.taskLog(task.TaskId, LevelError, "POC batch validation task panic recovered: %v, stack: %s", r, string(getStackTrace()))
-			w.savePocValidationResult(ctx, task.TaskId, "", nil, fmt.Sprintf("POC batch validation panic: %v", r))
+			w.savePocValidationResult(ctx, task, "", nil, fmt.Sprintf("POC batch validation panic: %v", r))
 		}
 	}()
 
@@ -358,7 +358,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 
 	if len(urls) == 0 {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 目标列表为空", task.TaskId)
-		w.savePocValidationResult(ctx, task.TaskId, "", nil, "目标列表为空")
+		w.savePocValidationResult(ctx, task, "", nil, "目标列表为空")
 		return
 	}
 
@@ -372,7 +372,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 	nucleiScanner, ok := w.scanners["nuclei"].(*scanner.NucleiScanner)
 	if !ok {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: Nuclei扫描器未初始化", task.TaskId)
-		w.savePocValidationResult(ctx, task.TaskId, "", nil, "Nuclei扫描器未初始化")
+		w.savePocValidationResult(ctx, task, "", nil, "Nuclei扫描器未初始化")
 		return
 	}
 
@@ -385,12 +385,12 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		resp, err := w.loadPocById(ctx, pocId, pocType)
 		if err != nil {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 获取POC失败 - %v", task.TaskId, err)
-			w.savePocValidationResult(ctx, task.TaskId, "", nil, "获取POC失败: "+err.Error())
+			w.savePocValidationResult(ctx, task, "", nil, "获取POC失败: "+err.Error())
 			return
 		}
 		if !resp.Success || resp.Content == "" {
 			w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: POC不存在或内容为空", task.TaskId)
-			w.savePocValidationResult(ctx, task.TaskId, "", nil, "POC不存在或内容为空")
+			w.savePocValidationResult(ctx, task, "", nil, "POC不存在或内容为空")
 			return
 		}
 		templates = []string{resp.Content}
@@ -400,7 +400,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		w.taskLog(task.TaskId, LevelInfo, "[%s] POC template loaded: %s", task.TaskId, pocName)
 	} else {
 		w.taskLog(task.TaskId, LevelError, "[%s] POC批量扫描失败: 未指定POC ID", task.TaskId)
-		w.savePocValidationResult(ctx, task.TaskId, "", nil, "未指定POC ID")
+		w.savePocValidationResult(ctx, task, "", nil, "未指定POC ID")
 		return
 	}
 
@@ -457,7 +457,7 @@ func (w *Worker) executePocBatchValidateTask(ctx context.Context, task *schedule
 		}
 	}
 
-	w.savePocValidationResult(ctx, task.TaskId, "", validationResults, "")
+	w.savePocValidationResult(ctx, task, "", validationResults, "")
 }
 
 // PocValidationResult POC验证结果
@@ -478,7 +478,11 @@ type PocValidationResult struct {
 }
 
 // savePocValidationResult 保存POC验证结果
-func (w *Worker) savePocValidationResult(ctx context.Context, taskId, batchId string, results []*PocValidationResult, errorMsg string) {
+func (w *Worker) savePocValidationResult(ctx context.Context, task *scheduler.TaskInfo, batchId string, results []*PocValidationResult, errorMsg string) {
+	if task == nil {
+		return
+	}
+	taskId := task.TaskId
 	resultData := map[string]interface{}{
 		"taskId":     taskId,
 		"batchId":    batchId,
@@ -503,12 +507,13 @@ func (w *Worker) savePocValidationResult(ctx context.Context, taskId, batchId st
 		status = scheduler.TaskStatusFailure
 	}
 	_, err = w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-		TaskId:   taskId,
-		State:    status,
-		Worker:   w.config.Name,
-		Result:   string(resultJson),
-		Progress: 100,
-		Phase:    "完成",
+		TaskId:     taskId,
+		LeaseToken: task.LeaseToken,
+		State:      status,
+		Worker:     w.workerName,
+		Result:     string(resultJson),
+		Progress:   100,
+		Phase:      "完成",
 	})
 	if err != nil {
 		w.taskLog(taskId, LevelError, "Failed to save POC validation result: %v", err)

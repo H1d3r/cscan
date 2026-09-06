@@ -101,7 +101,7 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 	nmapScanner := w.scanners["nmap"]
 
 	for host, ports := range hostPorts {
-		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+		if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 			w.taskLog(task.TaskId, LevelInfo, "任务已停止")
 			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
 			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
@@ -142,7 +142,7 @@ func (w *Worker) executePortIdentifyWithNmapResult(ctx context.Context, task *sc
 		})
 
 		// 检查是否被停止
-		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+		if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 			w.taskLog(task.TaskId, LevelInfo, "任务已停止")
 			canceled := portIdentifyResultsForAssets(assets, scanner.PortCanceled, scanner.NmapReasonCanceled)
 			return mergeNmapPortIdentifyResults(assets, append(identifyResults, canceled...), config.ExcludeClosed)
@@ -224,14 +224,11 @@ func (w *Worker) executePortIdentifyWithFingerprintx(ctx context.Context, task *
 	scanConfig := &scanner.ScanConfig{
 		Assets:     assets,
 		Options:    fpxOpts,
-		MainTaskId: task.TaskId,
+		MainTaskId: task.MainTaskId,
 		TaskLogger: func(level, format string, args ...interface{}) {
 			w.taskLog(task.TaskId, level, format, args...)
 		},
-		OnProgress: func(progress int, message string) {
-			// 可以在这里更新任务进度
-			w.taskLog(task.TaskId, LevelDebug, "Progress: %d%% - %s", progress, message)
-		},
+		OnProgress: w.makeOnProgress(task, "端口识别"),
 	}
 
 	// 执行扫描

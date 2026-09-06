@@ -2,10 +2,12 @@ package worker
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"cscan/api/internal/svc"
 	"cscan/internal/model"
+	"cscan/internal/scheduler"
 	"cscan/pkg/response"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -18,6 +20,7 @@ import (
 type WorkerSubTaskDoneReq struct {
 	TaskId      string                  `json:"taskId"`
 	MainTaskId  string                  `json:"mainTaskId"`
+	LeaseToken  string                  `json:"leaseToken"`
 	Phase       string                  `json:"phase"`
 	IsCompleted bool                    `json:"isCompleted"`
 	IncrAmount  int                     `json:"incrAmount"`
@@ -34,6 +37,7 @@ type WorkerSubTaskDoneResp struct {
 	SubTaskCount        int32                  `json:"subTaskCount"`
 	AllDone             bool                   `json:"allDone"`
 	Recorded            bool                   `json:"recorded,omitempty"`
+	LeaseClosed         bool                   `json:"leaseClosed,omitempty"`
 	Finalized           bool                   `json:"finalized,omitempty"`
 	FinalizationPending bool                   `json:"finalizationPending,omitempty"`
 	ScanSummary         *model.TaskScanSummary `json:"scanSummary,omitempty"`
@@ -51,14 +55,38 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			return
 		}
 
-		if req.TaskId == "" || req.MainTaskId == "" {
-			httpx.OkJson(w, &WorkerSubTaskDoneResp{Code: 400, Msg: "taskId和mainTaskId不能为空"})
+		if req.TaskId == "" || req.MainTaskId == "" || req.LeaseToken == "" {
+			httpx.OkJson(w, &WorkerSubTaskDoneResp{Code: 400, Msg: "taskId、mainTaskId和leaseToken不能为空"})
 			return
 		}
 
-		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.Phase, req.IncrAmount, req.PhaseResult, req.TaskSummary)
+		result, err := svcCtx.IncrSubTaskDone(r.Context(), req.TaskId, req.MainTaskId, req.LeaseToken, req.Phase, req.IsCompleted, req.IncrAmount, req.PhaseResult, req.TaskSummary)
 		if err != nil {
 			logx.Errorf("[WorkerSubTaskDone] IncrSubTaskDone error: %v", err)
+			if errors.Is(err, scheduler.ErrTaskOperationBusy) {
+				httpx.OkJson(w, &WorkerSubTaskDoneResp{
+					Code:    http.StatusTooEarly,
+					Msg:     "task operation busy; retry",
+					Success: false,
+				})
+				return
+			}
+			if errors.Is(err, scheduler.ErrTaskParentFenced) {
+				httpx.OkJson(w, &WorkerSubTaskDoneResp{
+					Code:    http.StatusLocked,
+					Msg:     "task is fenced by a parent control; await exact control",
+					Success: false,
+				})
+				return
+			}
+			if errors.Is(err, scheduler.ErrTaskLeaseConflict) {
+				httpx.OkJson(w, &WorkerSubTaskDoneResp{
+					Code:    http.StatusConflict,
+					Msg:     "task lease conflict",
+					Success: false,
+				})
+				return
+			}
 			response.Error(w, err)
 			return
 		}
@@ -71,6 +99,7 @@ func WorkerSubTaskDoneHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			SubTaskCount:        result.SubTaskCount,
 			AllDone:             result.AllDone,
 			Recorded:            result.Recorded,
+			LeaseClosed:         result.LeaseClosed,
 			Finalized:           result.Finalized,
 			FinalizationPending: result.FinalizationPending,
 			ScanSummary:         result.ScanSummary,

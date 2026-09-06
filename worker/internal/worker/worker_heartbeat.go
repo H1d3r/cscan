@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"cscan/internal/scheduler"
 )
 
 func (w *Worker) keepAliveLoop() {
@@ -116,7 +118,9 @@ func (w *Worker) doSendHeartbeat(ctx context.Context) error {
 
 	// 回退到 HTTP
 	resp, err := w.httpClient.Heartbeat(ctx, &HeartbeatReq{
-		WorkerName:         w.config.Name,
+		WorkerName:         w.workerName,
+		InstanceID:         w.instanceID,
+		TaskProtocol:       w.taskProtocol,
 		IP:                 w.config.IP,
 		CpuLoad:            cpuLoad,
 		MemUsed:            memUsed,
@@ -155,71 +159,120 @@ func (w *Worker) sendHeartbeat() {
 	}
 }
 
-// controlPollingLoop 控制信号循环（内部方法，作为WebSocket的备份方案）
-// 使用 Redis Pub/Sub 订阅 cscan:task:ctrl:* 频道，实时接收控制信号
-func (w *Worker) controlPollingLoop() {
-	// 优先使用 Redis Pub/Sub 实时订阅
-	if w.schedClient != nil {
-		ctx, cancel := context.WithCancel(context.Background())
+// maintainDrainHeartbeat keeps this exact instance alive after acquisition
+// loops stop and until every task goroutine has returned.
+func (w *Worker) maintainDrainHeartbeat(stop <-chan struct{}) {
+	refresh := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// 监听 stopChan 以取消订阅
-		w.safeGo("control-unsub", func() {
-			select {
-			case <-w.stopChan:
-				cancel()
-			case <-ctx.Done():
-			}
-		})
-
-		signalCh := w.schedClient.SubscribeCancel(ctx)
-		for signal := range signalCh {
-			if signal != nil {
-				w.handleControlSignal(signal.TaskId, signal.Action)
-			}
+		cpuLoad := GetCPULoad()
+		memUsed := GetMemoryUsage()
+		if cpuLoad < 0 || cpuLoad > 100 {
+			cpuLoad = 0
 		}
-		return
+		if memUsed < 0 || memUsed > 100 {
+			memUsed = 0
+		}
+		w.mu.RLock()
+		concurrency := w.config.Concurrency
+		taskStarted := w.taskStarted
+		taskExecuted := w.taskExecuted
+		w.mu.RUnlock()
+
+		var err error
+		if w.schedClient != nil {
+			err = w.schedClient.KeepAlive(ctx, cpuLoad, memUsed, taskStarted, taskExecuted, concurrency)
+		} else if w.httpClient != nil {
+			_, err = w.httpClient.Heartbeat(ctx, &HeartbeatReq{
+				WorkerName:         w.workerName,
+				InstanceID:         w.instanceID,
+				TaskProtocol:       w.taskProtocol,
+				IP:                 w.config.IP,
+				CpuLoad:            cpuLoad,
+				MemUsed:            memUsed,
+				TaskStartedNumber:  int32(taskStarted),
+				TaskExecutedNumber: int32(taskExecuted),
+				Concurrency:        concurrency,
+			})
+		}
+		if err != nil {
+			w.logger.Warn("drain heartbeat failed: %v", err)
+		}
 	}
 
-	// 回退到 HTTP 轮询
+	refresh()
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
+// controlPollingLoop consumes strict controls from Pub/Sub when available and
+// always repairs missed delivery by reading durable exact-generation keys for
+// every locally owned acquisition, including tasks still waiting in the queue.
+func (w *Worker) controlPollingLoop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var signalCh <-chan *scheduler.TaskControlEnvelope
+	if w.schedClient != nil {
+		signalCh = w.schedClient.SubscribeTaskControls(ctx)
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	pollDurable := func() {
+		targets := w.getOwnedTaskTargets()
+		if len(targets) == 0 {
+			return
+		}
+		lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer lookupCancel()
+		if w.schedClient != nil {
+			signals, err := w.schedClient.GetTaskControlSignals(lookupCtx, targets)
+			if err != nil {
+				return
+			}
+			for index := range signals {
+				w.handleControlSignal(&signals[index])
+			}
+			return
+		}
+		if w.httpClient == nil {
+			return
+		}
+		resp, err := w.httpClient.GetTaskControlSignals(lookupCtx, targets)
+		if err != nil {
+			return
+		}
+		for index := range resp.Signals {
+			w.handleControlSignal(&resp.Signals[index])
+		}
+	}
 
 	for {
 		select {
 		case <-w.stopChan:
 			return
+		case <-ctx.Done():
+			return
+		case envelope, ok := <-signalCh:
+			if !ok {
+				signalCh = nil
+				continue
+			}
+			w.handleControlSignal(envelope)
 		case <-ticker.C:
-			taskIds := w.getRunningTaskIds()
-			if len(taskIds) == 0 {
-				continue
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			resp, err := w.httpClient.GetTaskControlSignals(ctx, taskIds)
-			cancel()
-
-			if err != nil {
-				continue
-			}
-
-			for _, signal := range resp.Signals {
-				w.handleControlSignal(signal.TaskId, signal.Action)
-			}
+			pollDurable()
 		}
 	}
-}
-
-// getRunningTaskIds 获取当前正在执行的任务ID列表
-func (w *Worker) getRunningTaskIds() []string {
-	var taskIds []string
-	w.runningTasks.Range(func(key, value interface{}) bool {
-		if taskId, ok := key.(string); ok {
-			taskIds = append(taskIds, taskId)
-		}
-		return true
-	})
-	return taskIds
 }
 
 // GetWorkerName 获取Worker名称

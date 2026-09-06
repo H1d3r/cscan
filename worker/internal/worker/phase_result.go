@@ -26,6 +26,7 @@ type PhaseResult struct {
 // temporarily unavailable and therefore still require a retry.
 type phaseReportAck struct {
 	Recorded            bool
+	LeaseClosed         bool
 	Finalized           bool
 	FinalizationPending bool
 }

@@ -3,180 +3,86 @@ package svc
 import (
 	"context"
 	"encoding/json"
-	"strings"
+	"errors"
+	"fmt"
 	"time"
 
 	"cscan/internal/model"
 	"cscan/internal/notification"
 	"cscan/internal/scheduler"
-	"cscan/pkg/utils"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-// atomicPopTaskScript 原子化弹出任务 Lua 脚本
-var atomicPopTaskScript = redis.NewScript(`
-	local queueKey = KEYS[1]
-	local processingKey = KEYS[2]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	local result = redis.call('ZPOPMIN', queueKey, 1)
-	if #result == 0 then
-		return nil
-	end
-	local member = result[1]
-	local score = result[2]
-
-	local data = nil
-	pcall(function() data = cjson.decode(member) end)
-	if not data or not data.taskId or data.taskId == '' then
-		redis.call('ZADD', 'cscan:task:deadletter', score, member)
-		return '__DL__' .. member
-	end
-	local taskId = data.taskId
-
-	redis.call('SADD', processingKey, taskId)
-
-	local taskInfoKey = taskInfoPrefix .. taskId
-	redis.call('SET', taskInfoKey, member, 'EX', ttlSeconds)
-
-	local execKey = execPrefix .. taskId
-	local execInfo = cjson.encode({
-		taskId = taskId,
-		workerName = workerName,
-		startTime = nowStr,
-		lastUpdate = nowStr,
-		phase = "started",
-		progress = 0,
-		retryCount = 0,
-		maxRetries = 3
-	})
-	redis.call('SET', execKey, execInfo, 'EX', 3600)
-
-	return member
-`)
-
-// atomicPopFromBucketsScript 分桶路径原子化弹出任务 Lua 脚本
-var atomicPopFromBucketsScript = redis.NewScript(`
-	local workerQueueKey = KEYS[1]
-	local bucketPrefix = KEYS[2]
-	local processingKey = KEYS[3]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	local sourceKey = workerQueueKey
-	local result = redis.call('ZPOPMIN', sourceKey, 1)
-
-	if #result == 0 then
-		for i = 4, 0, -1 do
-			sourceKey = bucketPrefix .. ":p" .. i
-			result = redis.call('ZPOPMIN', sourceKey, 1)
-			if #result > 0 then
-				break
-			end
-		end
-	end
-
-	if #result == 0 then
-		return nil
-	end
-
-	local member = result[1]
-	local score = result[2]
-
-	local data = nil
-	pcall(function() data = cjson.decode(member) end)
-	if not data or not data.taskId or data.taskId == '' then
-		redis.call('ZADD', 'cscan:task:deadletter', score, member)
-		return '__DL__' .. member
-	end
-	local taskId = data.taskId
-
-	redis.call('SADD', processingKey, taskId)
-
-	local taskInfoKey = taskInfoPrefix .. taskId
-	redis.call('SET', taskInfoKey, member, 'EX', ttlSeconds)
-
-	local execKey = execPrefix .. taskId
-	local execInfo = cjson.encode({
-		taskId = taskId,
-		workerName = workerName,
-		startTime = nowStr,
-		lastUpdate = nowStr,
-		phase = "started",
-		progress = 0,
-		retryCount = 0,
-		maxRetries = 3
-	})
-	redis.call('SET', execKey, execInfo, 'EX', 3600)
-
-	return member
-`)
-
 // CheckTaskResult 任务拉取结果
 type CheckTaskResult struct {
-	IsExist    bool
-	IsFinished bool
-	TaskId     string
-	MainTaskId string
-	Config     string
+	IsExist            bool
+	IsFinished         bool
+	TaskId             string
+	MainTaskId         string
+	Config             string
+	LeaseToken         string
+	DispatchGeneration string
 }
 
-// CheckTask 从 Redis 队列中获取待执行的任务
-func (s *ServiceContext) CheckTask(ctx context.Context, workerName string) (*CheckTaskResult, error) {
-	publicQueueKey := "cscan:task:queue"
-	workerQueueKey := "cscan:task:queue:worker:" + strings.ToLower(workerName)
-	processingKey := "cscan:task:processing"
-
-	// 第一次尝试：立即弹出
-	if result := s.tryPopTask(ctx, workerQueueKey, publicQueueKey, processingKey, workerName); result != nil {
-		return result, nil
+// CheckTask returns only a child whose durable parent accepted the exact
+// dispatch generation.
+func (s *ServiceContext) CheckTask(ctx context.Context, workerName, instanceID string) (*CheckTaskResult, error) {
+	if result, err := s.tryPopTask(ctx, workerName, instanceID); err != nil || result != nil {
+		return result, err
 	}
-
-	// 队列为空，进入长轮询等待
-	return s.waitForTask(ctx, workerQueueKey, publicQueueKey, processingKey, workerName)
+	return s.waitForTask(ctx, workerName, instanceID)
 }
 
 const longPollTimeout = 25 * time.Second
 
-func (s *ServiceContext) tryPopTask(ctx context.Context, workerQueueKey, publicQueueKey, processingKey, workerName string) *CheckTaskResult {
-	if s.Scheduler != nil && s.Scheduler.IsPriorityBucketEnabled() {
-		result, err := s.popTaskFromBuckets(ctx, workerQueueKey, publicQueueKey, processingKey, workerName)
+func (s *ServiceContext) tryPopTask(ctx context.Context, workerName, instanceID string) (*CheckTaskResult, error) {
+	if s.Scheduler == nil {
+		return nil, nil
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		task, err := s.Scheduler.PopTaskForWorkerInstance(ctx, workerName, instanceID)
 		if err != nil {
-			logx.Errorf("[CheckTask] pop from buckets error: %v", err)
-			return nil
+			return nil, err
 		}
-		if result != nil && result.IsExist {
-			return result
+		if task == nil {
+			return nil, nil
 		}
-		return nil
+		if isValidObjectID(task.MainTaskId) {
+			mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			_, claimErr := model.NewMainTaskModel(s.MongoDB).ClaimTaskStarted(mongoCtx, task.MainTaskId, task.DispatchGeneration)
+			cancel()
+			if claimErr != nil {
+				if errors.Is(claimErr, model.ErrTaskDispatchConflict) {
+					if discardErr := s.Scheduler.DiscardExactTask(ctx, task); discardErr != nil {
+						return nil, fmt.Errorf("discard rejected dispatch %s: %w", task.TaskId, discardErr)
+					}
+					continue
+				}
+				if _, requeueErr := s.Scheduler.RequeueExactTask(ctx, task); requeueErr != nil {
+					return nil, fmt.Errorf("parent claim failed (%v) and exact requeue failed: %w", claimErr, requeueErr)
+				}
+				return nil, fmt.Errorf("claim durable parent generation: %w", claimErr)
+			}
+			if s.QueryCache != nil {
+				s.QueryCache.Clear()
+			}
+		}
+		return &CheckTaskResult{
+			IsExist:            true,
+			IsFinished:         false,
+			TaskId:             task.TaskId,
+			MainTaskId:         task.MainTaskId,
+			Config:             task.Config,
+			LeaseToken:         task.LeaseToken,
+			DispatchGeneration: task.DispatchGeneration,
+		}, nil
 	}
-
-	result, err := s.popTaskFromQueue(ctx, workerQueueKey, processingKey, workerName)
-	if err != nil {
-		logx.Errorf("[CheckTask] pop from worker queue error: %v", err)
-	}
-	if result != nil {
-		return result
-	}
-
-	result, err = s.popTaskFromQueue(ctx, publicQueueKey, processingKey, workerName)
-	if err != nil {
-		logx.Errorf("[CheckTask] pop from public queue error: %v", err)
-	}
-	return result
+	return nil, fmt.Errorf("too many rejected queued task generations")
 }
 
-func (s *ServiceContext) waitForTask(ctx context.Context, workerQueueKey, publicQueueKey, processingKey, workerName string) (*CheckTaskResult, error) {
+func (s *ServiceContext) waitForTask(ctx context.Context, workerName, instanceID string) (*CheckTaskResult, error) {
 	pubsub := s.RedisClient.Subscribe(ctx, "cscan:task:available")
 	defer pubsub.Close()
 
@@ -196,267 +102,206 @@ func (s *ServiceContext) waitForTask(ctx context.Context, workerQueueKey, public
 		case <-pollCtx.Done():
 			return &CheckTaskResult{}, nil
 		case <-ch:
-			if result := s.tryPopTask(ctx, workerQueueKey, publicQueueKey, processingKey, workerName); result != nil {
-				return result, nil
+			if result, err := s.tryPopTask(ctx, workerName, instanceID); err != nil || result != nil {
+				return result, err
 			}
 		case <-ticker.C:
-			if result := s.tryPopTask(ctx, workerQueueKey, publicQueueKey, processingKey, workerName); result != nil {
-				return result, nil
+			if result, err := s.tryPopTask(ctx, workerName, instanceID); err != nil || result != nil {
+				return result, err
 			}
 		}
 	}
 }
 
-func (s *ServiceContext) popTaskFromQueue(ctx context.Context, queueKey, processingKey, workerName string) (*CheckTaskResult, error) {
-	result, err := atomicPopTaskScript.Run(ctx, s.RedisClient,
-		[]string{queueKey, processingKey},
-		"cscan:task:info:", "cscan:task:execution:",
-		workerName, 86400, time.Now().Format(time.RFC3339),
-	).Result()
-
-	if err == redis.Nil || result == nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, nil
-	}
-
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.RedisClient.Publish(ctx, "cscan:task:deadletter:alert", strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task scheduler.TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-
-	s.updateMainTaskToStarted(ctx, task.MainTaskId)
-
-	return &CheckTaskResult{
-		IsExist:    true,
-		IsFinished: false,
-		TaskId:     task.TaskId,
-		MainTaskId: task.MainTaskId,
-		Config:     task.Config,
-	}, nil
-}
-
-func (s *ServiceContext) popTaskFromBuckets(ctx context.Context, workerQueueKey, bucketPrefix, processingKey, workerName string) (*CheckTaskResult, error) {
-	result, err := atomicPopFromBucketsScript.Run(ctx, s.RedisClient,
-		[]string{workerQueueKey, bucketPrefix, processingKey},
-		"cscan:task:info:", "cscan:task:execution:",
-		workerName, 86400, time.Now().Format(time.RFC3339),
-	).Result()
-
-	if err == redis.Nil || result == nil {
-		return &CheckTaskResult{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, nil
-	}
-
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.RedisClient.Publish(ctx, "cscan:task:deadletter:alert", strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task scheduler.TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-
-	s.updateMainTaskToStarted(ctx, task.MainTaskId)
-
-	return &CheckTaskResult{
-		IsExist:    true,
-		IsFinished: false,
-		TaskId:     task.TaskId,
-		MainTaskId: task.MainTaskId,
-		Config:     task.Config,
-	}, nil
-}
-
-func (s *ServiceContext) updateMainTaskToStarted(ctx context.Context, mainTaskId string) {
-	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
-		return
-	}
-
-	mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	taskModel := model.NewMainTaskModel(s.MongoDB)
-	task, err := taskModel.FindById(mongoCtx, mainTaskId)
-	if err != nil || task == nil {
-		return
-	}
-
-	if task.Status == "PENDING" || task.Status == "CREATED" || task.Status == "" {
-		taskModel.Update(mongoCtx, mainTaskId, bson.M{
-			"status":     "STARTED",
-			"start_time": time.Now(),
-		})
-		// 任务启动即把目标状态置为 in_progress（资产空间搜索实时反映扫描中）
-		model.NewAssetTargetMetaModel(s.MongoDB).RegisterScanTargets(mongoCtx, utils.SplitTargetTokens(task.Target), "in_progress")
-		// 状态流转立即失效列表缓存，前端 3s 轮询无需等 30s TTL 过期
-		s.QueryCache.Clear()
-	}
-}
-
 func isWorkerTerminalState(state string) bool {
 	switch state {
-	case model.TaskStatusSuccess, model.TaskStatusPartial, model.TaskStatusFailure, "COMPLETED":
+	case model.TaskStatusSuccess, model.TaskStatusPartial, model.TaskStatusFailure,
+		model.TaskStatusStopped, model.TaskStatusRevoked, "COMPLETED":
 		return true
 	default:
 		return false
 	}
 }
 
-// UpdateTask 更新任务状态
-func (s *ServiceContext) UpdateTask(ctx context.Context, taskId, state, worker, result, phase string) error {
-	// 更新任务进度
-	if phase != "" {
-		// TaskRecoveryManager is optional; skip if not available
+func workerDispatchError(err error) error {
+	switch {
+	case errors.Is(err, model.ErrTaskParentFenced):
+		return scheduler.ErrTaskParentFenced
+	case errors.Is(err, model.ErrTaskDispatchConflict):
+		return scheduler.ErrTaskLeaseConflict
+	default:
+		return err
 	}
-
-	// 从处理中集合移除
-	processingKey := "cscan:task:processing"
-	if err := s.RedisClient.SRem(ctx, processingKey, taskId).Err(); err != nil {
-		logx.Errorf("[UpdateTask] SRem processing failed, taskId=%s, error=%v", taskId, err)
-	}
-
-	// 读取 taskInfo（终态时删除前先读取）
-	var taskInfoData string
-	if isWorkerTerminalState(state) {
-		taskInfoKey := "cscan:task:info:" + taskId
-		if data, err := s.RedisClient.Get(ctx, taskInfoKey).Result(); err == nil {
-			taskInfoData = data
-		}
-	}
-
-	// 更新任务状态到 Redis
-	statusKey := "cscan:task:status:" + taskId
-	statusData := map[string]interface{}{
-		"taskId": taskId,
-		"state":  state,
-		"worker": worker,
-		"result": result,
-		"phase":  phase,
-	}
-	statusJson, _ := json.Marshal(statusData)
-	s.RedisClient.Set(ctx, statusKey, statusJson, 24*time.Hour)
-
-	// 更新进度信息
-	if phase != "" {
-		progressKey := "cscan:task:progress:" + taskId
-		progressData := map[string]interface{}{"currentPhase": phase}
-		progressJson, _ := json.Marshal(progressData)
-		s.RedisClient.Set(ctx, progressKey, progressJson, 24*time.Hour)
-	}
-
-	// 终态清理
-	if isWorkerTerminalState(state) {
-		taskInfoKey := "cscan:task:info:" + taskId
-		s.RedisClient.Del(ctx, taskInfoKey)
-
-		completedKey := "cscan:task:completed"
-		taskJson, _ := json.Marshal(scheduler.TaskInfo{TaskId: taskId})
-		s.RedisClient.SAdd(ctx, completedKey, string(taskJson))
-	}
-
-	// 更新数据库
-	s.updateTaskInDB(ctx, taskId, state, result, phase, taskInfoData)
-
-	return nil
 }
 
-func (s *ServiceContext) updateTaskInDB(ctx context.Context, taskId, state, result, phase, taskInfoData string) {
-	if state == "" && phase == "" {
-		return
+func workerDispatchStateError(task *model.MainTask, generation string) error {
+	return workerDispatchError(model.DispatchStateError(task, generation))
+}
+
+func workerCompletionDispatchState(task *model.MainTask, generation string) (semanticTerminal, runnable bool, err error) {
+	if task == nil || task.DispatchGeneration != generation {
+		return false, false, scheduler.ErrTaskLeaseConflict
+	}
+	if model.IsSemanticTerminalTaskStatus(task.Status) {
+		return true, false, nil
+	}
+	if model.HasExactControlIntent(task, generation, model.TaskControlActionPause) ||
+		model.HasExactControlIntent(task, generation, model.TaskControlActionStop) {
+		return false, false, scheduler.ErrTaskParentFenced
+	}
+	if model.IsRunnableTaskStatus(task.Status) {
+		return false, true, nil
+	}
+	return false, false, scheduler.ErrTaskLeaseConflict
+}
+
+// UpdateTask 更新任务状态
+func (s *ServiceContext) UpdateTask(ctx context.Context, taskId, mainTaskId, leaseToken, state, worker, result, phase, taskState string, progress int) error {
+	if leaseToken != "" && mainTaskId == "" && state == "" && worker == "" && result == "" && phase == "" && taskState == "" && progress == 0 {
+		if s.Scheduler == nil {
+			return fmt.Errorf("scheduler is not initialized")
+		}
+		if err := s.Scheduler.RenewTaskLease(ctx, taskId, leaseToken); err != nil {
+			return fmt.Errorf("renew task lease: %w", err)
+		}
+		return nil
+	}
+	if state == model.TaskStatusPaused && taskState == "" {
+		return fmt.Errorf("paused task update requires a resumable snapshot")
+	}
+	if taskState != "" {
+		if state != model.TaskStatusPaused {
+			return fmt.Errorf("task state is only valid when task is paused")
+		}
+		if !json.Valid([]byte(taskState)) {
+			return fmt.Errorf("task state must be valid JSON")
+		}
+	}
+	if state == model.TaskStatusPaused {
+		return s.persistPausedTask(ctx, taskId, mainTaskId, leaseToken, worker, phase, taskState)
+	}
+	if s.Scheduler == nil || taskId == "" || leaseToken == "" {
+		return scheduler.ErrTaskLeaseConflict
 	}
 
-	var taskInfo map[string]interface{}
-	if taskInfoData != "" {
-		if err := json.Unmarshal([]byte(taskInfoData), &taskInfo); err != nil {
-			return
-		}
+	var operation *scheduler.LeaseOperation
+	var err error
+	if state == model.TaskStatusStopped {
+		operation, err = s.Scheduler.BeginStoppedTask(ctx, taskId, leaseToken)
 	} else {
-		taskInfoKey := "cscan:task:info:" + taskId
-		data, err := s.RedisClient.Get(ctx, taskInfoKey).Result()
-		if err != nil {
-			return
-		}
-		if err := json.Unmarshal([]byte(data), &taskInfo); err != nil {
-			return
-		}
+		operation, err = s.Scheduler.BeginLeaseOperation(ctx, taskId, leaseToken)
 	}
-
-	mainTaskId, _ := taskInfo["mainTaskId"].(string)
-	subTaskCount := 1
-	if count, ok := taskInfo["subTaskCount"].(float64); ok {
-		subTaskCount = int(count)
-	}
-	if mainTaskId == "" || !isValidObjectID(mainTaskId) {
-		return
-	}
-
-	taskModel := model.NewMainTaskModel(s.MongoDB)
-	now := time.Now()
-	update := bson.M{}
-
-	if state != "" {
-		update["status"] = state
-	}
-	if phase != "" {
-		update["current_phase"] = phase
-	}
-
-	switch state {
-	case "STARTED":
-		task, err := taskModel.FindById(ctx, mainTaskId)
-		if err == nil && task != nil && task.Status == "STARTED" {
-			if phase != "" {
-				taskModel.Update(ctx, mainTaskId, bson.M{"current_phase": phase})
+	if err != nil {
+		if errors.Is(err, scheduler.ErrTaskLeaseConflict) && isWorkerTerminalState(state) {
+			if _, confirmErr := s.Scheduler.ConfirmClosedTaskLease(ctx, taskId, leaseToken, state); confirmErr == nil {
+				return nil
+			} else if !errors.Is(confirmErr, scheduler.ErrTaskLeaseConflict) {
+				return fmt.Errorf("confirm guarded terminal task update: %w", confirmErr)
 			}
-			return
 		}
-		update["start_time"] = now
-	case "SUCCESS", "COMPLETED":
-		// Executor success is not evidence of complete scan coverage. Main-task
-		// terminal state is owned exclusively by FinalizeFromScanSummary.
-		return
-	case model.TaskStatusPartial:
-		// A PARTIAL terminal state must remain distinct from SUCCESS. Distributed
-		// scan tasks are finalized from persisted phase summaries instead.
-		if subTaskCount > 1 {
-			return
+		return fmt.Errorf("begin guarded task update: %w", err)
+	}
+	if operation == nil {
+		return nil
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if releaseErr := s.Scheduler.ReleaseLeaseOperation(releaseCtx, operation); releaseErr != nil {
+			logx.Errorf("[UpdateTask] release operation guard failed: %v", releaseErr)
 		}
-		update["end_time"] = now
-		update["result"] = result
-	case "FAILURE":
-		if subTaskCount > 1 {
-			return
-		}
-		update["end_time"] = now
-		update["result"] = result
-	case "STOPPED":
-		update["end_time"] = now
-		update["result"] = "任务已停止"
+	}()
+
+	var leasedTask scheduler.TaskInfo
+	if err := json.Unmarshal([]byte(operation.TaskInfoData), &leasedTask); err != nil {
+		return fmt.Errorf("%w: decode guarded task payload: %v", scheduler.ErrTaskLeaseConflict, err)
+	}
+	if leasedTask.TaskId != taskId || (mainTaskId != "" && leasedTask.MainTaskId != mainTaskId) ||
+		leasedTask.DispatchGeneration != operation.DispatchGeneration || operation.WorkerName == "" ||
+		operation.InstanceID == "" || operation.TaskProtocol != scheduler.TaskProtocolV1 ||
+		(worker != "" && worker != operation.WorkerName) {
+		return scheduler.ErrTaskLeaseConflict
 	}
 
-	if len(update) > 0 {
-		taskModel.Update(ctx, mainTaskId, update)
+	if isValidObjectID(leasedTask.MainTaskId) {
+		if operation.DispatchGeneration == "" {
+			return scheduler.ErrTaskLeaseConflict
+		}
+		mongoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		taskModel := model.NewMainTaskModel(s.MongoDB)
+		if isWorkerTerminalState(state) {
+			nextState := state
+			if nextState == "COMPLETED" {
+				nextState = model.TaskStatusSuccess
+			}
+			if nextState == model.TaskStatusStopped || nextState == model.TaskStatusRevoked {
+				// STOP/REVOKE is acknowledgement-only. STOP additionally requires the
+				// exact durable same-generation intent that caused this response.
+				current, findErr := taskModel.FindById(mongoCtx, leasedTask.MainTaskId)
+				if findErr != nil {
+					return findErr
+				}
+				if nextState == model.TaskStatusStopped {
+					if !model.HasExactControlIntent(current, operation.DispatchGeneration, model.TaskControlActionStop) {
+						return workerDispatchStateError(current, operation.DispatchGeneration)
+					}
+				} else if current == nil || current.DispatchGeneration != operation.DispatchGeneration ||
+					current.Status != nextState {
+					return workerDispatchStateError(current, operation.DispatchGeneration)
+				}
+			} else {
+				fields := bson.M{"progress": 100, "end_time": time.Now()}
+				if result != "" {
+					fields["result"] = result
+				}
+				if phase != "" {
+					fields["current_phase"] = phase
+				}
+				matched, transitionErr := taskModel.TransitionDispatchStatus(mongoCtx, leasedTask.MainTaskId,
+					operation.DispatchGeneration, []string{model.TaskStatusPending, model.TaskStatusStarted}, nextState, fields)
+				if transitionErr != nil {
+					return transitionErr
+				}
+				if !matched {
+					current, findErr := taskModel.FindById(mongoCtx, leasedTask.MainTaskId)
+					if findErr != nil {
+						return findErr
+					}
+					if current == nil || current.DispatchGeneration != operation.DispatchGeneration ||
+						current.Status != nextState {
+						return workerDispatchStateError(current, operation.DispatchGeneration)
+					}
+				}
+			}
+		} else if phase != "" || progress > 0 {
+			matched, updateErr := taskModel.UpdateDispatchProgress(mongoCtx, leasedTask.MainTaskId,
+				operation.DispatchGeneration, phase, progress)
+			if updateErr != nil {
+				return workerDispatchError(updateErr)
+			}
+			if !matched {
+				current, findErr := taskModel.FindById(mongoCtx, leasedTask.MainTaskId)
+				if findErr != nil {
+					return findErr
+				}
+				return workerDispatchStateError(current, operation.DispatchGeneration)
+			}
+		}
 	}
+
+	if state == model.TaskStatusStopped {
+		if err := s.Scheduler.FinalizeStoppedTask(ctx, operation, operation.WorkerName, result, phase); err != nil {
+			return fmt.Errorf("finalize guarded stopped task: %w", err)
+		}
+		return nil
+	}
+	if _, err := s.Scheduler.UpdateLeasedTaskWithOperation(
+		ctx, operation, operation.WorkerName, state, result, phase, progress,
+	); err != nil {
+		return fmt.Errorf("finalize guarded task update: %w", err)
+	}
+	return nil
 }
 
 func isValidObjectID(s string) bool {
@@ -479,6 +324,7 @@ type IncrSubTaskDoneResult struct {
 	SubTaskCount        int32
 	AllDone             bool
 	Recorded            bool
+	LeaseClosed         bool
 	Finalized           bool
 	FinalizationPending bool
 	ScanSummary         *model.TaskScanSummary
@@ -557,44 +403,142 @@ func appendUniqueReasonCodes(existing []string, values ...string) []string {
 	return result
 }
 
-// IncrSubTaskDone 递增子任务完成数
-func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, phase string, incrAmount int, phaseResult *model.TaskPhaseSummary, taskSummary *model.TaskScanSummary) (*IncrSubTaskDoneResult, error) {
-	if mainTaskId == "" {
-		return &IncrSubTaskDoneResult{Success: false, Message: "mainTaskId is empty"}, nil
+// IncrSubTaskDone holds a unique exact-lease guard across all bounded Mongo
+// mutations, aligning HTTP reporting with the direct scheduler path. Once the
+// phase write installs durable reconciliation ownership, a completed child may
+// release its exact lease while semantic finalization continues asynchronously.
+func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId, leaseToken, phase string, isCompleted bool, incrAmount int, phaseResult *model.TaskPhaseSummary, taskSummary *model.TaskScanSummary) (*IncrSubTaskDoneResult, error) {
+	if taskId == "" || mainTaskId == "" || leaseToken == "" || s.Scheduler == nil {
+		return nil, scheduler.ErrTaskLeaseConflict
 	}
+	operation, err := s.Scheduler.BeginLeaseOperation(ctx, taskId, leaseToken)
+	if err != nil {
+		if errors.Is(err, scheduler.ErrTaskLeaseConflict) && isCompleted {
+			closedTask, confirmErr := s.Scheduler.ConfirmClosedTaskLease(ctx, taskId, leaseToken, "COMPLETED")
+			if confirmErr == nil {
+				if closedTask.MainTaskId != mainTaskId {
+					return nil, scheduler.ErrTaskLeaseConflict
+				}
+				if !isValidObjectID(mainTaskId) {
+					return &IncrSubTaskDoneResult{
+						Success: true, Message: "ok (quick validation task)", SubTaskDone: 1, SubTaskCount: 1,
+						AllDone: true, Recorded: true, LeaseClosed: true, Finalized: true,
+					}, nil
+				}
+				mongoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				task, findErr := model.NewMainTaskModel(s.MongoDB).FindById(mongoCtx, mainTaskId)
+				if findErr != nil {
+					return nil, findErr
+				}
+				if task == nil || closedTask.DispatchGeneration == "" || task.DispatchGeneration != closedTask.DispatchGeneration {
+					return nil, scheduler.ErrTaskLeaseConflict
+				}
+				semanticTerminal, runnable, stateErr := workerCompletionDispatchState(task, closedTask.DispatchGeneration)
+				if stateErr != nil {
+					return nil, stateErr
+				}
+				allDone := task.SubTaskDone >= task.SubTaskCount
+				return &IncrSubTaskDoneResult{
+					Success: true, Message: "ok", SubTaskDone: int32(task.SubTaskDone), SubTaskCount: int32(task.SubTaskCount),
+					AllDone: allDone, Recorded: true, LeaseClosed: true,
+					Finalized: semanticTerminal, FinalizationPending: runnable && allDone, ScanSummary: task.ScanSummary,
+				}, nil
+			}
+			if !errors.Is(confirmErr, scheduler.ErrTaskLeaseConflict) {
+				return nil, fmt.Errorf("confirm completed task lease: %w", confirmErr)
+			}
+		}
+		return nil, err
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer releaseCancel()
+		if releaseErr := s.Scheduler.ReleaseLeaseOperation(releaseCtx, operation); releaseErr != nil {
+			logx.Errorf("[IncrSubTaskDone] release operation guard failed: %v", releaseErr)
+		}
+	}()
 
-	// 快速验证类任务跳过
+	var leasedTask scheduler.TaskInfo
+	if err := json.Unmarshal([]byte(operation.TaskInfoData), &leasedTask); err != nil {
+		return nil, fmt.Errorf("%w: decode leased task payload: %v", scheduler.ErrTaskLeaseConflict, err)
+	}
+	if leasedTask.TaskId != taskId || leasedTask.MainTaskId != mainTaskId {
+		return nil, fmt.Errorf("%w: leased task identity does not match phase report", scheduler.ErrTaskLeaseConflict)
+	}
+	closeCompletedLease := func() (bool, error) {
+		if !isCompleted {
+			return false, nil
+		}
+		if _, closeErr := s.Scheduler.UpdateLeasedTaskWithOperation(
+			ctx, operation, operation.WorkerName, "COMPLETED", "", phase, 100,
+		); closeErr != nil {
+			if _, confirmErr := s.Scheduler.ConfirmClosedTaskLease(ctx, taskId, leaseToken, "COMPLETED"); confirmErr == nil {
+				return true, nil
+			}
+			return false, closeErr
+		}
+		return true, nil
+	}
 	if !isValidObjectID(mainTaskId) {
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close quick validation task lease: %w", closeErr)
+		}
 		return &IncrSubTaskDoneResult{
-			Success: true, Message: "ok (quick validation task)",
-			SubTaskDone: 1, SubTaskCount: 1, AllDone: true, Recorded: true, Finalized: true,
+			Success: true, Message: "ok (quick validation task)", SubTaskDone: 1, SubTaskCount: 1,
+			AllDone: true, Recorded: true, LeaseClosed: leaseClosed, Finalized: true,
 		}, nil
 	}
+	if leasedTask.DispatchGeneration == "" || leasedTask.DispatchGeneration != operation.DispatchGeneration {
+		return nil, scheduler.ErrTaskLeaseConflict
+	}
 
-	mongoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	mongoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-
 	taskModel := model.NewMainTaskModel(s.MongoDB)
-
 	if incrAmount <= 0 {
 		incrAmount = 1
 	}
 	canonicalPhase := canonicalTaskPhaseName(phase)
 	normalizedPhase := normalizeWorkerPhaseSummary(taskId, phase, incrAmount, phaseResult, taskSummary)
-	reportKey := model.TaskPhaseReportKey(taskId, canonicalPhase)
-	task, recorded, err := taskModel.RecordPhaseSummaryAtomic(mongoCtx, mainTaskId, reportKey, normalizedPhase, incrAmount)
-	if err != nil {
-		return &IncrSubTaskDoneResult{Success: false, Message: err.Error()}, nil
+	normalizedPhase.LeaseGeneration = scheduler.LeaseGenerationHash(leaseToken)
+	reportIdentity := canonicalPhase
+	if isCompleted {
+		reportIdentity = "complete"
+	} else if reportIdentity == "complete" {
+		// Only an explicit completed report may own the canonical final key.
+		reportIdentity = "complete-intermediate"
 	}
-
+	reportKey := model.TaskPhaseReportKey(taskId, reportIdentity)
+	task, recorded, err := taskModel.RecordPhaseSummaryForDispatch(mongoCtx, mainTaskId,
+		leasedTask.DispatchGeneration, reportKey, normalizedPhase, incrAmount)
+	if errors.Is(err, model.ErrTaskDispatchConflict) || errors.Is(err, model.ErrTaskParentFenced) {
+		current, findErr := taskModel.FindById(mongoCtx, mainTaskId)
+		if findErr != nil {
+			return nil, findErr
+		}
+		return nil, workerDispatchStateError(current, leasedTask.DispatchGeneration)
+	}
+	if err != nil {
+		return nil, err
+	}
 	if !recorded {
-		logx.Infof("[IncrSubTaskDone] duplicate phase report merged, mainTaskId=%s taskId=%s phase=%s",
+		logx.Infof("[IncrSubTaskDone] duplicate phase report accepted without payload overwrite, mainTaskId=%s taskId=%s phase=%s",
 			mainTaskId, taskId, canonicalPhase)
 	}
 
 	allDone := task.SubTaskDone >= task.SubTaskCount
-
-	// 更新进度
+	if model.IsSemanticTerminalTaskStatus(task.Status) {
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close completed task lease: %w", closeErr)
+		}
+		return &IncrSubTaskDoneResult{
+			Success: true, Message: "ok", SubTaskDone: int32(task.SubTaskDone), SubTaskCount: int32(task.SubTaskCount),
+			AllDone: allDone, Recorded: true, LeaseClosed: leaseClosed, Finalized: true, ScanSummary: task.ScanSummary,
+		}, nil
+	}
 	progress := 0
 	if task.SubTaskCount > 0 {
 		progress = task.SubTaskDone * 100 / task.SubTaskCount
@@ -602,28 +546,48 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 			progress = 100
 		}
 	}
-	taskModel.Update(mongoCtx, mainTaskId, bson.M{
-		"progress":      progress,
-		"current_phase": phase,
-	})
+	matched, err := taskModel.UpdateDispatchProgress(mongoCtx, mainTaskId,
+		leasedTask.DispatchGeneration, phase, progress)
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		current, findErr := taskModel.FindById(mongoCtx, mainTaskId)
+		if findErr != nil {
+			return nil, findErr
+		}
+		semanticTerminal, _, stateErr := workerCompletionDispatchState(current, leasedTask.DispatchGeneration)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if !semanticTerminal {
+			return nil, scheduler.ErrTaskLeaseConflict
+		}
+		leaseClosed, closeErr := closeCompletedLease()
+		if closeErr != nil {
+			return nil, fmt.Errorf("close exact lease after sibling finalization: %w", closeErr)
+		}
+		return &IncrSubTaskDoneResult{
+			Success: true, Message: "ok", SubTaskDone: int32(current.SubTaskDone), SubTaskCount: int32(current.SubTaskCount),
+			AllDone: current.SubTaskDone >= current.SubTaskCount, Recorded: true, LeaseClosed: leaseClosed,
+			Finalized: true, ScanSummary: current.ScanSummary,
+		}, nil
+	}
 
-	// Count completion only opens the finalization gate; summaries decide outcome.
 	var finalSummary *model.TaskScanSummary
 	finalized := false
 	finalizationPending := false
+	closeLease := !allDone
 	if allDone {
-		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummary(mongoCtx, mainTaskId)
-		if finalizeErr != nil {
-			finalizationPending = true
-			logx.Errorf("[IncrSubTaskDone] semantic finalization failed; phase report remains acknowledged and finalization is retryable, mainTaskId=%s, error=%v", mainTaskId, finalizeErr)
-		} else {
+		summary, updated, finalizeErr := taskModel.FinalizeFromScanSummaryForDispatch(
+			mongoCtx, mainTaskId, leasedTask.DispatchGeneration)
+		switch {
+		case finalizeErr == nil:
+			// updated=false with nil error now means another actor already made
+			// this exact generation semantic-terminal, not that work is pending.
 			finalSummary = summary
-			terminal := model.IsTerminalTaskStatus(task.Status)
-			finalized = updated || terminal
-			if !updated && !terminal {
-				finalizationPending = true
-				logx.Infof("[IncrSubTaskDone] semantic finalization is still pending, mainTaskId=%s", mainTaskId)
-			}
+			finalized = true
+			closeLease = true
 			if updated {
 				logx.Infof("[IncrSubTaskDone] task finalized, mainTaskId=%s, outcome=%s", mainTaskId, summary.Outcome)
 				if s.QueryCache != nil {
@@ -636,12 +600,65 @@ func (s *ServiceContext) IncrSubTaskDone(ctx context.Context, taskId, mainTaskId
 					}
 				}
 			}
+		case errors.Is(finalizeErr, model.ErrTaskFinalizationPending):
+			finalSummary = summary
+			finalizationPending = true
+			current, findErr := taskModel.FindById(mongoCtx, mainTaskId)
+			if findErr != nil {
+				return nil, findErr
+			}
+			semanticTerminal, runnable, stateErr := workerCompletionDispatchState(current, leasedTask.DispatchGeneration)
+			if stateErr != nil {
+				return nil, stateErr
+			}
+			if semanticTerminal {
+				finalized = true
+				finalizationPending = false
+				finalSummary = current.ScanSummary
+			}
+			// The durable marker owns retry while a same-generation runnable
+			// parent permits this exact completed child to release its lease.
+			closeLease = semanticTerminal || runnable
+		default:
+			if errors.Is(finalizeErr, model.ErrTaskDispatchConflict) || errors.Is(finalizeErr, model.ErrTaskParentFenced) {
+				current, findErr := taskModel.FindById(mongoCtx, mainTaskId)
+				if findErr != nil {
+					return nil, findErr
+				}
+				return nil, workerDispatchStateError(current, leasedTask.DispatchGeneration)
+			}
+			finalizationPending = true
+			logx.Errorf("[IncrSubTaskDone] semantic finalization failed; durable reconciliation retains ownership, mainTaskId=%s, error=%v", mainTaskId, finalizeErr)
+			current, findErr := taskModel.FindById(mongoCtx, mainTaskId)
+			if findErr != nil {
+				return nil, findErr
+			}
+			semanticTerminal, _, stateErr := workerCompletionDispatchState(current, leasedTask.DispatchGeneration)
+			if stateErr != nil {
+				return nil, stateErr
+			}
+			if semanticTerminal {
+				finalized = true
+				finalizationPending = false
+				finalSummary = current.ScanSummary
+				closeLease = true
+			}
+			// On unresolved Mongo uncertainty the exact lease may remain for the
+			// reconciler; the marker, not worker retries, owns eventual progress.
 		}
 	}
 
+	leaseClosed := false
+	if closeLease {
+		leaseClosed, err = closeCompletedLease()
+		if err != nil {
+			return nil, fmt.Errorf("close completed task lease: %w", err)
+		}
+	}
 	return &IncrSubTaskDoneResult{
 		Success: true, Message: "ok", SubTaskDone: int32(task.SubTaskDone), SubTaskCount: int32(task.SubTaskCount),
-		AllDone: allDone, Recorded: recorded, Finalized: finalized, FinalizationPending: finalizationPending, ScanSummary: finalSummary,
+		AllDone: allDone, Recorded: true, LeaseClosed: leaseClosed, Finalized: finalized,
+		FinalizationPending: finalizationPending, ScanSummary: finalSummary,
 	}, nil
 }
 

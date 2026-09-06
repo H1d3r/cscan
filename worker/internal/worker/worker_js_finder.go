@@ -117,10 +117,10 @@ func (w *Worker) executeJSFinder(ctx context.Context, task *scheduler.TaskInfo, 
 		Options:    opts,
 		MainTaskId: task.MainTaskId,
 		TaskLogger: jsTaskLogger,
-		OnProgress: w.makeOnProgress(task.MainTaskId, "JSFinder扫描"),
+		OnProgress: w.makeOnProgress(task, "JSFinder扫描"),
 	})
 
-	if ctx.Err() != nil || jsCtx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+	if ctx.Err() != nil || jsCtx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 		w.taskLog(task.TaskId, LevelInfo, "JSFinder: task stopped or timed out")
 		return nil
 	}

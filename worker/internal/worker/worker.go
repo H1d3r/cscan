@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cscan/internal/model"
@@ -20,16 +22,17 @@ import (
 	"cscan/internal/scheduler"
 	"cscan/pkg/utils"
 
+	"github.com/google/uuid"
 	"github.com/projectdiscovery/wappalyzergo"
 	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // WorkerConfig Worker配置
 type WorkerConfig struct {
 	Name        string `json:"name"`
+	InstanceID  string `json:"instanceId"`
 	IP          string `json:"ip"`
 	ServerAddr  string `json:"serverAddr"` // API 服务地址 (e.g., http://server:8888)
 	InstallKey  string `json:"installKey"` // 安装密钥
@@ -43,20 +46,58 @@ type WorkerConfig struct {
 	MaxWaitTime            time.Duration `json:"maxWaitTime"`  // 0 表示默认 5 分钟
 }
 
+type mainTaskProgressState struct {
+	mu           sync.Mutex
+	done         int
+	total        int
+	lastReported int
+}
+
+type taskLeaseState struct {
+	lost   atomic.Bool
+	closed atomic.Bool
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+// ownedTaskDispatch spans the complete local acquisition lifetime: successful
+// backend pop, local queue wait, execution, and exact closure/replacement.
+// Control state is embedded under the same lock so a late global callback
+// cannot recreate a signal after this exact lease has been released.
+type ownedTaskDispatch struct {
+	mu                 sync.Mutex
+	taskID             string
+	mainTaskID         string
+	dispatchGeneration string
+	leaseToken         string
+	closed             bool
+	control            *scheduler.TaskControlEnvelope
+}
+
 // Worker 工作节点
 type Worker struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	config      WorkerConfig
-	httpClient  *WorkerHTTPClient // HTTP 客户端（配置/模板/字典等仍走 HTTP）
-	schedClient *SchedulerClient  // Redis 直连调度客户端（任务拉取/心跳/进度上报）
-	wsClient    *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
-	scanners    map[string]scanner.Scanner
-	taskChan    chan *scheduler.TaskInfo
-	stopChan    chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
-	mu          sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	config       WorkerConfig
+	workerName   string // immutable logical identity for this process lifetime
+	instanceID   string // immutable UUID process generation
+	taskProtocol int
+	httpClient   *WorkerHTTPClient // HTTP 客户端（配置/模板/字典等仍走 HTTP）
+	schedClient  *SchedulerClient  // Redis 直连调度客户端（任务拉取/心跳/进度上报）
+	wsClient     *WorkerWSClient   // WebSocket 客户端（用于日志推送和控制信号）
+	scanners     map[string]scanner.Scanner
+	taskChan     chan *scheduler.TaskInfo
+	stopChan     chan struct{}
+	stopOnce     sync.Once
+	shutdownOnce sync.Once
+	shutdownDone chan struct{}
+	wg           sync.WaitGroup
+	taskAsyncWG  sync.WaitGroup
+	mu           sync.RWMutex
+
+	// Exact execution-generation state lets every callback stop immediately
+	// after a lease conflict without confusing a later lease for the same ID.
+	taskLeaseStates sync.Map // taskId + leaseToken -> *taskLeaseState
 
 	// Phase 2 客户端优先级队列管理器
 	// 当 config.EnableTaskQueueManager=true 时启用
@@ -69,11 +110,10 @@ type Worker struct {
 	isRunning     bool
 	executorCount int // 已启动的任务处理协程数
 
-	// 任务控制信号
-	taskControlSignals sync.Map // taskId -> action (STOP, PAUSE)
-
-	// 正在执行的任务
-	runningTasks sync.Map // taskId -> true
+	// Exact acquired dispatches, registered immediately after backend acquisition
+	// and removed only after confirmed closure, exact requeue, or replacement.
+	// Values are *ownedTaskDispatch keyed by taskId + dispatchGeneration.
+	ownedTasks sync.Map
 
 	// 日志组件
 	logger Logger
@@ -111,12 +151,10 @@ type Worker struct {
 	eventSampleSeen   map[string]int
 	eventSampleLogged map[string]int
 
-	// 主任务实时进度缓存（incrSubTaskDone 时刷新，onProgress 时读取计算）
-	progressMu           sync.Mutex
-	cachedSubTaskDone    int
-	cachedSubTaskCount   int
-	cachedMainTaskId     string
-	lastReportedProgress int // 上次上报的进度百分比，防止回退
+	// Main-task aggregate progress is isolated per parent. Each state serializes
+	// compare-and-write so concurrent child callbacks cannot regress Mongo.
+	progressMu     sync.Mutex
+	progressByMain map[string]*mainTaskProgressState
 }
 
 // getMainTaskId 从 taskId 中提取主任务ID
@@ -360,13 +398,26 @@ func (w *Worker) getWappalyzerClient() *wappalyzer.Wappalyze {
 
 // NewWorker 创建Worker
 func NewWorker(config WorkerConfig) (*Worker, error) {
+	if strings.TrimSpace(config.Name) == "" {
+		config.Name = GetWorkerName()
+	}
+	// A lease owner identifies one process incarnation, not a deployment slot.
+	// Always generate it here so configuration cannot reuse a prior process ID.
+	config.InstanceID = uuid.NewString()
+
 	// 自动获取本机IP地址
 	if config.IP == "" {
 		config.IP = GetLocalIP()
 	}
 
-	// 创建 HTTP 客户端（替代 RPC 和 Redis）
-	httpClient := NewWorkerHTTPClient(config.ServerAddr, config.InstallKey, config.Name)
+	// HTTP and direct clients share one immutable process identity.
+	httpClient := NewWorkerHTTPClientForInstance(
+		config.ServerAddr,
+		config.InstallKey,
+		config.Name,
+		config.InstanceID,
+		scheduler.TaskProtocolV1,
+	)
 
 	logx.Infof("[Worker] HTTP client created, API server: %s", config.ServerAddr)
 
@@ -377,13 +428,18 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 		ctx:               ctx,
 		cancel:            cancel,
 		config:            config,
+		workerName:        config.Name,
+		instanceID:        config.InstanceID,
+		taskProtocol:      scheduler.TaskProtocolV1,
 		httpClient:        httpClient,
 		scanners:          make(map[string]scanner.Scanner),
 		taskChan:          make(chan *scheduler.TaskInfo, config.Concurrency),
 		stopChan:          make(chan struct{}),
+		shutdownDone:      make(chan struct{}),
 		logger:            NewWorkerLoggerLocal(config.Name), // 使用本地日志
 		eventSampleSeen:   make(map[string]int),
 		eventSampleLogged: make(map[string]int),
+		progressByMain:    make(map[string]*mainTaskProgressState),
 	}
 
 	// Phase 2: 按需启用客户端优先级队列管理器
@@ -409,9 +465,9 @@ func NewWorker(config WorkerConfig) (*Worker, error) {
 	// globalMongoLogger 在 SetMongoDB 中初始化，此处仅创建 logger 壳
 	w.logger = NewWorkerLoggerWS(config.Name)
 
-	// 设置控制信号处理函数
-	w.wsClient.SetControlHandler(func(taskId, action string) {
-		w.handleControlSignal(taskId, action)
+	// Store only validated generation-bearing task controls.
+	w.wsClient.SetControlHandler(func(envelope *scheduler.TaskControlEnvelope) {
+		w.handleControlSignal(envelope)
 	})
 
 	// 设置 Worker 级别控制处理函数
@@ -552,12 +608,23 @@ func (w *Worker) statusDBHandle() *mongo.Database {
 }
 
 // SetRedis 设置 Redis 客户端并创建 SchedulerClient，用于直连 Redis 调度
-func (w *Worker) SetRedis(rdb *redis.Client) {
+func (w *Worker) SetRedis(rdb *redis.Client) error {
 	// SchedulerClient 的 mongoDB 仅用于 MainTask 状态写
 	// （IncrSubTaskDone / current_phase / progress / MarkTaskCompleted），
 	// 传入独立状态池实现"独立持久化"，与结果数据写（w.mongoDB）隔离。
-	w.schedClient = NewSchedulerClient(rdb, w.config.Name, w.statusDBHandle())
+	client, err := NewSchedulerClientForInstance(
+		rdb,
+		w.workerName,
+		w.instanceID,
+		w.taskProtocol,
+		w.statusDBHandle(),
+	)
+	if err != nil {
+		return err
+	}
+	w.schedClient = client
 	logx.Infof("[Worker] SchedulerClient initialized for direct Redis scheduling")
+	return nil
 }
 
 // SetNotifyService 设置通知服务，任务完成/失败时触发通知
@@ -567,35 +634,180 @@ func (w *Worker) SetNotifyService(svc *notification.Service) {
 	}
 }
 
-// handleControlSignal 处理控制信号
-func (w *Worker) handleControlSignal(taskId, action string) {
-	// 检查信号是否已存在，避免重复处理（防止日志刷屏）
-	if existingAction, loaded := w.taskControlSignals.Load(taskId); loaded {
-		if existingAction == action {
-			// 信号已存在且值相同，跳过
-			return
-		}
+func taskControlStorageKey(taskID, dispatchGeneration string) string {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(dispatchGeneration) == "" {
+		return ""
 	}
+	return taskID + "\x00" + dispatchGeneration
+}
 
-	w.logger.Info("Received control signal: taskId=%s, action=%s", taskId, action)
+func taskControlStorageKeyForTask(task *scheduler.TaskInfo) string {
+	if task == nil {
+		return ""
+	}
+	return taskControlStorageKey(task.TaskId, task.DispatchGeneration)
+}
 
-	// 存储控制信号
-	w.taskControlSignals.Store(taskId, action)
-	w.logger.Info("Stored control signal for task %s: %s", taskId, action)
+func sameTaskControlEnvelope(left, right scheduler.TaskControlEnvelope) bool {
+	return left.IntentID == right.IntentID && left.MainTaskID == right.MainTaskID &&
+		left.TaskID == right.TaskID && left.Action == right.Action &&
+		left.DispatchGeneration == right.DispatchGeneration &&
+		left.Timestamp.UTC().UnixMilli() == right.Timestamp.UTC().UnixMilli()
+}
 
-	// 如果是STOP或PAUSE信号，也存储到主任务ID
-	mainTaskId := getMainTaskId(taskId)
-	if mainTaskId != taskId {
-		// 检查主任务ID的信号是否已存在
-		if existingAction, loaded := w.taskControlSignals.Load(mainTaskId); loaded {
-			if existingAction == action {
-				// 主任务信号已存在且值相同，跳过
-				return
+func (owned *ownedTaskDispatch) matchesTask(task *scheduler.TaskInfo) bool {
+	return owned != nil && task != nil && owned.taskID == task.TaskId &&
+		owned.mainTaskID == task.MainTaskId && owned.dispatchGeneration == task.DispatchGeneration &&
+		owned.leaseToken == task.LeaseToken
+}
+
+// registerOwnedTask establishes local control ownership before a successfully
+// acquired child can wait in either local queue. Pointer CAS prevents a stale
+// lease's deferred cleanup from deleting a later acquisition of the same target.
+func (w *Worker) registerOwnedTask(task *scheduler.TaskInfo) bool {
+	key := taskControlStorageKeyForTask(task)
+	if key == "" || task == nil || strings.TrimSpace(task.MainTaskId) == "" || strings.TrimSpace(task.LeaseToken) == "" {
+		return false
+	}
+	incoming := &ownedTaskDispatch{
+		taskID: task.TaskId, mainTaskID: task.MainTaskId,
+		dispatchGeneration: task.DispatchGeneration, leaseToken: task.LeaseToken,
+	}
+	for {
+		existingValue, loaded := w.ownedTasks.LoadOrStore(key, incoming)
+		if !loaded {
+			return true
+		}
+		existing, ok := existingValue.(*ownedTaskDispatch)
+		if !ok || existing == nil {
+			return false
+		}
+		existing.mu.Lock()
+		if !existing.closed && existing.matchesTask(task) {
+			existing.mu.Unlock()
+			return true
+		}
+		existing.closed = true
+		existing.control = nil
+		staleTask := &scheduler.TaskInfo{
+			TaskId: existing.taskID, MainTaskId: existing.mainTaskID,
+			DispatchGeneration: existing.dispatchGeneration, LeaseToken: existing.leaseToken,
+		}
+		existing.mu.Unlock()
+		if w.ownedTasks.CompareAndSwap(key, existingValue, incoming) {
+			if staleTask.LeaseToken != incoming.leaseToken {
+				w.markTaskLeaseLost(staleTask)
 			}
+			w.logger.Warn("Replaced stale local ownership: taskId=%s generation=%s", task.TaskId, task.DispatchGeneration)
+			return true
 		}
-		w.taskControlSignals.Store(mainTaskId, action)
-		w.logger.Info("Also stored control signal for main task %s: %s", mainTaskId, action)
 	}
+}
+
+// releaseOwnedTask removes only the exact acquisition identified by its lease
+// token. Confirmed closure/requeue and true ownership replacement are the only
+// callers permitted to use this transition.
+func (w *Worker) releaseOwnedTask(task *scheduler.TaskInfo) bool {
+	key := taskControlStorageKeyForTask(task)
+	if key == "" {
+		return false
+	}
+	value, ok := w.ownedTasks.Load(key)
+	if !ok {
+		return false
+	}
+	owned, ok := value.(*ownedTaskDispatch)
+	if !ok || owned == nil {
+		return false
+	}
+	owned.mu.Lock()
+	if owned.closed || !owned.matchesTask(task) {
+		owned.mu.Unlock()
+		return false
+	}
+	owned.closed = true
+	owned.control = nil
+	owned.mu.Unlock()
+	return w.ownedTasks.CompareAndDelete(key, value)
+}
+
+func (w *Worker) ownsExactTask(task *scheduler.TaskInfo) bool {
+	key := taskControlStorageKeyForTask(task)
+	if key == "" {
+		return false
+	}
+	value, ok := w.ownedTasks.Load(key)
+	if !ok {
+		return false
+	}
+	owned, ok := value.(*ownedTaskDispatch)
+	if !ok || owned == nil {
+		return false
+	}
+	owned.mu.Lock()
+	defer owned.mu.Unlock()
+	currentValue, current := w.ownedTasks.Load(key)
+	return current && currentValue == value && !owned.closed && owned.matchesTask(task)
+}
+
+func (w *Worker) getOwnedTaskTargets() []scheduler.TaskControlTarget {
+	targets := make([]scheduler.TaskControlTarget, 0)
+	w.ownedTasks.Range(func(_, value interface{}) bool {
+		owned, ok := value.(*ownedTaskDispatch)
+		if !ok || owned == nil {
+			return true
+		}
+		owned.mu.Lock()
+		if !owned.closed {
+			targets = append(targets, scheduler.TaskControlTarget{
+				TaskID: owned.taskID, DispatchGeneration: owned.dispatchGeneration,
+			})
+		}
+		owned.mu.Unlock()
+		return true
+	})
+	return targets
+}
+
+// handleControlSignal accepts global Redis/WebSocket fan-out only for an exact
+// acquisition currently owned by this process. STOP-over-PAUSE ordering is
+// serialized under the same record lock as exact ownership release.
+func (w *Worker) handleControlSignal(envelope *scheduler.TaskControlEnvelope) {
+	if envelope == nil || envelope.Validate() != nil {
+		w.logger.Warn("Rejected malformed or generation-blind task control")
+		return
+	}
+	key := taskControlStorageKey(envelope.TaskID, envelope.DispatchGeneration)
+	value, ok := w.ownedTasks.Load(key)
+	if !ok {
+		return
+	}
+	owned, ok := value.(*ownedTaskDispatch)
+	if !ok || owned == nil {
+		return
+	}
+	incoming := *envelope
+	owned.mu.Lock()
+	defer owned.mu.Unlock()
+	currentValue, current := w.ownedTasks.Load(key)
+	if !current || currentValue != value || owned.closed || owned.taskID != incoming.TaskID ||
+		owned.mainTaskID != incoming.MainTaskID || owned.dispatchGeneration != incoming.DispatchGeneration {
+		return
+	}
+	if owned.control == nil {
+		owned.control = &incoming
+		w.logger.Info("Stored owned task control: taskId=%s generation=%s intentId=%s action=%s",
+			incoming.TaskID, incoming.DispatchGeneration, incoming.IntentID, incoming.Action)
+		return
+	}
+	existing := *owned.control
+	if sameTaskControlEnvelope(existing, incoming) || existing.Action == scheduler.TaskControlActionStop ||
+		existing.Action == incoming.Action || incoming.Action != scheduler.TaskControlActionStop {
+		return
+	}
+	owned.control = &incoming
+	w.logger.Info("Replaced owned PAUSE with STOP: taskId=%s generation=%s intentId=%s",
+		incoming.TaskID, incoming.DispatchGeneration, incoming.IntentID)
 }
 
 // handleWorkerControl 处理 Worker 级别控制命令
@@ -618,14 +830,7 @@ func (w *Worker) handleWorkerControl(action, param string) {
 			w.drainAndExit(60*time.Second, w.restartSelf)
 		}()
 	case "rename":
-		w.logger.Info("Renaming worker to: %s", param)
-		w.config.Name = param
-		// 更新 MongoDB 日志器的 worker 名称
-		UpdateGlobalMongoLoggerWorkerName(param)
-		// 更新日志前缀（使用 WebSocket 版本）
-		w.logger = NewWorkerLoggerWS(param)
-		// 立即发送心跳，让服务端更新状态
-		go w.sendHeartbeat()
+		w.logger.Warn("Worker rename to %q rejected: worker identity is immutable; restart with the new name", param)
 	case "setConcurrency":
 		newConcurrency, err := strconv.Atoi(param)
 		if err != nil || newConcurrency < 1 {
@@ -690,15 +895,6 @@ func (w *Worker) restartSelf() {
 	platformRestart(executable, args, w.logger)
 }
 
-// ClearTaskControlSignal 清除任务控制信号（任务完成后调用）
-func (w *Worker) ClearTaskControlSignal(taskId string) {
-	w.taskControlSignals.Delete(taskId)
-	mainTaskId := getMainTaskId(taskId)
-	if mainTaskId != taskId {
-		w.taskControlSignals.Delete(mainTaskId)
-	}
-}
-
 // registerScanners 注册扫描器
 func (w *Worker) registerScanners() {
 	w.scanners["portscan"] = scanner.NewPortScanner()
@@ -717,8 +913,19 @@ func (w *Worker) registerScanners() {
 }
 
 // Start 启动Worker
-func (w *Worker) Start() {
+func (w *Worker) Start() error {
+	w.mu.Lock()
 	w.isRunning = true
+	w.mu.Unlock()
+
+	// Recovery and acquisition are unsafe until this exact process generation
+	// is visible. Fail startup rather than running without its instance lease.
+	if err := w.sendHeartbeatWithRetry(); err != nil {
+		w.mu.Lock()
+		w.isRunning = false
+		w.mu.Unlock()
+		return fmt.Errorf("establish worker instance heartbeat: %w", err)
+	}
 
 	// 启动本地结果队列
 	if w.resultQueue != nil {
@@ -785,7 +992,8 @@ func (w *Worker) Start() {
 	w.wg.Add(1)
 	go w.controlPollingWithRecovery()
 
-	w.logger.Info("Worker %s started with %d workers", w.config.Name, w.config.Concurrency)
+	w.logger.Info("Worker %s instance %s started with %d workers", w.workerName, w.instanceID, w.config.Concurrency)
+	return nil
 }
 
 // processTaskWithRecovery 带 panic 恢复的任务处理
@@ -862,12 +1070,13 @@ func (w *Worker) processTaskLoop() {
 		}
 
 		taskCtx := context.Background()
-		if ctrl := w.checkTaskControl(taskCtx, task.TaskId); ctrl == "STOP" {
-			w.taskLog(task.TaskId, LevelInfo, "Task %s skipped because it was stopped while waiting in queue", task.TaskId)
+		if ctrl := w.checkTaskControl(taskCtx, task); ctrl == scheduler.TaskControlActionStop {
+			w.taskLog(task.TaskId, LevelInfo, "Task %s generation %s stopped while waiting in the local queue",
+				task.TaskId, task.DispatchGeneration)
+			// Keep retrying while this live worker owns the lease. Exact success or
+			// definitive replacement releases the acquisition registry entry.
+			_ = w.acknowledgeStoppedTask(task)
 			w.cleanupTaskLogger(task.TaskId)
-			// 队列内被丢弃时一次性发出本批次应有的全部增量，避免 sub_task_done 永远到不了 sub_task_count
-			canceledPhase := PhaseResult{Phase: "execution", Status: scanner.PhaseCanceled, Coverage: scanner.Coverage{Input: 1, Attempted: 1}}
-			w.incrSubTaskDone(taskCtx, task, "完成", true, w.expectedTaskIncr(task.Config), canceledPhase)
 			continue
 		}
 		w.executeTask(task)
@@ -1016,10 +1225,181 @@ func (w *Worker) safeGo(label string, fn func()) {
 	}()
 }
 
+func taskLeaseStateKey(task *scheduler.TaskInfo) string {
+	if task == nil {
+		return ""
+	}
+	return task.TaskId + "\x00" + task.DispatchGeneration + "\x00" + task.LeaseToken
+}
+
+func (state *taskLeaseState) setCancel(cancel context.CancelFunc) {
+	if state == nil || cancel == nil {
+		return
+	}
+	state.mu.Lock()
+	state.cancel = cancel
+	inactive := state.lost.Load() || state.closed.Load()
+	state.mu.Unlock()
+	if inactive {
+		cancel()
+	}
+}
+
+func (state *taskLeaseState) cancelTask() {
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	cancel := state.cancel
+	state.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (w *Worker) registerTaskLeaseState(task *scheduler.TaskInfo, cancel context.CancelFunc) *taskLeaseState {
+	key := taskLeaseStateKey(task)
+	if key == "" {
+		return nil
+	}
+	candidate := &taskLeaseState{}
+	value, _ := w.taskLeaseStates.LoadOrStore(key, candidate)
+	state, _ := value.(*taskLeaseState)
+	if state == nil {
+		return nil
+	}
+	state.setCancel(cancel)
+	return state
+}
+
+func (w *Worker) unregisterTaskLeaseState(task *scheduler.TaskInfo) {
+	if key := taskLeaseStateKey(task); key != "" {
+		w.taskLeaseStates.Delete(key)
+	}
+}
+
+func (w *Worker) taskLeaseState(task *scheduler.TaskInfo) *taskLeaseState {
+	key := taskLeaseStateKey(task)
+	if key == "" {
+		return nil
+	}
+	value, ok := w.taskLeaseStates.Load(key)
+	if !ok {
+		return nil
+	}
+	state, _ := value.(*taskLeaseState)
+	return state
+}
+
+func (w *Worker) taskLeaseLost(task *scheduler.TaskInfo) bool {
+	state := w.taskLeaseState(task)
+	return state != nil && state.lost.Load()
+}
+
+func (w *Worker) taskLeaseClosed(task *scheduler.TaskInfo) bool {
+	state := w.taskLeaseState(task)
+	return state != nil && state.closed.Load()
+}
+
+func (w *Worker) markTaskLeaseClosed(task *scheduler.TaskInfo) {
+	state := w.taskLeaseState(task)
+	if state != nil {
+		state.closed.Store(true)
+		state.cancelTask()
+	}
+	w.releaseOwnedTask(task)
+}
+
+func (w *Worker) markTaskLeaseLost(task *scheduler.TaskInfo) {
+	state := w.taskLeaseState(task)
+	if state != nil {
+		if !state.lost.Swap(true) {
+			w.taskLog(task.TaskId, LevelError, "Task lease ownership was lost; canceling stale execution")
+		}
+		state.cancelTask()
+	}
+	w.releaseOwnedTask(task)
+}
+
+func (w *Worker) pollExactTaskControl(task *scheduler.TaskInfo) {
+	if task == nil {
+		return
+	}
+	target := scheduler.TaskControlTarget{TaskID: task.TaskId, DispatchGeneration: task.DispatchGeneration}
+	if target.Validate() != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if w.schedClient != nil {
+		signals, err := w.schedClient.GetTaskControlSignals(ctx, []scheduler.TaskControlTarget{target})
+		if err != nil {
+			return
+		}
+		for index := range signals {
+			w.handleControlSignal(&signals[index])
+		}
+		return
+	}
+	if w.httpClient == nil {
+		return
+	}
+	resp, err := w.httpClient.GetTaskControlSignals(ctx, []scheduler.TaskControlTarget{target})
+	if err != nil {
+		return
+	}
+	for index := range resp.Signals {
+		w.handleControlSignal(&resp.Signals[index])
+	}
+}
+
+// awaitParentControl keeps exact ownership registered until the strict durable
+// envelope that explains a same-generation Mongo fence is available locally.
+// The sentinel itself is never interpreted as PAUSE or STOP.
+func (w *Worker) awaitParentControl(task *scheduler.TaskInfo) string {
+	for {
+		if !w.ownsExactTask(task) {
+			w.markTaskLeaseLost(task)
+			return ""
+		}
+		if control := w.checkTaskControl(context.Background(), task); control != "" {
+			if state := w.taskLeaseState(task); state != nil {
+				state.cancelTask()
+			}
+			return control
+		}
+		w.pollExactTaskControl(task)
+		if control := w.checkTaskControl(context.Background(), task); control != "" {
+			if state := w.taskLeaseState(task); state != nil {
+				state.cancelTask()
+			}
+			return control
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-w.stopChan:
+			timer.Stop()
+			return ""
+		case <-timer.C:
+		}
+	}
+}
+
+func (w *Worker) handleTaskLeaseError(task *scheduler.TaskInfo, err error) error {
+	if errors.Is(err, scheduler.ErrTaskLeaseConflict) {
+		w.markTaskLeaseLost(task)
+	} else if errors.Is(err, scheduler.ErrTaskParentFenced) {
+		w.awaitParentControl(task)
+	}
+	return err
+}
+
 // safeGoTask 启动带 panic 恢复的 goroutine，panic 时将堆栈附加到任务日志而非仅 Worker 日志。
 // 用于与具体任务绑定的后台协程（流式缓冲刷新等），便于按任务排查。
 func (w *Worker) safeGoTask(taskId, label string, fn func()) {
+	w.taskAsyncWG.Add(1)
 	go func() {
+		defer w.taskAsyncWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				w.taskLog(taskId, LevelError, "[%s] goroutine panic recovered: %v, stack: %s", label, r, string(getStackTrace()))
@@ -1032,7 +1412,7 @@ func (w *Worker) safeGoTask(taskId, label string, fn func()) {
 // pullTask 拉取单个任务，返回是否获取到任务
 // 优先使用 schedClient（Redis 直连），回退到 httpClient（HTTP）
 func (w *Worker) pullTask() bool {
-	ctx := context.Background()
+	ctx := w.ctx
 
 	// 修复 #27：读取 concurrency 时加 RLock，避免与 applyConcurrency 写入竞争
 	// taskStarted/taskExecuted 同样在 mu 下写（executeTask），一并持锁读取
@@ -1062,10 +1442,12 @@ func (w *Worker) pullTask() bool {
 		}
 		if resp.IsExist && !resp.IsFinished {
 			task = &scheduler.TaskInfo{
-				TaskId:     resp.TaskId,
-				MainTaskId: resp.MainTaskId,
-				TaskName:   "scan",
-				Config:     resp.Config,
+				TaskId:             resp.TaskId,
+				MainTaskId:         resp.MainTaskId,
+				TaskName:           "scan",
+				Config:             resp.Config,
+				LeaseToken:         resp.LeaseToken,
+				DispatchGeneration: resp.DispatchGeneration,
 			}
 		}
 	} else {
@@ -1077,15 +1459,26 @@ func (w *Worker) pullTask() bool {
 		}
 		if resp.IsExist && !resp.IsFinished {
 			task = &scheduler.TaskInfo{
-				TaskId:     resp.TaskId,
-				MainTaskId: resp.MainTaskId,
-				TaskName:   "scan",
-				Config:     resp.Config,
+				TaskId:             resp.TaskId,
+				MainTaskId:         resp.MainTaskId,
+				TaskName:           "scan",
+				Config:             resp.Config,
+				LeaseToken:         resp.LeaseToken,
+				DispatchGeneration: resp.DispatchGeneration,
 			}
 		}
 	}
 
 	if task == nil {
+		return false
+	}
+	if !w.registerOwnedTask(task) {
+		w.logger.Error("pullTask: rejected incomplete or conflicting acquired ownership for task %s", task.TaskId)
+		if w.schedClient != nil {
+			if err := w.schedClient.RequeueTask(ctx, task); err != nil {
+				w.logger.Error("pullTask: exact requeue after local ownership rejection failed for %s: %v", task.TaskId, err)
+			}
+		}
 		return false
 	}
 
@@ -1100,6 +1493,8 @@ func (w *Worker) pullTask() bool {
 			if w.schedClient != nil {
 				if err := w.schedClient.RequeueTask(ctx, task); err != nil {
 					w.logger.Error("pullTask: requeue task %s failed: %v", task.TaskId, err)
+				} else {
+					w.releaseOwnedTask(task)
 				}
 			}
 			return false
@@ -1144,67 +1539,86 @@ func (w *Worker) recoverOrphanedTasks() {
 	}
 }
 
-// Stop 停止Worker
+// Stop stops acquisition first, drains active tasks while retaining the
+// instance heartbeat, and publishes offline only after task goroutines and
+// buffered result writers are quiescent.
 func (w *Worker) Stop() {
+	w.shutdownOnce.Do(func() {
+		w.stopAndDrain()
+		close(w.shutdownDone)
+	})
+	<-w.shutdownDone
+}
+
+func (w *Worker) stopAndDrain() {
+	w.mu.Lock()
 	w.isRunning = false
+	w.mu.Unlock()
 
-	// 停止本地结果队列
-	if w.resultQueue != nil {
-		w.resultQueue.Stop()
-	}
-
-	// Phase 2: 停止客户端优先级队列管理器
+	// Stop acquisition, control polling, and idle executors first. Task
+	// contexts intentionally continue until their current work completes.
+	w.cancel()
+	w.stopOnce.Do(func() { close(w.stopChan) })
 	if w.taskQueue != nil {
 		w.taskQueue.Stop()
 	}
-
-	// 通知服务器Worker即将离线，删除Redis状态数据
-	w.notifyOffline()
-
-	w.cancel()
-	w.stopOnce.Do(func() { close(w.stopChan) })
-
-	// 关闭 WebSocket 客户端
 	if w.wsClient != nil {
 		w.wsClient.Close()
 	}
 
-	w.wg.Wait()
+	// keepAliveLoop exits with stopChan, so maintain liveness separately while
+	// the wait group drains. Recovery must never classify this instance offline
+	// while it can still execute leased work.
+	drainHeartbeatStop := make(chan struct{})
+	drainHeartbeatDone := make(chan struct{})
+	go func() {
+		defer close(drainHeartbeatDone)
+		w.maintainDrainHeartbeat(drainHeartbeatStop)
+	}()
 
-	// 排空异步批量写缓冲：任务协程已全部退出（wg.Wait），
-	// 此时 channel 内不再有新请求；在 MongoDB 断开前完成尾部落库，
-	// 优雅停机不丢缓冲数据（失败的批次仍会落 ResultQueue 本地文件）。
+	w.wg.Wait()
+	// Task-owned flushers/watchers are launched from counted executors, so no
+	// new Add can occur after the executor group has drained.
+	w.taskAsyncWG.Wait()
+
 	if w.asyncWriter != nil {
 		w.asyncWriter.Stop()
 	}
+	if w.resultQueue != nil {
+		w.resultQueue.Stop()
+	}
 
-	// 修复 #7：flush MongoDB 日志缓冲，避免停机/重启时丢失未落库的关键日志
+	// Keep the instance heartbeat alive through all accepted task/result
+	// persistence. Only then may recovery observe this process as offline.
+	close(drainHeartbeatStop)
+	<-drainHeartbeatDone
+
+	// Offline is last among ownership-sensitive operations. Both transports
+	// compare-and-delete this exact instance and leave newer same-name workers.
+	w.notifyOffline()
+
 	if globalMongoLogger != nil {
 		globalMongoLogger.Close()
 	}
 
-	// 关闭 MongoDB 直连连接池（在途写入已随 wg.Wait 结束）
 	if w.mongoClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if err := w.mongoClient.Disconnect(ctx); err != nil {
 			logx.Errorf("[Worker][MongoDirect] disconnect failed: %v", err)
 		}
+		cancel()
 	}
 
-	// 关闭任务状态写独立连接池
 	if w.statusClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		if err := w.statusClient.Disconnect(ctx); err != nil {
 			logx.Errorf("[Worker][MongoStatus] disconnect failed: %v", err)
 		}
+		cancel()
 	}
 
-	// 清理 chromedp 全局浏览器进程，防止 Chrome 进程残留
 	scanner.CleanupChromedp()
-
-	w.logger.Info("Worker %s stopped", w.config.Name)
+	w.logger.Info("Worker %s instance %s stopped", w.workerName, w.instanceID)
 }
 
 // drainAndExit 优雅停止 Worker：先停止拉取新任务（关闭 stopChan），
@@ -1272,7 +1686,7 @@ func (w *Worker) SubmitTask(task *scheduler.TaskInfo) {
 // handleTaskControl 统一处理任务控制信号(STOP/PAUSE)
 // 返回 true 表示任务被中止或暂停，调用方应直接 return
 func (w *Worker) handleTaskControl(ctx context.Context, task *scheduler.TaskInfo, config *scheduler.TaskConfig, completedPhases map[string]bool, assets []*scanner.Asset, timedOutHostPorts map[string]struct{}, phaseName string) bool {
-	if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
+	if ctrl := w.checkTaskControl(ctx, task); ctrl == "STOP" {
 		reason := "Task stopped by user"
 		if phaseName != "" {
 			reason = fmt.Sprintf("Task stopped by user during %s", phaseName)
@@ -1356,40 +1770,49 @@ func (w *Worker) logTaskAbort(task *scheduler.TaskInfo, config *scheduler.TaskCo
 	}
 }
 
-func (w *Worker) checkTaskControl(ctx context.Context, taskId string) string {
-	// 从控制信号映射中检查
-	if signal, ok := w.taskControlSignals.Load(taskId); ok {
-		if action, ok := signal.(string); ok {
-			return action
-		}
+func (w *Worker) checkTaskControl(_ context.Context, task *scheduler.TaskInfo) string {
+	key := taskControlStorageKeyForTask(task)
+	if key == "" || task == nil {
+		return ""
 	}
-
-	// 也检查主任务ID的控制信号
-	mainTaskId := getMainTaskId(taskId)
-	if mainTaskId != taskId {
-		if signal, ok := w.taskControlSignals.Load(mainTaskId); ok {
-			if action, ok := signal.(string); ok {
-				return action
-			}
-		}
+	value, ok := w.ownedTasks.Load(key)
+	if !ok {
+		return ""
 	}
-
-	return ""
+	owned, ok := value.(*ownedTaskDispatch)
+	if !ok || owned == nil {
+		return ""
+	}
+	owned.mu.Lock()
+	defer owned.mu.Unlock()
+	currentValue, current := w.ownedTasks.Load(key)
+	if !current || currentValue != value || owned.closed || !owned.matchesTask(task) || owned.control == nil {
+		return ""
+	}
+	envelope := *owned.control
+	if envelope.Validate() != nil || envelope.TaskID != task.TaskId ||
+		envelope.MainTaskID != task.MainTaskId || envelope.DispatchGeneration != task.DispatchGeneration {
+		return ""
+	}
+	return envelope.Action
 }
 
-// saveTaskProgress 保存任务进度（用于暂停后继续扫描)
-func (w *Worker) saveTaskProgress(ctx context.Context, task *scheduler.TaskInfo, completedPhases map[string]bool, assets []*scanner.Asset, timedOutHostPorts map[string]struct{}) {
-	saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	phases := make([]string, 0)
+// saveTaskProgress 保存暂停恢复快照。保存使用独立短超时，避免任务控制已取消时丢失快照。
+func (w *Worker) saveTaskProgress(_ context.Context, task *scheduler.TaskInfo, completedPhases map[string]bool, assets []*scanner.Asset, timedOutHostPorts map[string]struct{}) {
+	phases := make([]string, 0, len(completedPhases))
 	for phase, completed := range completedPhases {
 		if completed {
 			phases = append(phases, phase)
 		}
 	}
+	sort.Strings(phases)
 
-	assetsJson, _ := json.Marshal(assets)
+	assetsJSON, err := json.Marshal(assets)
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "marshal paused task assets failed; retaining execution ownership until shutdown: %v", err)
+		<-w.stopChan
+		return
+	}
 	timedOutKeys := make([]string, 0, len(timedOutHostPorts))
 	for key := range timedOutHostPorts {
 		timedOutKeys = append(timedOutKeys, key)
@@ -1397,41 +1820,136 @@ func (w *Worker) saveTaskProgress(ctx context.Context, task *scheduler.TaskInfo,
 	sort.Strings(timedOutKeys)
 	state := map[string]interface{}{
 		"completedPhases":   phases,
-		"assets":            string(assetsJson),
+		"assets":            string(assetsJSON),
 		"timedOutHostPorts": timedOutKeys,
 	}
-	stateJson, _ := json.Marshal(state)
-
-	if w.schedClient != nil {
-		w.schedClient.UpdateTask(saveCtx, task.TaskId, "PAUSED", 0, string(stateJson))
-	} else {
-		w.httpClient.UpdateTask(saveCtx, &TaskUpdateReq{
-			TaskId: task.TaskId,
-			State:  "PAUSED",
-			Result: string(stateJson),
-		})
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		w.taskLog(task.TaskId, LevelError, "marshal paused task state failed; retaining execution ownership until shutdown: %v", err)
+		<-w.stopChan
+		return
 	}
-	w.taskLog(task.TaskId, LevelInfo, "Task %s progress saved: completedPhases=%v, assets=%d", task.TaskId, phases, len(assets))
+
+	backoff := time.Second
+	for {
+		select {
+		case <-w.stopChan:
+			w.taskLog(task.TaskId, LevelWarn, "worker is stopping before paused task state was acknowledged")
+			return
+		default:
+		}
+		if w.checkTaskControl(context.Background(), task) == scheduler.TaskControlActionStop {
+			w.taskLog(task.TaskId, LevelInfo, "STOP superseded PAUSE while saving generation %s", task.DispatchGeneration)
+			_ = w.acknowledgeStoppedTask(task)
+			return
+		}
+
+		saveCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var saveErr error
+		if w.schedClient != nil {
+			saveErr = w.schedClient.PauseTask(saveCtx, task.TaskId, task.MainTaskId, task.LeaseToken, "已暂停", string(stateJSON))
+		} else if w.httpClient != nil {
+			_, saveErr = w.httpClient.UpdateTask(saveCtx, &TaskUpdateReq{
+				TaskId:     task.TaskId,
+				MainTaskId: task.MainTaskId,
+				LeaseToken: task.LeaseToken,
+				State:      model.TaskStatusPaused,
+				Worker:     w.config.Name,
+				Phase:      "已暂停",
+				TaskState:  string(stateJSON),
+			})
+		} else {
+			saveErr = fmt.Errorf("no task update client configured")
+		}
+		cancel()
+		if saveErr == nil {
+			w.markTaskLeaseClosed(task)
+			w.taskLog(task.TaskId, LevelInfo, "Task %s progress saved: completedPhases=%v, assets=%d", task.TaskId, phases, len(assets))
+			return
+		}
+		if errors.Is(saveErr, scheduler.ErrTaskLeaseConflict) {
+			w.markTaskLeaseLost(task)
+			w.taskLog(task.TaskId, LevelWarn, "paused task ownership changed before snapshot acknowledgement; stopping retries")
+			return
+		}
+		if errors.Is(saveErr, scheduler.ErrTaskParentFenced) {
+			control := w.awaitParentControl(task)
+			if control == scheduler.TaskControlActionStop {
+				w.taskLog(task.TaskId, LevelInfo, "Durable STOP fenced PAUSE for generation %s; acknowledging STOP", task.DispatchGeneration)
+				_ = w.acknowledgeStoppedTask(task)
+				return
+			}
+			if control == "" {
+				return
+			}
+		}
+
+		w.taskLog(task.TaskId, LevelError, "save paused task state failed, retaining execution ownership and retrying: %v", saveErr)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-w.stopChan:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if backoff < 10*time.Second {
+			backoff *= 2
+			if backoff > 10*time.Second {
+				backoff = 10 * time.Second
+			}
+		}
+	}
+}
+
+// acknowledgeStoppedTask retains the exact live lease and retries STOP closure
+// until the server confirms it or proves that this generation no longer owns
+// the lease. A worker shutdown may hand the still-owned lease to dead-owner
+// recovery only after its instance heartbeat is withdrawn.
+func (w *Worker) acknowledgeStoppedTask(task *scheduler.TaskInfo) error {
+	backoff := time.Second
+	for {
+		ackCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := w.updateTaskStatus(ackCtx, task, scheduler.TaskStatusStopped, "Task stopped by user")
+		cancel()
+		if err == nil || errors.Is(err, scheduler.ErrTaskLeaseConflict) {
+			return err
+		}
+		w.taskLog(task.TaskId, LevelError,
+			"STOP acknowledgement failed for generation %s; retaining ownership and retrying: %v",
+			task.DispatchGeneration, err)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-w.stopChan:
+			timer.Stop()
+			return err
+		case <-timer.C:
+		}
+		if backoff < 10*time.Second {
+			backoff *= 2
+			if backoff > 10*time.Second {
+				backoff = 10 * time.Second
+			}
+		}
+	}
 }
 
 // createTaskContext 创建带有任务控制信号检查的上下文
 // 当任务被停止或暂停时，上下文会被取消
-func (w *Worker) createTaskContext(parentCtx context.Context, taskId string) (context.Context, context.CancelFunc) {
+func (w *Worker) createTaskContext(parentCtx context.Context, task *scheduler.TaskInfo) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(parentCtx)
 
-	// 启动一个goroutine定期检查任务控制信号
 	go func() {
-		ticker := time.NewTicker(200 * time.Millisecond) // 检查间隔200ms
+		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ctrl := w.checkTaskControl(ctx, taskId)
-				if ctrl == "STOP" || ctrl == "PAUSE" {
-					w.taskLog(taskId, LevelInfo, "Task %s received %s signal, canceling context", taskId, ctrl)
+				ctrl := w.checkTaskControl(ctx, task)
+				if ctrl == scheduler.TaskControlActionStop || ctrl == scheduler.TaskControlActionPause {
+					w.taskLog(task.TaskId, LevelInfo, "Task %s generation %s received %s, canceling context",
+						task.TaskId, task.DispatchGeneration, ctrl)
 					cancel()
 					return
 				}
@@ -1442,15 +1960,59 @@ func (w *Worker) createTaskContext(parentCtx context.Context, taskId string) (co
 	return ctx, cancel
 }
 
+const taskLeaseHeartbeatInterval = 2 * time.Minute
+
+func (w *Worker) renewTaskLease(ctx context.Context, task *scheduler.TaskInfo) error {
+	if task == nil || task.TaskId == "" || task.LeaseToken == "" {
+		return scheduler.ErrTaskLeaseConflict
+	}
+	if w.schedClient != nil {
+		return w.schedClient.RenewTaskLease(ctx, task.TaskId, task.LeaseToken)
+	}
+	if w.httpClient != nil {
+		return w.httpClient.RenewTaskLease(ctx, task.TaskId, task.LeaseToken)
+	}
+	return fmt.Errorf("no task lease client configured")
+}
+
+func (w *Worker) runTaskLeaseHeartbeat(ctx context.Context, cancelTask context.CancelFunc, task *scheduler.TaskInfo, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(taskLeaseHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			err := w.renewTaskLease(renewCtx, task)
+			cancel()
+			if errors.Is(err, scheduler.ErrTaskLeaseConflict) {
+				w.markTaskLeaseLost(task)
+				cancelTask()
+				return
+			}
+			if err != nil {
+				w.taskLog(task.TaskId, LevelWarn, "Task lease renewal failed: %v", err)
+			}
+		}
+	}
+}
+
 // executeTask 执行任务
 func (w *Worker) executeTask(task *scheduler.TaskInfo) {
+	// Keep the exact generation state available to every deferred reporter and
+	// the panic handler; remove it only after those defers have completed.
+	defer w.unregisterTaskLeaseState(task)
+	w.registerTaskLeaseState(task, nil)
+
 	// 添加 panic 恢复机制，防止单个任务的 panic 导致整个 Worker 挂掉
 	defer func() {
 		if r := recover(); r != nil {
 			// 使用 Worker 级别 logger，避免在 cleanupTaskLogger 之后创建孤儿 task logger
 			w.logger.Error("[Task:%s] Task execution panic recovered: %v, stack: %s", task.TaskId, r, string(getStackTrace()))
 			ctx := context.Background()
-			w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, fmt.Sprintf("Task panic: %v", r))
+			w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, fmt.Sprintf("Task panic: %v", r))
 		}
 	}()
 
@@ -1464,12 +2026,11 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	w.taskStarted++
 	w.mu.Unlock()
 
-	// 注册正在执行的任务
-	w.runningTasks.Store(task.TaskId, true)
-	mainTaskId := getMainTaskId(task.TaskId)
-	if mainTaskId != task.TaskId {
-		w.runningTasks.Store(mainTaskId, true)
-	}
+	// These variables are declared before fallback defers so a parent-fenced
+	// PAUSE at any execution point still has a live snapshot producer.
+	var allAssets []*scanner.Asset
+	var timedOutHostPorts map[string]struct{}
+	var completedPhases map[string]bool
 
 	// 使用 defer 确保无论任务如何结束，taskExecuted 都会递增
 	// 这样 runningCount (taskStarted - taskExecuted) 才能正确反映正在执行的任务数
@@ -1478,28 +2039,22 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		w.taskExecuted++
 		w.mu.Unlock()
 
-		// 注销正在执行的任务
-		w.runningTasks.Delete(task.TaskId)
-		if mainTaskId != task.TaskId {
-			w.runningTasks.Delete(mainTaskId)
-		}
-
-		// 清除控制信号
-		w.ClearTaskControlSignal(task.TaskId)
-
-		// 清理任务日志记录器，flush 残余缓冲
+		// Exact control ownership is not execution-scoped. It was registered at
+		// acquisition and is released only by confirmed close/requeue/replacement.
 		w.cleanupTaskLogger(task.TaskId)
 	}()
 
-	// 兜底递增子任务计数器：正常流程中每个模块完成时已递增，此 defer 仅在异常退出（STOP/致命错误/panic）时补递增。
-	// PAUSE 信号下跳过，恢复后由新一轮执行递增。
-	// 此 defer 在 cleanup state defer 之后注册，按 LIFO 先执行，可在控制信号被清除前读取。
-	finalIncrSent := false
+	// A synthetic execution failure is emitted only when no canonical final
+	// payload was durably accepted. PAUSE remains resumable and skips fallback.
+	finalPayloadAccepted := false
 	targetCount := 0 // 仅用于日志展示
 	incrSent := 0    // 已确认由服务端记录的增量数
 	expectedPhaseKeys := []string(nil)
 	reportedPhaseKeys := make(map[string]bool)
 	reportPhase := func(reportCtx context.Context, phase string, isCompleted bool, incrAmount int, phaseResult PhaseResult) phaseReportAck {
+		if w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
+			return phaseReportAck{}
+		}
 		if incrAmount <= 0 {
 			incrAmount = 1
 		}
@@ -1516,6 +2071,9 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	}
 	reportMissingPhases := func(reportCtx context.Context, canceled, skipped bool) {
 		for _, expectedPhase := range expectedPhaseKeys {
+			if w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
+				return
+			}
 			if reportedPhaseKeys[expectedPhase] {
 				continue
 			}
@@ -1534,43 +2092,63 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		}
 	}
 	defer func() {
-		if finalIncrSent {
+		if finalPayloadAccepted || w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
 			return
 		}
 		bgCtx := context.Background()
-		ctrl := w.checkTaskControl(bgCtx, task.TaskId)
-		if ctrl == "PAUSE" {
+		ctrl := w.checkTaskControl(bgCtx, task)
+		if ctrl == scheduler.TaskControlActionPause {
+			w.saveTaskProgress(bgCtx, task, completedPhases, allAssets, timedOutHostPorts)
 			return
 		}
-		reportMissingPhases(bgCtx, ctrl == "STOP", false)
-		fallbackPhase := missingPhaseResult("execution")
-		if ctrl == "STOP" {
-			fallbackPhase.Status = scanner.PhaseCanceled
-			fallbackPhase.Coverage = scanner.Coverage{Input: 1, Attempted: 1}
-			fallbackPhase.ReasonCodes = []string{scanner.ReasonCanceled}
+		if ctrl == scheduler.TaskControlActionStop {
+			_ = w.acknowledgeStoppedTask(task)
+			return
 		}
+		reportMissingPhases(bgCtx, false, false)
+		if w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
+			return
+		}
+		fallbackPhase := missingPhaseResult("execution")
 		ack := reportPhase(bgCtx, "完成", true, 1, fallbackPhase)
-		if ack.Recorded && ack.Finalized {
-			finalIncrSent = true
+		if ack.Recorded {
+			finalPayloadAccepted = true
+			if !ack.LeaseClosed {
+				w.taskLog(task.TaskId, LevelInfo, "Fallback final payload accepted; lease cleanup remains pending")
+			}
 		}
 	}()
 
-	// 检查是否有停止信号（任务可能在队列中被停止)
-	if ctrl := w.checkTaskControl(baseCtx, task.TaskId); ctrl == "STOP" {
+	// A locally queued acquired task may already have a durable control before
+	// execution starts. STOP closes it; PAUSE writes an empty resumable snapshot.
+	switch ctrl := w.checkTaskControl(baseCtx, task); ctrl {
+	case scheduler.TaskControlActionStop:
 		w.taskLog(task.TaskId, LevelInfo, "任务在执行前已停止")
+		return
+	case scheduler.TaskControlActionPause:
+		w.taskLog(task.TaskId, LevelInfo, "任务在执行前已暂停")
+		w.saveTaskProgress(baseCtx, task, completedPhases, allAssets, timedOutHostPorts)
 		return
 	}
 
 	// 创建带有任务控制信号检查的上下文
-	ctx, cancelTask := w.createTaskContext(baseCtx, task.TaskId)
-	defer cancelTask()
+	ctx, cancelTask := w.createTaskContext(baseCtx, task)
+	w.registerTaskLeaseState(task, cancelTask)
+	leaseHeartbeatDone := make(chan struct{})
+	go w.runTaskLeaseHeartbeat(ctx, cancelTask, task, leaseHeartbeatDone)
+	defer func() {
+		cancelTask()
+		<-leaseHeartbeatDone
+	}()
 
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "")
+	if err := w.updateTaskStatus(ctx, task, scheduler.TaskStatusStarted, ""); errors.Is(err, scheduler.ErrTaskLeaseConflict) || errors.Is(err, scheduler.ErrTaskParentFenced) {
+		return
+	}
 
 	var taskConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(task.Config), &taskConfig); err != nil {
 		w.taskLog(task.TaskId, LevelError, "配置解析失败：%v", err)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "配置解析失败: "+err.Error())
+		w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, "配置解析失败: "+err.Error())
 		return
 	}
 
@@ -1601,28 +2179,26 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	target, _ := taskConfig["target"].(string)
 	if target == "" {
 		w.taskLog(task.TaskId, LevelError, "目标为空")
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "Target is empty")
+		w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, "Target is empty")
 		return
 	}
 
 	// 获取组织ID
 	orgId, _ := taskConfig["orgId"].(string)
 
-	var allAssets []*scanner.Asset
 	var allVuls []*scanner.Vulnerability
 	var skippedHosts []string // 因端口阈值超限被跳过的主机
-	var timedOutHostPorts map[string]struct{}
 
 	// 解析扫描配置
 	config, err := scheduler.ParseTaskConfig(task.Config)
 	if err != nil {
 		w.taskLog(task.TaskId, LevelError, "Failed to parse task config: %v", err)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "配置解析失败: "+err.Error())
+		w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, "配置解析失败: "+err.Error())
 		return
 	}
 	if config == nil {
 		w.taskLog(task.TaskId, LevelError, "Task config is nil after parsing")
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "任务配置为空")
+		w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, "任务配置为空")
 		return
 	}
 
@@ -1713,7 +2289,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		w.taskLog(task.TaskId, LevelError, "No scan phases enabled in config")
 		w.taskLog(task.TaskId, LevelError, "Config details: %s", strings.Join(configDetails, ", "))
 		w.taskLog(task.TaskId, LevelDebug, "Full config JSON: %s", task.Config)
-		w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusFailure, "未启用任何扫描阶段")
+		w.updateTaskStatus(ctx, task, scheduler.TaskStatusFailure, "未启用任何扫描阶段")
 		return
 	}
 
@@ -1745,11 +2321,18 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 			reportMissingPhases(ctx, false, true)
 			blacklistPhase := NewPhaseResult("complete", scanner.Coverage{Input: 1, Attempted: 1, Succeeded: 1}, false)
 			ack := reportPhase(ctx, "完成", true, 1, blacklistPhase)
-			if ack.Recorded && ack.Finalized {
-				finalIncrSent = true
-				w.taskLog(task.TaskId, LevelInfo, "所有目标均被黑名单过滤，任务完成")
+			if ack.Recorded {
+				finalPayloadAccepted = true
+				switch {
+				case ack.LeaseClosed:
+					w.taskLog(task.TaskId, LevelInfo, "所有目标均被黑名单过滤，任务完成")
+				case ack.FinalizationPending:
+					w.taskLog(task.TaskId, LevelInfo, "黑名单完成结果已接受，任务终态仍在协调")
+				default:
+					w.taskLog(task.TaskId, LevelInfo, "黑名单完成结果已接受，租约清理仍在协调")
+				}
 			} else {
-				w.taskLog(task.TaskId, LevelError, "Failed to report blacklist completion")
+				w.taskLog(task.TaskId, LevelError, "Failed to record blacklist completion payload")
 			}
 			return
 		}
@@ -1767,7 +2350,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		json.Unmarshal([]byte(stateStr), &resumeState)
 		w.taskLog(task.TaskId, LevelInfo, "Resuming from saved state")
 	}
-	completedPhases := make(map[string]bool)
+	completedPhases = make(map[string]bool)
 	if resumeState != nil {
 		if phases, ok := resumeState["completedPhases"].([]interface{}); ok {
 			for _, p := range phases {
@@ -1811,7 +2394,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 	// 执行子域名扫描（在端口扫描之前）
 	if config.DomainScan != nil && config.DomainScan.Enable && !completedPhases["domainscan"] {
 		// 检查控制信号
-		if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
+		if ctrl := w.checkTaskControl(ctx, task); ctrl == "STOP" {
 			w.logTaskAbort(task, config, completedPhases, "Task stopped by user before domain scan")
 			return
 		}
@@ -1830,7 +2413,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 		domainScanTarget := strings.Join(eligibleTargets, "\n")
 
 		// 更新当前阶段
-		w.updateTaskProgressWithPhase(ctx, task.TaskId, 10, "子域名扫描中", "子域名扫描")
+		w.updateTaskProgressWithPhase(ctx, task, 10, "子域名扫描中", "子域名扫描")
 		w.taskLog(task.TaskId, LevelInfo, "Starting domain scan...")
 
 		// 创建任务日志回调
@@ -1891,7 +2474,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 					MainTaskId: task.MainTaskId,
 					Options:    subfinderOpts,
 					TaskLogger: domainTaskLogger,
-					OnProgress: w.makeOnProgress(task.MainTaskId, "子域名扫描"),
+					OnProgress: w.makeOnProgress(task, "子域名扫描"),
 					OnTargetDone: func(domain string, assets []*scanner.Asset) {
 						// 流式入库：单域名子域名枚举完成立即保存
 						if len(assets) == 0 {
@@ -2005,7 +2588,7 @@ func (w *Worker) executeTask(task *scheduler.TaskInfo) {
 							MainTaskId: task.MainTaskId,
 							Options:    bruteforceOpts,
 							TaskLogger: domainTaskLogger,
-							OnProgress: w.makeOnProgress(task.MainTaskId, "子域名爆破"),
+							OnProgress: w.makeOnProgress(task, "子域名爆破"),
 							OnTargetDone: func(domain string, assets []*scanner.Asset) {
 								// 流式入库：单域名暴力破解完成立即保存增量资产
 								var newAssets []*scanner.Asset
@@ -2146,7 +2729,7 @@ domainScanDone:
 		}
 
 		// 更新当前阶段
-		w.updateTaskProgressWithPhase(ctx, task.TaskId, 20, "端口扫描中", "端口扫描")
+		w.updateTaskProgressWithPhase(ctx, task, 20, "端口扫描中", "端口扫描")
 
 		// DNS 预解析过滤：仅将可解析的目标投入端口扫描，不可解析的直接跳过。
 		// 大量无法解析的 dev/test 子域名会让 naabu 对每个目标空跑满超时，
@@ -2263,7 +2846,7 @@ domainScanDone:
 		}
 
 		// 创建进度回调（统一使用 makeOnProgress，基于分子/分母实时计算主任务进度）
-		onProgress := w.makeOnProgress(task.MainTaskId, "端口扫描")
+		onProgress := w.makeOnProgress(task, "端口扫描")
 
 		// 第一步：端口发现
 		switch portDiscoveryTool {
@@ -2379,7 +2962,7 @@ domainScanDone:
 			// 检查是否被停止或超时
 			if portCtx.Err() == context.DeadlineExceeded {
 				portScanTimedOut = true
-			} else if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+			} else if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 				portCancel()
 				reason := "Port scan aborted, task canceled or stopped"
 				if ctx.Err() != nil {
@@ -2415,7 +2998,7 @@ domainScanDone:
 		}
 
 		// 检查是否被停止
-		if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+		if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 			portCancel()
 			reason := "Port scan aborted, task canceled or stopped"
 			if ctx.Err() != nil {
@@ -2500,7 +3083,7 @@ portScanDone:
 			}
 
 			// 更新当前阶段
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 40, "端口识别中", "端口识别")
+			w.updateTaskProgressWithPhase(ctx, task, 40, "端口识别中", "端口识别")
 
 			var identifiedAssets []*scanner.Asset
 			var identifyPhase PhaseResult
@@ -2556,7 +3139,7 @@ portScanDone:
 
 		} else {
 			// 在指纹识别开始前检查停止信号
-			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
+			if ctrl := w.checkTaskControl(ctx, task); ctrl == "STOP" {
 				w.logTaskAbort(task, config, completedPhases, "Task stopped by user before fingerprint")
 				return
 			} else if ctrl == "PAUSE" {
@@ -2566,7 +3149,7 @@ portScanDone:
 			}
 
 			// 更新当前阶段
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 60, "指纹识别中", "指纹识别")
+			w.updateTaskProgressWithPhase(ctx, task, 60, "指纹识别中", "指纹识别")
 
 			if s, ok := w.scanners["fingerprint"]; ok {
 				assetsToScan := fingerprintCandidates
@@ -2675,7 +3258,7 @@ portScanDone:
 				// fpCtx 现为取消专用（无自带 deadline），阶段级超时由各模块单目标超时独立控制；
 				// 任务级取消/停止由下方 ctx.Err() 与 STOP 检查统一判定。
 				// 检查是否被取消
-				if ctx.Err() != nil || w.checkTaskControl(ctx, task.TaskId) == "STOP" {
+				if ctx.Err() != nil || w.checkTaskControl(ctx, task) == "STOP" {
 					reason := "Task aborted after fingerprint, task canceled or stopped"
 					if ctx.Err() != nil {
 						reason = fmt.Sprintf("%s (context error: %v)", reason, ctx.Err())
@@ -2767,7 +3350,7 @@ portScanDone:
 			}
 
 			// 更新当前阶段
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 65, "弱口令扫描中", "弱口令扫描")
+			w.updateTaskProgressWithPhase(ctx, task, 65, "弱口令扫描中", "弱口令扫描")
 
 			// 执行弱口令扫描
 			bruteVulns := w.executeBruteScan(ctx, task, allAssets, config.BruteScan, orgId)
@@ -2813,7 +3396,7 @@ portScanDone:
 			}
 
 			// 更新当前阶段
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 70, "目录扫描中", "目录扫描")
+			w.updateTaskProgressWithPhase(ctx, task, 70, "目录扫描中", "目录扫描")
 
 			// 执行目录扫描
 			dirScanAssets := w.executeDirScan(ctx, task, allAssets, config.DirScan, orgId)
@@ -2858,14 +3441,14 @@ portScanDone:
 				return
 			}
 
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "JS扫描中", "JS扫描")
+			w.updateTaskProgressWithPhase(ctx, task, 80, "JS扫描中", "JS扫描")
 
 			jsfinderResults := w.executeJSFinder(ctx, task, allAssets, config.JSFinder, orgId)
 			// 结果已通过 OnResultFound 流式入库，此处仅记录日志
 			if len(jsfinderResults) > 0 {
 				w.taskLog(task.TaskId, LevelInfo, "JSFinder: %d findings (streamed)", len(jsfinderResults))
 			}
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 85, "JS扫描完成", "JS扫描")
+			w.updateTaskProgressWithPhase(ctx, task, 85, "JS扫描完成", "JS扫描")
 			completedPhases["jsfinder"] = true
 			jsPhase := NewPhaseResult("jsfinder", scanner.Coverage{Input: len(allAssets), Attempted: len(allAssets), Succeeded: len(allAssets)}, false)
 			jsPhase.UsableResults = len(allAssets) > 0 || len(jsfinderResults) > 0
@@ -2901,7 +3484,7 @@ portScanDone:
 
 		} else {
 			// 在POC扫描开始前检查停止信号
-			if ctrl := w.checkTaskControl(ctx, task.TaskId); ctrl == "STOP" {
+			if ctrl := w.checkTaskControl(ctx, task); ctrl == "STOP" {
 				w.logTaskAbort(task, config, completedPhases, "Task stopped by user before POC scan")
 				return
 			} else if ctrl == "PAUSE" {
@@ -2911,7 +3494,7 @@ portScanDone:
 			}
 
 			// 更新当前阶段
-			w.updateTaskProgressWithPhase(ctx, task.TaskId, 80, "漏洞扫描中", "漏洞扫描")
+			w.updateTaskProgressWithPhase(ctx, task, 80, "漏洞扫描中", "漏洞扫描")
 
 			var templates []string
 			var templateRefs []string
@@ -3040,7 +3623,7 @@ portScanDone:
 								logVulnerability(vul)
 								vulBuffer.Add(vul)
 							},
-							OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
+							OnProgress: w.makeOnProgress(task, "POC扫描"),
 						}
 						pocTaskLogger := func(level, format string, args ...interface{}) {
 							w.taskLog(task.TaskId, level, format, args...)
@@ -3136,7 +3719,7 @@ portScanDone:
 							logVulnerability(vul)
 							vulBuffer.Add(vul)
 						},
-						OnProgress: w.makeOnProgress(task.MainTaskId, "POC扫描"),
+						OnProgress: w.makeOnProgress(task, "POC扫描"),
 					}
 
 					pocTaskLogger := func(level, format string, args ...interface{}) {
@@ -3209,89 +3792,145 @@ portScanDone:
 	finalPhase.Vulnerabilities = len(allVuls)
 	finalPhase.ResultPrefix = result
 	ack := reportPhase(ctx, "完成", true, 1, finalPhase)
-	if ack.Recorded && ack.Finalized {
-		finalIncrSent = true
-		w.taskLog(task.TaskId, LevelInfo, "任务完成：资产 %d，漏洞 %d，用时 %.0f 秒", len(allAssets), len(allVuls), duration)
+	if ack.Recorded {
+		finalPayloadAccepted = true
+		switch {
+		case ack.LeaseClosed:
+			w.taskLog(task.TaskId, LevelInfo, "任务完成：资产 %d，漏洞 %d，用时 %.0f 秒", len(allAssets), len(allVuls), duration)
+		case ack.FinalizationPending:
+			w.taskLog(task.TaskId, LevelInfo, "任务最终结果已接受，终态仍在协调：%s", result)
+		default:
+			w.taskLog(task.TaskId, LevelInfo, "任务最终结果已接受，租约清理仍在协调：%s", result)
+		}
 	} else {
-		w.taskLog(task.TaskId, LevelError, "Failed to report task completion: %s", result)
+		w.taskLog(task.TaskId, LevelError, "Failed to record canonical task completion payload: %s", result)
 	}
 	// 终态由 IncrSubTaskDone 的语义聚合统一落库，避免无条件 SUCCESS 覆盖 PARTIAL/FAILURE。
 	// 注意：taskExecuted 由 defer 递增，无需在此处理
 }
 
+const taskOperationBusyRetryAttempts = 7
+
+func retryTaskOperationBusy(ctx context.Context, update func() error) error {
+	delay := 250 * time.Millisecond
+	for attempt := 0; attempt < taskOperationBusyRetryAttempts; attempt++ {
+		err := update()
+		if !errors.Is(err, scheduler.ErrTaskOperationBusy) || attempt == taskOperationBusyRetryAttempts-1 {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if delay < 5*time.Second {
+			delay *= 2
+			if delay > 5*time.Second {
+				delay = 5 * time.Second
+			}
+		}
+	}
+	return nil
+}
+
+func closesWorkerTaskLease(status string) bool {
+	switch status {
+	case scheduler.TaskStatusSuccess, scheduler.TaskStatusFailure, scheduler.TaskStatusStopped,
+		model.TaskStatusPartial, model.TaskStatusRevoked, model.TaskStatusLegacyCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
 // updateTaskStatus 更新任务状态
-func (w *Worker) updateTaskStatus(ctx context.Context, taskId string, status string, result string) {
-	if w.schedClient != nil {
-		phase := ""
-		progress := 0
-		if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
-			phase = "完成"
-			progress = 100
-		}
-		if err := w.schedClient.UpdateTask(ctx, taskId, status, progress, phase); err != nil {
-			w.taskLog(taskId, LevelError, "update task status failed: %v", err)
-		}
-		return
+func (w *Worker) updateTaskStatus(ctx context.Context, task *scheduler.TaskInfo, status string, result string) error {
+	if task == nil {
+		return nil
 	}
-
-	// 回退到 HTTP
-	if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
-		_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-			TaskId:   taskId,
-			State:    status,
-			Worker:   w.config.Name,
-			Result:   result,
-			Progress: 100,
-			Phase:    "完成",
-		})
-		if err != nil {
-			w.taskLog(taskId, LevelError, "update task status failed: %v", err)
-		}
-		return
+	if w.taskLeaseClosed(task) {
+		return nil
 	}
-
-	_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-		TaskId: taskId,
-		State:  status,
-		Worker: w.config.Name,
-		Result: result,
+	if w.taskLeaseLost(task) {
+		return scheduler.ErrTaskLeaseConflict
+	}
+	taskId := task.TaskId
+	err := retryTaskOperationBusy(ctx, func() error {
+		if w.schedClient != nil {
+			phase := ""
+			progress := 0
+			if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
+				phase = "完成"
+				progress = 100
+			}
+			return w.schedClient.UpdateTask(ctx, taskId, task.LeaseToken, status, progress, phase, "")
+		}
+		if w.httpClient != nil {
+			req := &TaskUpdateReq{
+				TaskId:     taskId,
+				LeaseToken: task.LeaseToken,
+				State:      status,
+				Worker:     w.workerName,
+				Result:     result,
+			}
+			if status == scheduler.TaskStatusSuccess || status == scheduler.TaskStatusFailure {
+				req.Progress = 100
+				req.Phase = "完成"
+			}
+			_, updateErr := w.httpClient.UpdateTask(ctx, req)
+			return updateErr
+		}
+		return fmt.Errorf("no task update client configured")
 	})
 	if err != nil {
 		w.taskLog(taskId, LevelError, "update task status failed: %v", err)
+		return w.handleTaskLeaseError(task, err)
 	}
+	if closesWorkerTaskLease(status) {
+		w.markTaskLeaseClosed(task)
+	}
+	return nil
 }
 
 // updateTaskProgress 更新任务进度
-// 注意：进度更新现在通过 HTTP 接口完成
-func (w *Worker) updateTaskProgress(ctx context.Context, taskId string, progress int, message string) {
-	w.updateTaskProgressWithPhase(ctx, taskId, progress, message, "")
+func (w *Worker) updateTaskProgress(ctx context.Context, task *scheduler.TaskInfo, progress int, message string) error {
+	return w.updateTaskProgressWithPhase(ctx, task, progress, message, "")
 }
 
 // updateTaskProgressWithPhase 更新任务进度和当前阶段
-func (w *Worker) updateTaskProgressWithPhase(ctx context.Context, taskId string, progress int, message string, currentPhase string) {
-	if currentPhase == "" {
-		return
+func (w *Worker) updateTaskProgressWithPhase(ctx context.Context, task *scheduler.TaskInfo, progress int, message string, currentPhase string) error {
+	if task == nil || currentPhase == "" {
+		return nil
 	}
-
-	if w.schedClient != nil {
-		if err := w.schedClient.UpdateTask(ctx, taskId, "", progress, currentPhase); err != nil {
-			w.taskLog(taskId, LevelError, "update task progress failed: %v", err)
+	if w.taskLeaseClosed(task) {
+		return nil
+	}
+	if w.taskLeaseLost(task) {
+		return scheduler.ErrTaskLeaseConflict
+	}
+	taskId := task.TaskId
+	err := retryTaskOperationBusy(ctx, func() error {
+		if w.schedClient != nil {
+			return w.schedClient.UpdateTask(ctx, taskId, task.LeaseToken, "", progress, currentPhase, "")
 		}
-		return
-	}
-
-	// 回退到 HTTP
-	if w.httpClient != nil {
-		_, err := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-			TaskId:   taskId,
-			Progress: progress,
-			Phase:    currentPhase,
-			Result:   message,
-		})
-		if err != nil {
-			w.taskLog(taskId, LevelError, "update task progress failed: %v", err)
+		if w.httpClient != nil {
+			_, updateErr := w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
+				TaskId:     taskId,
+				LeaseToken: task.LeaseToken,
+				Progress:   progress,
+				Phase:      currentPhase,
+				Result:     message,
+			})
+			return updateErr
 		}
+		return fmt.Errorf("no task update client configured")
+	})
+	if err != nil {
+		w.taskLog(taskId, LevelError, "update task progress failed: %v", err)
 	}
+	return w.handleTaskLeaseError(task, err)
 }
 
 // expectedTaskIncr 根据任务配置计算单个 sub-task 应发出的总增量数：
@@ -3319,7 +3958,7 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 		}
 	}()
 
-	if task == nil {
+	if task == nil || w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
 		return phaseReportAck{}
 	}
 	if ctx == nil {
@@ -3357,55 +3996,80 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 		}
 	}
 
-	finalizationPending := func(recorded bool, finalized bool, pending bool, summary *model.TaskScanSummary, allDone bool) bool {
-		if !recorded || !isCompleted || finalized {
+	finalizationPending := func(recorded, leaseClosed, finalized, pending bool, summary *model.TaskScanSummary, allDone bool) bool {
+		if !recorded || !isCompleted || leaseClosed || finalized {
 			return false
 		}
 		// New servers set the explicit flag. The summary-nil fallback keeps the
-		// retry behavior safe during rolling upgrades where the field is absent.
+		// retry behavior safe until the final child lease is durably closed.
 		return pending || (allDone && summary == nil)
+	}
+	mergeAck := func(current, next phaseReportAck) phaseReportAck {
+		current.Recorded = current.Recorded || next.Recorded
+		current.LeaseClosed = current.LeaseClosed || next.LeaseClosed
+		current.Finalized = current.Finalized || next.Finalized
+		current.FinalizationPending = (current.FinalizationPending || next.FinalizationPending) &&
+			!current.LeaseClosed && !current.Finalized
+		return current
 	}
 
 	if w.schedClient != nil {
-		var resp *IncrSubTaskDoneResponse
-		var err error
+		var latest *IncrSubTaskDoneResponse
+		var best phaseReportAck
+		var lastErr error
 		for attempt := 0; attempt < maxAttempts; attempt++ {
-			resp, err = w.schedClient.IncrSubTaskDone(ctx, task.MainTaskId, task.TaskId, phase, incrAmount, phaseResult)
-			if err == nil && resp != nil {
-				pending := finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone)
-				if pending && waitForRetry(attempt) {
+			resp, callErr := w.schedClient.IncrSubTaskDone(
+				ctx, task.MainTaskId, task.TaskId, task.LeaseToken, phase, isCompleted, incrAmount, phaseResult,
+			)
+			if errors.Is(callErr, scheduler.ErrTaskLeaseConflict) || errors.Is(callErr, scheduler.ErrTaskParentFenced) {
+				w.handleTaskLeaseError(task, callErr)
+				lastErr = callErr
+				break
+			}
+			if callErr == nil && resp != nil {
+				latest = resp
+				attemptAck := phaseReportAck{
+					Recorded:    resp.Recorded,
+					LeaseClosed: resp.LeaseClosed,
+					Finalized:   resp.Finalized,
+					FinalizationPending: finalizationPending(
+						resp.Recorded, resp.LeaseClosed, resp.Finalized, resp.FinalizationPending,
+						resp.ScanSummary, resp.AllDone,
+					),
+				}
+				best = mergeAck(best, attemptAck)
+				lastErr = nil
+				if attemptAck.FinalizationPending && waitForRetry(attempt) {
 					continue
 				}
 				break
 			}
-			if err == nil {
-				err = fmt.Errorf("scheduler returned nil subtask response")
+			if callErr == nil {
+				callErr = fmt.Errorf("scheduler returned nil subtask response")
 			}
+			lastErr = callErr
 			if !waitForRetry(attempt) {
 				break
 			}
 		}
-		if err != nil || resp == nil {
-			w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done after retries: %v", err)
-			return phaseReportAck{}
+		if latest == nil {
+			w.taskLog(task.TaskId, LevelError, "Failed to record subtask result after retries: %v", lastErr)
+			return best
 		}
-		// 刷新实时进度缓存
-		w.progressMu.Lock()
-		w.cachedSubTaskDone = resp.SubTaskDone
-		w.cachedSubTaskCount = resp.SubTaskCount
-		w.cachedMainTaskId = task.MainTaskId
-		w.lastReportedProgress = 0
-		w.progressMu.Unlock()
-		if resp.AllDone && resp.Finalized && resp.ScanSummary != nil {
+		if lastErr != nil {
+			w.taskLog(task.TaskId, LevelWarn,
+				"Subtask result was accepted before a follow-up retry failed: %v", lastErr)
+		}
+		w.setMainTaskProgressBaseline(task.MainTaskId, latest.SubTaskDone, latest.SubTaskCount)
+		if best.Finalized && latest.ScanSummary != nil {
 			w.taskLogEvent(task.TaskId, LevelInfo,
 				"任务结果已记录",
-				EventTaskFinalized, "task", resp.ScanSummary.Outcome, taskFinalizedEventFields(resp.ScanSummary))
+				EventTaskFinalized, "task", latest.ScanSummary.Outcome, taskFinalizedEventFields(latest.ScanSummary))
 		}
-		return phaseReportAck{
-			Recorded:            true,
-			Finalized:           resp.Finalized,
-			FinalizationPending: finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone),
+		if best.LeaseClosed {
+			w.markTaskLeaseClosed(task)
 		}
+		return best
 	}
 
 	// 回退到 HTTP
@@ -3428,109 +4092,142 @@ func (w *Worker) incrSubTaskDone(ctx context.Context, task *scheduler.TaskInfo, 
 	req := &SubTaskDoneReq{
 		TaskId:      task.TaskId,
 		MainTaskId:  task.MainTaskId,
+		LeaseToken:  task.LeaseToken,
 		Phase:       phase,
 		IsCompleted: isCompleted,
 		IncrAmount:  incrAmount,
 		PhaseResult: &phaseSummary,
 		TaskSummary: taskSummary,
 	}
-	var resp *SubTaskDoneResp
-	var err error
+	var latest *SubTaskDoneResp
+	var best phaseReportAck
+	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		resp, err = w.httpClient.IncrSubTaskDone(ctx, req)
-		if err == nil && resp != nil && resp.Success {
-			pending := finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone)
-			if pending && waitForRetry(attempt) {
+		resp, callErr := w.httpClient.IncrSubTaskDone(ctx, req)
+		if errors.Is(callErr, scheduler.ErrTaskLeaseConflict) || errors.Is(callErr, scheduler.ErrTaskParentFenced) {
+			w.handleTaskLeaseError(task, callErr)
+			lastErr = callErr
+			break
+		}
+		if callErr == nil && resp != nil && resp.Success {
+			latest = resp
+			attemptAck := phaseReportAck{
+				Recorded:    resp.Recorded,
+				LeaseClosed: resp.LeaseClosed,
+				Finalized:   resp.Finalized,
+				FinalizationPending: finalizationPending(
+					resp.Recorded, resp.LeaseClosed, resp.Finalized, resp.FinalizationPending,
+					resp.ScanSummary, resp.AllDone,
+				),
+			}
+			best = mergeAck(best, attemptAck)
+			lastErr = nil
+			if attemptAck.FinalizationPending && waitForRetry(attempt) {
 				continue
 			}
 			break
 		}
-		if err == nil {
+		if callErr == nil {
 			if resp == nil {
-				err = fmt.Errorf("HTTP scheduler returned nil subtask response")
+				callErr = fmt.Errorf("HTTP scheduler returned nil subtask response")
 			} else {
-				err = fmt.Errorf("HTTP scheduler rejected subtask report: code=%d msg=%s", resp.Code, resp.Msg)
+				callErr = fmt.Errorf("HTTP scheduler rejected subtask report: code=%d msg=%s", resp.Code, resp.Msg)
 			}
 		}
+		lastErr = callErr
 		if !waitForRetry(attempt) {
 			break
 		}
 	}
-	if err != nil || resp == nil || !resp.Success {
-		w.taskLog(task.TaskId, LevelError, "Failed to incr sub task done after retries: %v", err)
-		return phaseReportAck{}
+	if latest == nil {
+		w.taskLog(task.TaskId, LevelError, "Failed to record HTTP subtask result after retries: %v", lastErr)
+		return best
+	}
+	if lastErr != nil {
+		w.taskLog(task.TaskId, LevelWarn,
+			"HTTP subtask result was accepted before a follow-up retry failed: %v", lastErr)
 	}
 
-	if resp.AllDone && resp.Finalized && resp.ScanSummary != nil {
+	w.setMainTaskProgressBaseline(task.MainTaskId, int(latest.SubTaskDone), int(latest.SubTaskCount))
+	if best.Finalized && latest.ScanSummary != nil {
 		w.taskLogEvent(task.TaskId, LevelInfo,
 			"任务结果已记录",
-			EventTaskFinalized, "task", resp.ScanSummary.Outcome, taskFinalizedEventFields(resp.ScanSummary))
+			EventTaskFinalized, "task", latest.ScanSummary.Outcome, taskFinalizedEventFields(latest.ScanSummary))
 	}
-	return phaseReportAck{
-		Recorded:            true,
-		Finalized:           resp.Finalized,
-		FinalizationPending: finalizationPending(true, resp.Finalized, resp.FinalizationPending, resp.ScanSummary, resp.AllDone),
+	if best.LeaseClosed {
+		w.markTaskLeaseClosed(task)
 	}
+	return best
 }
 
-// updateMainTaskProgress 基于模块内部分进度实时更新主任务 progress 字段。
-// 计算公式: progress = (cachedSubTaskDone + moduleFraction) / cachedSubTaskCount × 100
-// moduleFraction: 当前模块的完成比例 (0.0 ~ 1.0)，由各 scanner 的 OnProgress 回调提供。
-// 进度只升不降，防止多子任务交叉上报导致回退。
-func (w *Worker) updateMainTaskProgress(mainTaskId string, moduleFraction float64, phase, message string) {
-	if mainTaskId == "" {
-		return
-	}
+func (w *Worker) mainTaskProgressState(mainTaskID string) *mainTaskProgressState {
 	w.progressMu.Lock()
-	done := w.cachedSubTaskDone
-	total := w.cachedSubTaskCount
-	cachedId := w.cachedMainTaskId
-	lastProgress := w.lastReportedProgress
-	w.progressMu.Unlock()
+	defer w.progressMu.Unlock()
+	state := w.progressByMain[mainTaskID]
+	if state == nil {
+		state = &mainTaskProgressState{}
+		w.progressByMain[mainTaskID] = state
+	}
+	return state
+}
 
-	// 缓存的主任务 ID 不匹配时跳过（子任务切换）
-	if cachedId != mainTaskId || total <= 0 {
+func (w *Worker) setMainTaskProgressBaseline(mainTaskID string, done, total int) {
+	if mainTaskID == "" || total <= 0 {
 		return
 	}
+	state := w.mainTaskProgressState(mainTaskID)
+	state.mu.Lock()
+	state.done = done
+	state.total = total
+	baseline := calculateProgress(done, total)
+	if baseline > state.lastReported {
+		state.lastReported = baseline
+	}
+	state.mu.Unlock()
+}
 
-	progress := int((float64(done) + moduleFraction) * 100.0 / float64(total))
+// updateMainTaskProgress reports one aggregate parent percentage through the
+// guarded task-update transport. The API/direct adapter holds the exact lease
+// barrier across the Mongo mutation, so no second unfenced database write is
+// performed here.
+func (w *Worker) updateMainTaskProgress(task *scheduler.TaskInfo, moduleFraction float64, phase, message string) {
+	if task == nil || task.TaskId == "" || w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
+		return
+	}
+	if moduleFraction < 0 {
+		moduleFraction = 0
+	}
+	if moduleFraction > 1 {
+		moduleFraction = 1
+	}
+
+	mainTaskID := task.MainTaskId
+	state := w.mainTaskProgressState(mainTaskID)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	progress := int(moduleFraction * 100)
+	if state.total > 0 {
+		progress = int((float64(state.done) + moduleFraction) * 100.0 / float64(state.total))
+		if progress > 99 {
+			progress = 99
+		}
+	}
 	if progress < 0 {
 		progress = 0
 	}
-	if progress > 99 {
-		progress = 99 // 100 由 IncrSubTaskDone 的 allDone 路径设置
-	}
-
-	// 只升不降
-	if progress <= lastProgress {
+	if progress <= state.lastReported || w.taskLeaseLost(task) || w.taskLeaseClosed(task) {
 		return
 	}
-
-	w.progressMu.Lock()
-	w.lastReportedProgress = progress
-	w.progressMu.Unlock()
-
-	// 直接更新 MongoDB progress 字段（状态写走独立连接池，避免被结果数据写入饿死）
-	if db := w.statusDBHandle(); db != nil {
-		taskModel := model.NewMainTaskModel(db)
-		if err := taskModel.Update(context.Background(), mainTaskId, bson.M{
-			"progress":      progress,
-			"current_phase": phase,
-		}); err != nil {
-			w.logger.Error("[Progress] update main task progress failed: %v", err)
-		}
+	if err := w.updateTaskProgressWithPhase(context.Background(), task, progress, message, phase); err != nil {
+		return
 	}
-
-	// 同时更新 Redis 执行信息（前端轮询）
-	if w.schedClient != nil {
-		_ = w.schedClient.UpdateTask(context.Background(), mainTaskId, "", progress, phase)
-	}
+	state.lastReported = progress
 }
 
-// makeOnProgress 创建模块级 OnProgress 回调。
-// modulePercent 是 scanner 回调传入的当前模块完成百分比 (0-100)，
-// 映射到主任务整体进度的增量: moduleFraction = modulePercent / 100。
-func (w *Worker) makeOnProgress(mainTaskId, phase string) func(int, string) {
+// makeOnProgress captures the exact child TaskInfo so every module callback
+// refreshes that child's lease rather than writing the parent with an empty token.
+func (w *Worker) makeOnProgress(task *scheduler.TaskInfo, phase string) func(int, string) {
 	return func(modulePercent int, message string) {
 		if modulePercent < 0 {
 			modulePercent = 0
@@ -3538,12 +4235,11 @@ func (w *Worker) makeOnProgress(mainTaskId, phase string) func(int, string) {
 		if modulePercent > 100 {
 			modulePercent = 100
 		}
-		fraction := float64(modulePercent) / 100.0
 		msg := message
 		if msg == "" {
 			msg = phase
 		}
-		w.updateMainTaskProgress(mainTaskId, fraction, phase, msg)
+		w.updateMainTaskProgress(task, float64(modulePercent)/100.0, phase, msg)
 	}
 }
 

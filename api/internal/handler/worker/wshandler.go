@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cscan/api/internal/svc"
+	"cscan/internal/scheduler"
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
@@ -40,11 +41,8 @@ type AuthPayload struct {
 	InstallKey string `json:"installKey"`
 }
 
-// ControlPayload 控制信号载荷
-type ControlPayload struct {
-	TaskId string `json:"taskId"`
-	Action string `json:"action"` // STOP, PAUSE, RESUME
-}
+// ControlPayload is the strict generation-bearing task control envelope.
+type ControlPayload = scheduler.TaskControlEnvelope
 
 // ==================== Worker Connection ====================
 
@@ -638,9 +636,8 @@ func handlePong(wc *WorkerConnection) {
 
 // ==================== Control Signal Subscription ====================
 
-// subscribeControlSignals 订阅Redis控制信号
-// 修复 C-09：原实现 channel 关闭时直接 return，Redis 重连后该 Worker 不再收到任务控制信号
-// （STOP/PAUSE/RESUME），导致任务无法取消。现增加断线重连+指数退避。
+// subscribeControlSignals relays only strict, generation-bearing Redis
+// envelopes. Plaintext and channel/payload identity mismatches are rejected.
 func subscribeControlSignals(ctx context.Context, wc *WorkerConnection, svcCtx *svc.ServiceContext) {
 	const maxBackoff = 30 * time.Second
 	backoff := time.Second
@@ -650,18 +647,16 @@ func subscribeControlSignals(ctx context.Context, wc *WorkerConnection, svcCtx *
 			return
 		}
 
-		// 使用模式订阅所有任务控制信号
-		pubsub := svcCtx.RedisClient.PSubscribe(ctx, "cscan:task:ctrl:*")
+		pattern := scheduler.TaskControlChannelPattern()
+		pubsub := svcCtx.RedisClient.PSubscribe(ctx, pattern)
 		ch := pubsub.Channel()
-
-		// 等待订阅确认
 		if _, err := pubsub.Receive(ctx); err != nil {
 			if ctx.Err() != nil || wc.isClosed() {
 				pubsub.Close()
 				return
 			}
-			logx.Errorf("[WorkerWS] PSubscribe cscan:task:ctrl:* failed for %s: %v, retry in %v",
-				wc.GetWorkerName(), err, backoff)
+			logx.Errorf("[WorkerWS] PSubscribe %s failed for %s: %v, retry in %v",
+				pattern, wc.GetWorkerName(), err, backoff)
 			pubsub.Close()
 			controlSleepCtx(ctx, wc, backoff)
 			backoff = nextBackoff(backoff, maxBackoff)
@@ -679,38 +674,34 @@ func subscribeControlSignals(ctx context.Context, wc *WorkerConnection, svcCtx *
 				pubsub.Close()
 				return
 			case msg, ok := <-ch:
-				// 通道关闭（连接断开/错误）：退出内层循环，外层重连
 				if !ok || msg == nil {
-					logx.Errorf("[WorkerWS] Task control subscription closed for %s, reconnecting",
-						wc.GetWorkerName())
+					logx.Errorf("[WorkerWS] Task control subscription closed for %s, reconnecting", wc.GetWorkerName())
 					pubsub.Close()
 					break consumeLoop
 				}
-				// 解析频道名获取taskId
-				// 频道格式: cscan:task:ctrl:{taskId}
-				taskId := extractTaskIdFromChannel(msg.Channel)
-				if taskId == "" {
+				envelope, err := scheduler.ParseTaskControlEnvelope([]byte(msg.Payload))
+				if err != nil {
+					logx.Errorf("[WorkerWS] Rejected malformed task control on %s: %v", msg.Channel, err)
 					continue
 				}
-
-				// 转发控制信号给Worker
-				action := msg.Payload // STOP, PAUSE, RESUME
-				payload, _ := json.Marshal(&ControlPayload{
-					TaskId: taskId,
-					Action: action,
-				})
-
-				wc.Send(&WSMessage{
-					Type:    WSTypeControl,
-					Payload: payload,
-				})
-
-				logx.Infof("[WorkerWS] Forwarded control signal to %s: taskId=%s, action=%s",
-					wc.GetWorkerName(), taskId, action)
+				expectedChannel, _ := envelope.Key()
+				if msg.Channel != expectedChannel {
+					logx.Errorf("[WorkerWS] Rejected task control channel mismatch: channel=%s expected=%s", msg.Channel, expectedChannel)
+					continue
+				}
+				payload, err := json.Marshal(envelope)
+				if err != nil {
+					continue
+				}
+				if err := wc.Send(&WSMessage{Type: WSTypeControl, Payload: payload}); err != nil {
+					logx.Errorf("[WorkerWS] Failed to relay task control to %s: %v", wc.GetWorkerName(), err)
+					continue
+				}
+				logx.Infof("[WorkerWS] Forwarded task control to %s: taskId=%s generation=%s action=%s",
+					wc.GetWorkerName(), envelope.TaskID, envelope.DispatchGeneration, envelope.Action)
 			}
 		}
 
-		// 断线退避后重连
 		controlSleepCtx(ctx, wc, backoff)
 		backoff = nextBackoff(backoff, maxBackoff)
 	}
@@ -725,16 +716,6 @@ func controlSleepCtx(ctx context.Context, wc *WorkerConnection, d time.Duration)
 	case <-wc.closeChan:
 	case <-t.C:
 	}
-}
-
-// extractTaskIdFromChannel 从频道名提取taskId
-func extractTaskIdFromChannel(channel string) string {
-	// 频道格式: cscan:task:ctrl:{taskId}
-	const prefix = "cscan:task:ctrl:"
-	if len(channel) > len(prefix) {
-		return channel[len(prefix):]
-	}
-	return ""
 }
 
 // ==================== Terminal Output Handling ====================

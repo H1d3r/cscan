@@ -56,35 +56,35 @@ type PathResult struct {
 
 // executeFingerprintValidateTask 执行被动指纹验证任务
 func (w *Worker) executeFingerprintValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在验证指纹...")
+	w.updateTaskStatus(ctx, task, scheduler.TaskStatusStarted, "正在验证指纹...")
 
 	url, _ := taskConfig["url"].(string)
 	fpId, _ := taskConfig["fingerprintId"].(string)
 
 	if url == "" || fpId == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL或指纹ID为空"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "URL或指纹ID为空"})
 		return
 	}
 
 	// 1. 获取目标数据（HTTP请求 + 指纹数据）
 	data, err := w.fetchFingerprintDataForValidate(url)
 	if err != nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "请求目标失败: " + err.Error()})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "请求目标失败: " + err.Error()})
 		return
 	}
 
 	// 2. 按ID直查指纹（避免全量加载指纹库），文档自带全部结构化字段
 	if w.mongoDB == nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
 		return
 	}
 	fp, err := model.NewFingerprintModel(w.mongoDB).FindById(ctx, fpId)
 	if err != nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "查询指纹失败: " + err.Error()})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "查询指纹失败: " + err.Error()})
 		return
 	}
 	if fp == nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "指纹不存在"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "指纹不存在"})
 		return
 	}
 
@@ -130,44 +130,44 @@ func (w *Worker) executeFingerprintValidateTask(ctx context.Context, task *sched
 	}
 
 	duration := time.Since(startTime).Seconds()
-	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("验证完成, 耗时%.2fs", duration), result)
+	w.saveFingerprintValidationResult(ctx, task, fmt.Sprintf("验证完成, 耗时%.2fs", duration), result)
 }
 
 // executeActiveFingerprintValidateTask 执行主动指纹验证任务
 func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task *scheduler.TaskInfo, taskConfig map[string]interface{}, startTime time.Time) {
-	w.updateTaskStatus(ctx, task.TaskId, scheduler.TaskStatusStarted, "正在验证主动指纹...")
+	w.updateTaskStatus(ctx, task, scheduler.TaskStatusStarted, "正在验证主动指纹...")
 
 	url, _ := taskConfig["url"].(string)
 	activeFpId, _ := taskConfig["activeFpId"].(string)
 
 	if url == "" || activeFpId == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "URL或主动指纹ID为空"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "URL或主动指纹ID为空"})
 		return
 	}
 
 	// 1. 按ID直查主动指纹配置
 	if w.mongoDB == nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "mongo direct connection unavailable"})
 		return
 	}
 	activeFp, err := model.NewActiveFingerprintModel(w.mongoDB).FindById(ctx, activeFpId)
 	if err != nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "查询主动指纹失败: " + err.Error()})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "查询主动指纹失败: " + err.Error()})
 		return
 	}
 	if activeFp == nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "主动指纹不存在"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "主动指纹不存在"})
 		return
 	}
 
 	// 2. 获取同名启用的被动指纹（用于匹配规则，与扫描时config_loader的关联语义一致）
 	passiveFps, err := model.NewFingerprintModel(w.mongoDB).FindByNames(ctx, []string{activeFp.Name})
 	if err != nil {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "获取被动指纹列表失败: " + err.Error()})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "获取被动指纹列表失败: " + err.Error()})
 		return
 	}
 	if len(passiveFps) == 0 {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{
 			Error: fmt.Sprintf("未找到同名被动指纹 '%s'", activeFp.Name),
 		})
 		return
@@ -176,7 +176,7 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 	// 3. 解析基础URL
 	baseUrl, scheme := extractBaseUrlWithSchemeForWorker(url)
 	if baseUrl == "" {
-		w.saveFingerprintValidationResult(ctx, task.TaskId, "", FingerprintValidationResult{Error: "无效的URL格式"})
+		w.saveFingerprintValidationResult(ctx, task, "", FingerprintValidationResult{Error: "无效的URL格式"})
 		return
 	}
 
@@ -265,11 +265,15 @@ func (w *Worker) executeActiveFingerprintValidateTask(ctx context.Context, task 
 		PathResults: pathResults,
 	}
 
-	w.saveFingerprintValidationResult(ctx, task.TaskId, fmt.Sprintf("主动指纹验证完成, 耗时%.2fs", duration), result)
+	w.saveFingerprintValidationResult(ctx, task, fmt.Sprintf("主动指纹验证完成, 耗时%.2fs", duration), result)
 }
 
 // saveFingerprintValidationResult 保存指纹验证结果（终态更新，包含worker字段，不应再调用updateTaskStatus覆盖）
-func (w *Worker) saveFingerprintValidationResult(ctx context.Context, taskId, msg string, result FingerprintValidationResult) {
+func (w *Worker) saveFingerprintValidationResult(ctx context.Context, task *scheduler.TaskInfo, msg string, result FingerprintValidationResult) {
+	if task == nil {
+		return
+	}
+	taskId := task.TaskId
 	resultData := map[string]interface{}{
 		"taskId":     taskId,
 		"status":     "SUCCESS",
@@ -293,10 +297,11 @@ func (w *Worker) saveFingerprintValidationResult(ctx context.Context, taskId, ms
 	}
 	// 终态更新：包含 state、worker、result（JSON），不再由后续 updateTaskStatus 覆盖
 	_, err = w.httpClient.UpdateTask(ctx, &TaskUpdateReq{
-		TaskId: taskId,
-		State:  status,
-		Worker: w.config.Name,
-		Result: string(resultJson),
+		TaskId:     taskId,
+		LeaseToken: task.LeaseToken,
+		State:      status,
+		Worker:     w.workerName,
+		Result:     string(resultJson),
 	})
 	if err != nil {
 		w.taskLog(taskId, LevelError, "Failed to save fingerprint validation result: %v", err)

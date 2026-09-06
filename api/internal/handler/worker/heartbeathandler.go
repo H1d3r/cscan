@@ -11,6 +11,7 @@ import (
 	"cscan/api/internal/logic"
 	"cscan/api/internal/svc"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest/httpx"
 )
@@ -20,6 +21,8 @@ import (
 // WorkerHeartbeatReq 心跳请求
 type WorkerHeartbeatReq struct {
 	WorkerName         string  `json:"workerName"`
+	InstanceID         string  `json:"instanceId"`
+	TaskProtocol       int     `json:"taskProtocol"`
 	IP                 string  `json:"ip"`
 	CpuLoad            float64 `json:"cpuLoad"`
 	MemUsed            float64 `json:"memUsed"`
@@ -57,13 +60,22 @@ func WorkerHeartbeatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.OkJson(w, &WorkerHeartbeatResp{Code: 400, Msg: "workerName不能为空"})
 			return
 		}
+		v1Identity := validWorkerTaskIdentity(req.InstanceID, req.TaskProtocol)
+		if !v1Identity && (req.InstanceID != "" || req.TaskProtocol != 0) {
+			httpx.OkJson(w, &WorkerHeartbeatResp{Code: http.StatusUpgradeRequired, Msg: "leased-task-v1 instance identity required"})
+			return
+		}
 
 		ctx := r.Context()
 
-		// 直接更新 Worker 状态到 Redis
+		// Retain the logical-name heartbeat for UI compatibility and publish the
+		// immutable instance key used for execution ownership/recovery.
 		workerKey := "cscan:worker:" + req.WorkerName
+		instanceKey := "cscan:worker:instance:" + req.InstanceID
 		workerData := map[string]interface{}{
 			"workerName":         req.WorkerName,
+			"instanceId":         req.InstanceID,
+			"taskProtocol":       req.TaskProtocol,
 			"ip":                 req.IP,
 			"cpuLoad":            req.CpuLoad,
 			"memUsed":            req.MemUsed,
@@ -74,11 +86,21 @@ func WorkerHeartbeatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			"updateTime":         time.Now().Format("2006-01-02 15:04:05"),
 			"status":             "online",
 		}
-		workerJson, _ := json.Marshal(workerData)
-		svcCtx.RedisClient.Set(ctx, workerKey, workerJson, 60*time.Second)
-
-		// 添加到 Worker 集合
-		svcCtx.RedisClient.SAdd(ctx, "cscan:workers", req.WorkerName)
+		workerJSON, err := json.Marshal(workerData)
+		if err != nil {
+			httpx.OkJson(w, &WorkerHeartbeatResp{Code: 500, Msg: "心跳序列化失败"})
+			return
+		}
+		pipe := svcCtx.RedisClient.TxPipeline()
+		pipe.Set(ctx, workerKey, workerJSON, 60*time.Second)
+		if v1Identity {
+			pipe.Set(ctx, instanceKey, workerJSON, 60*time.Second)
+		}
+		pipe.SAdd(ctx, "cscan:workers", req.WorkerName)
+		if _, err := pipe.Exec(ctx); err != nil {
+			httpx.OkJson(w, &WorkerHeartbeatResp{Code: 500, Msg: "心跳写入失败"})
+			return
+		}
 
 		// 检查控制命令
 		controlKey := "cscan:worker:control:" + req.WorkerName
@@ -120,7 +142,9 @@ func WorkerHeartbeatHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 
 // WorkerOfflineReq Worker离线通知请求
 type WorkerOfflineReq struct {
-	WorkerName string `json:"workerName"`
+	WorkerName   string `json:"workerName"`
+	InstanceID   string `json:"instanceId"`
+	TaskProtocol int    `json:"taskProtocol"`
 }
 
 // WorkerOfflineResp Worker离线通知响应
@@ -131,6 +155,33 @@ type WorkerOfflineResp struct {
 }
 
 // ==================== Offline Handler ====================
+
+var compareDeleteWorkerHeartbeatScript = redis.NewScript(`
+	local function ownedByInstance(value)
+		if not value then
+			return false
+		end
+		local decoded = nil
+		pcall(function() decoded = cjson.decode(value) end)
+		return decoded and (decoded.instanceId or '') == ARGV[1] and (decoded.workerName or '') == ARGV[2]
+	end
+
+	local instanceValue = redis.call('GET', KEYS[1])
+	local offlineProven = 0
+	if not instanceValue then
+		offlineProven = 1
+	elseif ownedByInstance(instanceValue) then
+		redis.call('DEL', KEYS[1])
+		offlineProven = 1
+	end
+
+	if ownedByInstance(redis.call('GET', KEYS[2])) then
+		redis.call('DEL', KEYS[2])
+		redis.call('SREM', KEYS[3], ARGV[2])
+		redis.call('DEL', KEYS[4])
+	end
+	return offlineProven
+`)
 
 // WorkerOfflineHandler Worker离线通知接口
 // POST /api/v1/worker/offline
@@ -147,40 +198,43 @@ func WorkerOfflineHandler(svcCtx *svc.ServiceContext) http.HandlerFunc {
 			httpx.OkJson(w, &WorkerOfflineResp{Code: 400, Msg: "workerName不能为空"})
 			return
 		}
+		if !validWorkerTaskIdentity(req.InstanceID, req.TaskProtocol) {
+			httpx.OkJson(w, &WorkerOfflineResp{Code: http.StatusUpgradeRequired, Msg: "leased-task-v1 instance identity required"})
+			return
+		}
 
-		rdb := svcCtx.RedisClient
+		offlineProven, err := compareDeleteWorkerHeartbeatScript.Run(r.Context(), svcCtx.RedisClient, []string{
+			"cscan:worker:instance:" + req.InstanceID,
+			"cscan:worker:" + req.WorkerName,
+			"cscan:workers",
+			"cscan:worker:control:" + req.WorkerName,
+		}, req.InstanceID, req.WorkerName).Int()
+		if err != nil {
+			httpx.OkJson(w, &WorkerOfflineResp{Code: 500, Msg: "offline heartbeat update failed"})
+			return
+		}
 
-		// 删除Worker状态数据
-		workerKey := fmt.Sprintf("cscan:worker:%s", req.WorkerName)
-		rdb.Del(r.Context(), workerKey)
+		logx.Infof("[WorkerOffline] Worker %s instance %s offline (proven=%t)", req.WorkerName, req.InstanceID, offlineProven == 1)
 
-		// 从Worker集合中移除
-		rdb.SRem(r.Context(), "cscan:workers", req.WorkerName)
-
-		// 删除控制命令（如果有）
-		controlKey := fmt.Sprintf("cscan:worker:control:%s", req.WorkerName)
-		rdb.Del(r.Context(), controlKey)
-
-		logx.Infof("[WorkerOffline] Worker %s offline, deleted from Redis", req.WorkerName)
-
-		// 立即恢复该 Worker 处理中的任务（异步执行，避免阻塞 HTTP 响应）
-		// 修复：原同步调用 RecoverWorkerTasks 在循环 MongoDB 操作时可能阻塞超过 Worker 的
-		// 3s HTTP 超时，导致 Worker 发送 RST → API 进程崩溃 → 8888 端口短暂不可用。
-		go func(workerName string) {
-			defer func() {
-				if r := recover(); r != nil {
-					logx.Errorf("[WorkerOffline] panic worker=%s err=%v stack=%s", workerName, r, debug.Stack())
+		// Immediate recovery, when possible, is scoped to the exact process
+		// generation whose instance heartbeat is now absent.
+		if offlineProven == 1 {
+			go func(workerName, instanceID string) {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						logx.Errorf("[WorkerOffline] panic worker=%s instance=%s err=%v stack=%s", workerName, instanceID, recovered, debug.Stack())
+					}
+				}()
+				recoverCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				recoveredTasks, recoverErr := logic.RecoverWorkerInstanceTasks(recoverCtx, svcCtx, workerName, instanceID)
+				if recoverErr != nil {
+					logx.Errorf("[WorkerOffline] Failed to recover tasks for worker %s instance %s: %v", workerName, instanceID, recoverErr)
+				} else if len(recoveredTasks) > 0 {
+					logx.Infof("[WorkerOffline] Worker %s instance %s: recovered %d orphaned tasks", workerName, instanceID, len(recoveredTasks))
 				}
-			}()
-			recoverCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			recoveredTasks, err := logic.RecoverWorkerTasks(recoverCtx, svcCtx, workerName)
-			if err != nil {
-				logx.Errorf("[WorkerOffline] Failed to recover tasks for worker %s: %v", workerName, err)
-			} else if len(recoveredTasks) > 0 {
-				logx.Infof("[WorkerOffline] Worker %s: recovered %d orphaned tasks", workerName, len(recoveredTasks))
-			}
-		}(req.WorkerName)
+			}(req.WorkerName, req.InstanceID)
+		}
 
 		httpx.OkJson(w, &WorkerOfflineResp{
 			Code:    0,
