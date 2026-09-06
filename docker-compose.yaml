@@ -1,8 +1,6 @@
 # CSCAN 一体化部署
-# 零配置启动（默认值部署）：直接 `docker compose up -d` 即可，所有密钥走内置默认值。
-# 生产部署：`cp .env.example .env` 并填入强随机值覆盖默认值。
-# 说明：Mongo / Redis 端口不对外发布，仅 cscan_network 内部可达；
-#       CSCAN_WORKER_KEY 对外暴露面为 API 8888 端口，生产务必覆盖。
+# 启动前必须创建 .env 并为所有凭据设置强随机值：cp .env.example .env。
+# Mongo / Redis 端口不对外发布，仅 cscan_network 内部可达；API 端口仍须由外部访问控制保护。
 
 x-logging: &default-logging
   driver: json-file
@@ -15,7 +13,7 @@ services:
   redis:
     image: registry.cn-hangzhou.aliyuncs.com/txf7/redis:7-alpine
     container_name: cscan_redis
-    command: redis-server --appendonly yes --requirepass ${CSCAN_REDIS_PASSWORD:-cscan_default_redis_pass}
+    command: redis-server --appendonly yes --requirepass ${CSCAN_REDIS_PASSWORD:?CSCAN_REDIS_PASSWORD must be set}
     logging: *default-logging
     volumes:
       - cscan_redis_data:/data
@@ -25,7 +23,7 @@ services:
     networks:
       - cscan_network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${CSCAN_REDIS_PASSWORD:-cscan_default_redis_pass}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${CSCAN_REDIS_PASSWORD:?CSCAN_REDIS_PASSWORD must be set}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -40,8 +38,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - MONGO_INITDB_DATABASE=cscan
-      - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USERNAME:-cscan}
-      - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD:-cscan_default_mongo_pass}
+      - MONGO_INITDB_ROOT_USERNAME=${CSCAN_MONGO_ROOT_USERNAME:?CSCAN_MONGO_ROOT_USERNAME must be set}
+      - MONGO_INITDB_ROOT_PASSWORD=${CSCAN_MONGO_ROOT_PASSWORD:?CSCAN_MONGO_ROOT_PASSWORD must be set}
     restart: unless-stopped
     networks:
       - cscan_network
@@ -58,12 +56,12 @@ services:
     logging: *default-logging
     environment:
       - TZ=Asia/Shanghai
-      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME:-cscan}:${CSCAN_MONGO_ROOT_PASSWORD:-cscan_default_mongo_pass}@mongodb:27017/cscan?authSource=admin
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME:?CSCAN_MONGO_ROOT_USERNAME must be set}:${CSCAN_MONGO_ROOT_PASSWORD:?CSCAN_MONGO_ROOT_PASSWORD must be set}@mongodb:27017/cscan?authSource=admin
       - CSCAN_MONGO_DB=cscan
       - CSCAN_REDIS_HOST=redis:6379
-      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD:-cscan_default_redis_pass}
-      - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET}
-      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY:-cscan_default_worker_key}
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD:?CSCAN_REDIS_PASSWORD must be set}
+      - CSCAN_JWT_SECRET=${CSCAN_JWT_SECRET:?CSCAN_JWT_SECRET must be set}
+      - CSCAN_WORKER_KEY=${CSCAN_WORKER_KEY:?CSCAN_WORKER_KEY must be set}
     volumes:
       - cscan_api_data:/app/data
       - ./log:/app/log
@@ -113,11 +111,11 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - CSCAN_SERVER=http://cscan-api:8888
-      - CSCAN_KEY=${CSCAN_WORKER_KEY:-cscan_default_worker_key}
+      - CSCAN_KEY=${CSCAN_WORKER_KEY:?CSCAN_WORKER_KEY must be set}
       - CSCAN_NAME=cscan-default-worker
-      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME:-cscan}:${CSCAN_MONGO_ROOT_PASSWORD:-cscan_default_mongo_pass}@mongodb:27017/cscan?authSource=admin
+      - CSCAN_MONGO_URI=mongodb://${CSCAN_MONGO_ROOT_USERNAME:?CSCAN_MONGO_ROOT_USERNAME must be set}:${CSCAN_MONGO_ROOT_PASSWORD:?CSCAN_MONGO_ROOT_PASSWORD must be set}@mongodb:27017/cscan?authSource=admin
       - CSCAN_REDIS_ADDR=redis:6379
-      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD:-cscan_default_redis_pass}
+      - CSCAN_REDIS_PASSWORD=${CSCAN_REDIS_PASSWORD:?CSCAN_REDIS_PASSWORD must be set}
     depends_on:
       cscan-api:
         condition: service_healthy

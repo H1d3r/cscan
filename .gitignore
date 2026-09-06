@@ -12,3 +12,4 @@
 .playwright-mcp
 *.exe
 .kiro
+.env

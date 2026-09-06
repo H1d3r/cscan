@@ -51,6 +51,7 @@ git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 
 # Start (zero config, uses built-in default keys)
+cp .env.example .env
 docker compose up -d
 
 # Update to the latest images
@@ -59,6 +60,7 @@ docker compose pull && docker compose up -d
 
 - Access `https://ip:7777`
 - For production deployment, override the built-in default keys: `cp .env.example .env`, fill in strong random values, then run `docker compose up -d`
+- **leased-task-v1 upgrade requirement**: If workers connect directly to Redis, stop all old workers and drain in-flight tasks before enabling the protocol, then upgrade the API and workers together. Do not run a rolling mix of old direct-Redis workers; legacy executions without `instanceId`/lease tokens fail closed during recovery, and no unsafe empty-token bridge is provided.
 
 ## Custom Advanced POC
 

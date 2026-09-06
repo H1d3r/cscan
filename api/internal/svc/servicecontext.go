@@ -31,6 +31,7 @@ type ServiceContext struct {
 	WorkerDefaultKey        string
 	UserModel               *model.UserModel
 	UserTokenModel          *model.UserTokenModel
+	ExecutorTaskModel       *model.ExecutorTaskModel
 	OrganizationModel       *model.OrganizationModel
 	ProfileModel            *model.TaskProfileModel
 	TagMappingModel         *model.TagMappingModel
@@ -96,7 +97,6 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		SetMaxConnIdleTime(30 * time.Second).        // 空闲连接超时
 		SetConnectTimeout(10 * time.Second).         // 连接超时
 		SetServerSelectionTimeout(30 * time.Second). // 服务器选择超时（修复 D2：原 10s，DNS 抖动时易触发连接池被清空）
-		SetSocketTimeout(30 * time.Second).          // Socket超时
 		SetHeartbeatInterval(10 * time.Second).      // 心跳间隔（修复 D2：更快探测到死连接，及时重建连接）
 		SetRetryReads(true).                         // 瞬时故障自动重试（修复 D2）
 		SetRetryWrites(true)                         // 瞬时故障自动重试（修复 D2）
@@ -143,6 +143,7 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		WorkerDefaultKey:        os.Getenv("CSCAN_WORKER_KEY"),
 		UserModel:               model.NewUserModel(mongoDB),
 		UserTokenModel:          model.NewUserTokenModel(mongoDB),
+		ExecutorTaskModel:       model.NewExecutorTaskModel(mongoDB),
 		OrganizationModel:       model.NewOrganizationModel(mongoDB),
 		ProfileModel:            model.NewTaskProfileModel(mongoDB),
 		TagMappingModel:         model.NewTagMappingModel(mongoDB),
@@ -168,6 +169,29 @@ func NewServiceContext(c config.Config) (*ServiceContext, error) {
 		TemplateTags:            []string{},
 		TemplateStats:           map[string]int{},
 		QueryCache:              cache.NewLocalCache(60 * time.Second),
+	}
+
+	// Establish the executor-task natural key before either API or direct
+	// workers can persist pause snapshots. Historical duplicates are merged
+	// deterministically by the migration; any unresolved integrity error blocks
+	// startup instead of leaving snapshot selection nondeterministic.
+	executorMigrationCtx, executorMigrationCancel := context.WithTimeout(context.Background(), 35*time.Minute)
+	err = svcCtx.ExecutorTaskModel.MigrateAndEnsureUniqueIndex(executorMigrationCtx)
+	executorMigrationCancel()
+	if err != nil {
+		return nil, fmt.Errorf("migrate executor task snapshots: %w", err)
+	}
+
+	// Security migration: plaintext PATs written by older versions must not
+	// remain recoverable in MongoDB. This is idempotent and startup-blocking.
+	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	removedPlainTokens, err := svcCtx.UserTokenModel.RemoveLegacyPlainTokens(migrationCtx)
+	migrationCancel()
+	if err != nil {
+		return nil, fmt.Errorf("remove legacy plaintext PATs: %w", err)
+	}
+	if removedPlainTokens > 0 {
+		logx.Infof("[UserToken] removed plaintext from %d legacy PAT records", removedPlainTokens)
 	}
 
 	// 初始化 Docker 服务(可选,失败仅记录告警)
@@ -411,5 +435,8 @@ func (s *ServiceContext) GetCertModel() *model.CertModel {
 }
 
 func (s *ServiceContext) GetExecutorTaskModel() *model.ExecutorTaskModel {
+	if s.ExecutorTaskModel != nil {
+		return s.ExecutorTaskModel
+	}
 	return model.NewExecutorTaskModel(s.MongoDB)
 }

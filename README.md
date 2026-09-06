@@ -51,6 +51,7 @@ git clone https://github.com/tangxiaofeng7/cscan.git
 cd cscan
 
 # 启动（零配置，使用内置默认密钥）
+cp .env.example .env
 docker compose up -d
 
 # 更新镜像
@@ -59,6 +60,7 @@ docker compose pull && docker compose up -d
 
 - 访问 `https://ip:7777`
 - 生产部署请覆盖内置默认密钥：`cp .env.example .env`，填入强随机值后再执行 `docker compose up -d`
+- **leased-task-v1 升级要求**：使用直连 Redis 的 Worker 时，启用该协议前必须先停止所有旧 Worker 并等待在途任务排空，再统一升级 API 和 Worker。不要滚动混用旧版直连 Worker；缺少 `instanceId`/lease token 的旧执行记录会故障安全地拒绝恢复，系统不会提供不安全的空 token 兼容桥。
 
 ## 自定义高级 POC
 
