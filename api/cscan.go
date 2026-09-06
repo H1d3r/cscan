@@ -114,6 +114,9 @@ func main() {
 	// 启动定时任务执行消息订阅
 	go startCronExecuteSubscriber(svcCtx, schedulerSvc.GetScheduler())
 
+	// Repair durable PAUSE/STOP delivery independently of request lifetime.
+	go startControlIntentReconciliation(svcCtx)
+
 	// 启动孤儿任务恢复后台任务（每 5 分钟检查一次）
 	go startOrphanedTaskRecovery(svcCtx)
 
@@ -443,93 +446,106 @@ func createAndPushCronTask(ctx context.Context, svcCtx *svc.ServiceContext, sche
 		subTaskCount = len(batches)
 	}
 
-	// 更新任务状态为 STARTED
-	now := time.Now()
-	taskModel.Update(ctx, newTask.Id.Hex(), map[string]interface{}{
-		"status":         model.TaskStatusPending,
-		"sub_task_count": subTaskCount,
-		"sub_task_done":  0,
-		"start_time":     now,
-	})
-
-	// 保存主任务信息到 Redis
-	taskInfoKey := "cscan:task:info:" + newTaskId
-	taskInfoData, err := json.Marshal(map[string]interface{}{
-		"mainTaskId":     newTask.Id.Hex(),
-		"subTaskCount":   subTaskCount,
-		"batchCount":     len(batches),
-		"enabledModules": enabledModules,
-	})
-	if err != nil {
-		logx.Errorf("Failed to marshal task info for redis: %v", err)
-	} else {
-		svcCtx.RedisClient.Set(ctx, taskInfoKey, taskInfoData, 24*time.Hour)
-	}
-
-	// 从配置中获取指定的 Worker 列表
+	// Build the complete Cron manifest in memory before exposing any child.
 	var workers []string
 	if w, ok := taskConfig["workers"].([]interface{}); ok {
-		for _, v := range w {
-			if s, ok := v.(string); ok {
-				workers = append(workers, s)
+		for _, value := range w {
+			if workerName, ok := value.(string); ok {
+				workers = append(workers, workerName)
 			}
 		}
 	}
-
-	// 为每个批次创建子任务并推送到队列
+	publicationTime := newTask.CreateTime
+	if publicationTime.IsZero() {
+		publicationTime = newTask.Id.Timestamp()
+	}
+	stableCreateTime := publicationTime.Local().Format("2006-01-02 15:04:05")
+	dispatchGeneration := uuid.NewString()
+	schedTasks := make([]*scheduler.TaskInfo, 0, len(batches))
+	definitions := make([]model.ExecutorTask, 0, len(batches))
 	for i, batch := range batches {
-		// 复制配置并替换目标
-		subConfig := make(map[string]interface{})
-		for k, v := range taskConfig {
-			subConfig[k] = v
+		subConfig := make(map[string]interface{}, len(taskConfig)+3)
+		for key, value := range taskConfig {
+			subConfig[key] = value
 		}
 		subConfig["target"] = batch
 		subConfig["subTaskIndex"] = i
 		subConfig["subTaskTotal"] = len(batches)
 		subConfigBytes, err := json.Marshal(subConfig)
 		if err != nil {
-			logx.Errorf("Failed to marshal sub config: %v", err)
-			continue
+			return fmt.Errorf("failed to marshal cron batch %d: %w", i, err)
 		}
-
-		// 生成子任务ID
-		subTaskId := newTaskId
+		subTaskID := newTaskId
 		if len(batches) > 1 {
-			subTaskId = newTaskId + "-" + strconv.Itoa(i)
+			subTaskID = newTaskId + "-" + strconv.Itoa(i)
 		}
-
-		schedTask := &scheduler.TaskInfo{
-			TaskId:     subTaskId,
-			MainTaskId: newTask.Id.Hex(),
-			TaskName:   newTask.Name,
-			Config:     string(subConfigBytes),
-			Priority:   0,
-			Workers:    workers,
-		}
-
-		logx.Infof("Pushing cron sub-task %d/%d: taskId=%s, targets=%d", i+1, len(batches), subTaskId, len(strings.Split(batch, "\n")))
-
-		if err := sched.PushTask(ctx, schedTask); err != nil {
-			logx.Errorf("Failed to push cron task to queue: %v", err)
-			continue
-		}
-
-		// 保存子任务信息到 Redis（多批次时）
-		if len(batches) > 1 {
-			subTaskInfoKey := "cscan:task:info:" + subTaskId
-			subTaskInfoData, err := json.Marshal(map[string]interface{}{
-				"mainTaskId":   newTask.Id.Hex(),
-				"subTaskCount": subTaskCount,
-			})
-			if err != nil {
-				logx.Errorf("Failed to marshal sub task info for redis: %v", err)
-			} else {
-				svcCtx.RedisClient.Set(ctx, subTaskInfoKey, subTaskInfoData, 24*time.Hour)
-			}
-		}
+		schedTasks = append(schedTasks, &scheduler.TaskInfo{
+			TaskId:             subTaskID,
+			MainTaskId:         newTask.Id.Hex(),
+			TaskName:           newTask.Name,
+			Config:             string(subConfigBytes),
+			Priority:           scheduler.PriorityBackground,
+			CreateTime:         stableCreateTime,
+			Workers:            workers,
+			DispatchGeneration: dispatchGeneration,
+		})
+		definitions = append(definitions, model.ExecutorTask{
+			TaskId:             subTaskID,
+			MainTaskId:         newTask.Id.Hex(),
+			TaskName:           newTask.Name,
+			Config:             string(subConfigBytes),
+			Priority:           scheduler.PriorityBackground,
+			DispatchGeneration: dispatchGeneration,
+		})
+	}
+	if err := model.NewTaskDispatchManifestModel(svcCtx.MongoDB).Persist(
+		ctx, newTask.Id.Hex(), dispatchGeneration, model.DispatchIntentInitial, publicationTime, definitions,
+	); err != nil {
+		return fmt.Errorf("failed to persist immutable cron manifest: %w", err)
 	}
 
-	logx.Infof("Cron task created and pushed: taskId=%s, batches=%d, subTaskCount=%d", newTaskId, len(batches), subTaskCount)
+	// Claim the durable ACTIVE generation before exposing any Redis work.
+	now := time.Now()
+	claimed, err := taskModel.ClaimDispatch(ctx, newTask.Id.Hex(), model.TaskStatusCreated,
+		dispatchGeneration, model.DispatchIntentInitial, bson.M{
+			"sub_task_count":       subTaskCount,
+			"sub_task_done":        0,
+			"batch_count":          len(batches),
+			"start_time":           now,
+			"dispatch_create_time": publicationTime,
+		})
+	if err != nil {
+		return fmt.Errorf("failed to claim cron dispatch: %w", err)
+	}
+	newTask.DispatchGeneration = claimed.DispatchGeneration
+	newTask.DispatchIntent = claimed.DispatchIntent
+	newTask.DispatchCreateTime = claimed.DispatchCreateTime
+	newTask.Status = claimed.Status
+
+	if err := svcCtx.GetExecutorTaskModel().ActivateDispatchDefinitions(
+		ctx, newTask.Id.Hex(), dispatchGeneration, publicationTime, definitions,
+	); err != nil {
+		return fmt.Errorf("failed to activate claimed cron dispatch: %w", err)
+	}
+
+	taskInfoData, err := json.Marshal(map[string]interface{}{
+		"mainTaskId":         newTask.Id.Hex(),
+		"subTaskCount":       subTaskCount,
+		"batchCount":         len(batches),
+		"enabledModules":     enabledModules,
+		"dispatchGeneration": dispatchGeneration,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal cron task metadata: %w", err)
+	}
+	svcCtx.RedisClient.Set(ctx, "cscan:task:info:"+newTaskId, taskInfoData, 24*time.Hour)
+
+	markerKey := fmt.Sprintf("cscan:task:publish:%s:%s", newTask.Id.Hex(), dispatchGeneration)
+	if err := sched.PushTaskBatchOnce(ctx, schedTasks, markerKey); err != nil {
+		return fmt.Errorf("failed to atomically publish cron task: %w", err)
+	}
+
+	logx.Infof("Cron task created and pushed: taskId=%s, generation=%s, batches=%d, subTaskCount=%d", newTaskId, dispatchGeneration, len(batches), subTaskCount)
 	return nil
 }
 
@@ -827,27 +843,70 @@ func extractRootDomain(domain string) string {
 	return strings.Join(parts[len(parts)-2:], ".")
 }
 
+const controlIntentCheckInterval = 10 * time.Second
+
+func runControlIntentReconciliationPass(svcCtx *svc.ServiceContext) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	count, err := logic.ReconcileControlIntents(ctx, svcCtx)
+	if err != nil {
+		logx.Errorf("[ControlIntent] Reconciled %d durable control intent(s) with errors: %v", count, err)
+	} else if count > 0 {
+		logx.Infof("[ControlIntent] Reconciled %d durable control intent(s)", count)
+	}
+}
+
+func startControlIntentReconciliation(svcCtx *svc.ServiceContext) {
+	logx.Info("Control intent reconciliation background job started")
+	runControlIntentReconciliationPass(svcCtx)
+	ticker := time.NewTicker(controlIntentCheckInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		runControlIntentReconciliationPass(svcCtx)
+	}
+}
+
 const (
 	orphanedTaskCheckInterval = 5 * time.Minute
 	orphanedTaskThreshold     = 10 * time.Minute
 )
 
+func runOrphanedTaskRecoveryPass(svcCtx *svc.ServiceContext) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if count, err := logic.ReconcilePendingDispatches(ctx, svcCtx); err != nil {
+		logx.Errorf("[DispatchReconcile] Reconciled %d pending dispatch(es) with errors: %v", count, err)
+	} else if count > 0 {
+		logx.Infof("[DispatchReconcile] Reconciled %d pending dispatch(es)", count)
+	}
+	if count, err := logic.ReconcileTaskCompletions(ctx, svcCtx); err != nil {
+		logx.Errorf("[CompletionReconcile] Reconciled %d durable completion(s) with errors: %v", count, err)
+	} else if count > 0 {
+		logx.Infof("[CompletionReconcile] Reconciled %d durable completion(s)", count)
+	}
+	if _, err := logic.RecoverOrphanedByHeartbeat(ctx, svcCtx); err != nil {
+		logx.Errorf("[OrphanedTaskRecovery] Heartbeat recovery failed: %v", err)
+	}
+	if _, err := logic.RecoverOrphanedTasks(ctx, svcCtx, orphanedTaskThreshold); err != nil {
+		logx.Errorf("[OrphanedTaskRecovery] Stale parent recovery failed: %v", err)
+	}
+	if _, err := logic.RecoverStaleMongoTasks(ctx, svcCtx, 30*time.Minute); err != nil {
+		logx.Errorf("[OrphanedTaskRecovery] Mongo fallback recovery failed: %v", err)
+	}
+	logic.CleanupStaleProcessingTasks(ctx, svcCtx, "")
+}
+
 // startOrphanedTaskRecovery 启动孤儿任务恢复后台任务
-// 定期检查并恢复卡住的任务（状态为 STARTED 但长时间没有更新的任务）
+// 启动时立即运行一次，之后每五分钟重试未确认的发布和失联执行。
 func startOrphanedTaskRecovery(svcCtx *svc.ServiceContext) {
 	logx.Info("Orphaned task recovery background job started")
+	runOrphanedTaskRecoveryPass(svcCtx)
 
 	ticker := time.NewTicker(orphanedTaskCheckInterval)
 	defer ticker.Stop()
-
 	for range ticker.C {
-		// 优先通过 Redis 心跳快速检测离线 Worker 的任务
-		logic.RecoverOrphanedByHeartbeat(context.Background(), svcCtx)
-		// 兜底：通过 MongoDB update_time 阈值检测卡住的任务
-		logic.RecoverOrphanedTasks(context.Background(), svcCtx, orphanedTaskThreshold)
-		// MongoDB 兜底恢复：直接查询 STARTED 状态超过 30 分钟未更新的任务
-		logic.RecoverStaleMongoTasks(context.Background(), svcCtx, 30*time.Minute)
-		logic.CleanupStaleProcessingTasks(context.Background(), svcCtx, "")
+		runOrphanedTaskRecoveryPass(svcCtx)
 	}
 }
 

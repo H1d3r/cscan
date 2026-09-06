@@ -11,6 +11,7 @@ import (
 	"cscan/internal/scheduler"
 	"cscan/pkg/utils"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
 	"go.mongodb.org/mongo-driver/bson"
 )
@@ -60,31 +61,102 @@ func (b *TaskBuilder) BuildAndPushSubTasks(task *model.MainTask, taskConfig map[
 		subTaskCount = len(batches)
 	}
 
-	// 4. Update Main Task Status
-	now := time.Now()
-	b.svcCtx.GetMainTaskModel().Update(b.ctx, task.Id.Hex(), bson.M{
-		"status":         model.TaskStatusPending,
-		"sub_task_count": subTaskCount,
-		"sub_task_done":  0,
-		"batch_count":    len(batches),
-		"start_time":     now,
-	})
-
-	// 5. Cache Info to Redis
-	b.cacheTaskInfo(task, subTaskCount, len(batches), enabledModules)
-
-	// 6. Push Sub-Tasks
+	// 4. Prepare and persist the exact batch plan before queue publication.
 	workers := b.extractWorkers(taskConfig)
-
-	b.log.Infof("TaskBuilder: pushing %d batches for task %s", len(batches), task.TaskId)
-
+	dispatchGeneration := uuid.NewString()
+	schedTasks := make([]*scheduler.TaskInfo, 0, len(batches))
+	definitions := make([]model.ExecutorTask, 0, len(batches))
+	publicationTime := task.CreateTime
+	if publicationTime.IsZero() && !task.Id.IsZero() {
+		publicationTime = task.Id.Timestamp()
+	}
+	if publicationTime.IsZero() {
+		publicationTime = time.Now()
+	}
+	stableCreateTime := publicationTime.Local().Format("2006-01-02 15:04:05")
 	for i, batch := range batches {
-		if err := b.pushSingleBatch(task, taskConfig, batch, i, len(batches), workers); err != nil {
-			b.log.Errorf("Failed to push batch %d: %v", i, err)
-			// Continue pushing other batches
+		subConfig := make(map[string]interface{}, len(taskConfig)+3)
+		for key, value := range taskConfig {
+			subConfig[key] = value
 		}
+		subConfig["target"] = batch
+		subConfig["subTaskIndex"] = i
+		subConfig["subTaskTotal"] = len(batches)
+		configBytes, err := json.Marshal(subConfig)
+		if err != nil {
+			return 0, fmt.Errorf("marshal sub-task %d config: %w", i, err)
+		}
+		subTaskID := task.TaskId
+		if len(batches) > 1 {
+			subTaskID = fmt.Sprintf("%s-%d", task.TaskId, i)
+		}
+		schedTask := &scheduler.TaskInfo{
+			TaskId:             subTaskID,
+			MainTaskId:         task.Id.Hex(),
+			TaskName:           task.Name,
+			Config:             string(configBytes),
+			Priority:           b.Priority,
+			CreateTime:         stableCreateTime,
+			Workers:            workers,
+			DispatchGeneration: dispatchGeneration,
+		}
+		schedTasks = append(schedTasks, schedTask)
+		definitions = append(definitions, model.ExecutorTask{
+			TaskId:             subTaskID,
+			MainTaskId:         task.Id.Hex(),
+			TaskName:           task.Name,
+			Config:             string(configBytes),
+			Priority:           b.Priority,
+			DispatchGeneration: dispatchGeneration,
+		})
+	}
+	if err := model.NewTaskDispatchManifestModel(b.svcCtx.MongoDB).Persist(
+		b.ctx, task.Id.Hex(), dispatchGeneration, model.DispatchIntentInitial, publicationTime, definitions,
+	); err != nil {
+		return 0, fmt.Errorf("persist immutable batch plan: %w", err)
 	}
 
+	// The durable parent claim is the publication linearization point. Redis may
+	// fail ambiguously afterwards; periodic reconciliation republishes only this
+	// still-active PENDING generation from the executor manifest.
+	now := time.Now()
+	claimed, err := b.svcCtx.GetMainTaskModel().ClaimDispatch(
+		b.ctx,
+		task.Id.Hex(),
+		task.Status,
+		dispatchGeneration,
+		model.DispatchIntentInitial,
+		bson.M{
+			"sub_task_count":       subTaskCount,
+			"sub_task_done":        0,
+			"batch_count":          len(batches),
+			"start_time":           now,
+			"dispatch_create_time": publicationTime,
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("claim durable task dispatch: %w", err)
+	}
+	task.DispatchGeneration = claimed.DispatchGeneration
+	task.DispatchIntent = claimed.DispatchIntent
+	task.DispatchCreateTime = claimed.DispatchCreateTime
+	task.Status = claimed.Status
+
+	// Only the CAS winner may activate the shared executor snapshot rows. If
+	// activation is interrupted, the PENDING reconciler repairs it from the
+	// immutable generation manifest before republishing.
+	if err := b.svcCtx.GetExecutorTaskModel().ActivateDispatchDefinitions(
+		b.ctx, task.Id.Hex(), dispatchGeneration, publicationTime, definitions,
+	); err != nil {
+		return 0, fmt.Errorf("activate claimed batch dispatch: %w", err)
+	}
+
+	b.cacheTaskInfo(task, subTaskCount, len(batches), enabledModules)
+	b.log.Infof("TaskBuilder: publishing %d batches for task %s generation %s", len(batches), task.TaskId, dispatchGeneration)
+	markerKey := fmt.Sprintf("cscan:task:publish:%s:%s", task.Id.Hex(), dispatchGeneration)
+	if err := b.svcCtx.Scheduler.PushTaskBatchOnce(b.ctx, schedTasks, markerKey); err != nil {
+		return 0, fmt.Errorf("publish task batch: %w", err)
+	}
 	return len(batches), nil
 }
 
@@ -108,12 +180,13 @@ func (b *TaskBuilder) pushSingleBatch(task *model.MainTask, baseConfig map[strin
 	}
 
 	schedTask := &scheduler.TaskInfo{
-		TaskId:     subTaskId,
-		MainTaskId: task.Id.Hex(),
-		TaskName:   task.Name,
-		Config:      string(configBytes),
-		Priority:    b.Priority,
-		Workers:     workers,
+		TaskId:             subTaskId,
+		MainTaskId:         task.Id.Hex(),
+		TaskName:           task.Name,
+		Config:             string(configBytes),
+		Priority:           b.Priority,
+		Workers:            workers,
+		DispatchGeneration: task.DispatchGeneration,
 	}
 
 	return b.svcCtx.Scheduler.PushTask(b.ctx, schedTask)
@@ -122,10 +195,11 @@ func (b *TaskBuilder) pushSingleBatch(task *model.MainTask, baseConfig map[strin
 func (b *TaskBuilder) cacheTaskInfo(task *model.MainTask, subTaskCount, batchCount, modules int) {
 	key := fmt.Sprintf("cscan:task:info:%s", task.TaskId)
 	data := map[string]interface{}{
-		"mainTaskId":     task.Id.Hex(),
-		"subTaskCount":   subTaskCount,
-		"batchCount":     batchCount,
-		"enabledModules": modules,
+		"mainTaskId":         task.Id.Hex(),
+		"subTaskCount":       subTaskCount,
+		"batchCount":         batchCount,
+		"enabledModules":     modules,
+		"dispatchGeneration": task.DispatchGeneration,
 	}
 	bytes, _ := json.Marshal(data)
 	b.svcCtx.RedisClient.Set(b.ctx, key, bytes, 24*time.Hour)

@@ -57,6 +57,9 @@ type TaskPhaseSummary struct {
 	VulnerabilityConclusion string            `bson:"vulnerability_conclusion,omitempty" json:"vulnerabilityConclusion,omitempty"`
 	ResultPrefix            string            `bson:"result_prefix,omitempty" json:"-"`
 	Weight                  int               `bson:"weight,omitempty" json:"weight,omitempty"`
+	// LeaseGeneration is a one-way, domain-separated hash of the Redis lease.
+	// It is retained for audit correlation without persisting a bearer token.
+	LeaseGeneration string `bson:"lease_generation,omitempty" json:"-"`
 }
 
 // TaskScanSummary is optional so historical task documents require no migration.
@@ -89,18 +92,29 @@ const (
 	TaskStatusLegacyCompleted = "COMPLETED"
 )
 
-// IsTerminalTaskStatus reports whether a task must reject late phase reports.
-// PAUSED is included because the pause path persists a resumable snapshot and
-// must not be mutated by an in-flight scan callback.
-func IsTerminalTaskStatus(status string) bool {
+// IsRunnableTaskStatus reports whether the active dispatch may still accept
+// worker progress or semantic completion.
+func IsRunnableTaskStatus(status string) bool {
+	return status == TaskStatusPending || status == TaskStatusStarted
+}
+
+// IsSemanticTerminalTaskStatus reports only scan-summary terminal outcomes.
+// Parent controls are deliberately excluded so PAUSE/STOP remain worker fences.
+func IsSemanticTerminalTaskStatus(status string) bool {
 	switch status {
-	case TaskStatusSuccess, TaskStatusPartial, TaskStatusFailure,
-		TaskStatusStopped, TaskStatusRevoked, TaskStatusPaused,
-		TaskStatusLegacyCompleted:
+	case TaskStatusSuccess, TaskStatusPartial, TaskStatusFailure, TaskStatusLegacyCompleted:
 		return true
 	default:
 		return false
 	}
+}
+
+// IsTerminalTaskStatus reports whether a task must reject late phase reports.
+// PAUSED is included because the pause path persists a resumable snapshot and
+// must not be mutated by an in-flight scan callback.
+func IsTerminalTaskStatus(status string) bool {
+	return IsSemanticTerminalTaskStatus(status) || status == TaskStatusStopped ||
+		status == TaskStatusRevoked || status == TaskStatusPaused
 }
 
 func terminalTaskStatuses() bson.A {
@@ -280,27 +294,53 @@ func AppendCoverageHint(result string, summary TaskScanSummary) string {
 	return result + " Coverage:" + hint
 }
 
+// TaskControlIntent is the durable parent-level request to stop or pause one
+// exact dispatch generation. Redis delivery is reconstructible from this
+// embedded intent and is never the source of truth.
+type TaskControlIntent struct {
+	IntentID             string     `bson:"intent_id" json:"intentId"`
+	Action               string     `bson:"action" json:"action"`
+	DispatchGeneration   string     `bson:"dispatch_generation" json:"dispatchGeneration"`
+	CreatedTime          time.Time  `bson:"created_time" json:"createdTime"`
+	ReconcileAttemptTime *time.Time `bson:"reconcile_attempt_time,omitempty" json:"-"`
+}
+
+// TaskCompletionReconciliation is durable generation-scoped ownership of
+// semantic finalization and exact child lease cleanup. It contains no bearer
+// credentials; Redis lease tokens are recovered only through atomic snapshots.
+type TaskCompletionReconciliation struct {
+	DispatchGeneration   string     `bson:"dispatch_generation" json:"dispatchGeneration"`
+	UpdatedTime          time.Time  `bson:"updated_time" json:"updatedTime"`
+	ReconcileAttemptTime *time.Time `bson:"reconcile_attempt_time,omitempty" json:"-"`
+}
+
 type MainTask struct {
-	Id          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TaskId      string             `bson:"task_id" json:"taskId"`
-	Name        string             `bson:"name" json:"name"`
-	Target      string             `bson:"target" json:"target"`
-	ProfileId   string             `bson:"profile_id" json:"profileId"`
-	ProfileName string             `bson:"profile_name" json:"profileName"`
-	OrgId       string             `bson:"org_id,omitempty" json:"orgId"`
-	Tags        []string           `bson:"tags,omitempty" json:"tags"` // 任务标签
-	Status      string             `bson:"status" json:"status"`
-	Progress    int                `bson:"progress" json:"progress"`
-	Result      string             `bson:"result" json:"result"`
-	IsCron      bool               `bson:"is_cron" json:"isCron"`
-	CronRule    string             `bson:"cron_rule" json:"cronRule"`
-	CronStatus  string             `bson:"cron_status" json:"cronStatus"`
-	NotifyId    string             `bson:"notify_id" json:"notifyId"`
-	CreateTime  time.Time          `bson:"create_time" json:"createTime"`
-	UpdateTime  time.Time          `bson:"update_time" json:"updateTime"`
-	StartTime   *time.Time         `bson:"start_time" json:"startTime"`
-	EndTime     *time.Time         `bson:"end_time" json:"endTime"`
-	CreatedBy   string             `bson:"created_by,omitempty" json:"createdBy,omitempty"` // 任务创建者用户ID
+	Id                           primitive.ObjectID            `bson:"_id,omitempty" json:"id"`
+	TaskId                       string                        `bson:"task_id" json:"taskId"`
+	Name                         string                        `bson:"name" json:"name"`
+	Target                       string                        `bson:"target" json:"target"`
+	ProfileId                    string                        `bson:"profile_id" json:"profileId"`
+	ProfileName                  string                        `bson:"profile_name" json:"profileName"`
+	OrgId                        string                        `bson:"org_id,omitempty" json:"orgId"`
+	Tags                         []string                      `bson:"tags,omitempty" json:"tags"` // 任务标签
+	Status                       string                        `bson:"status" json:"status"`
+	DispatchGeneration           string                        `bson:"dispatch_generation,omitempty" json:"dispatchGeneration,omitempty"`
+	DispatchIntent               string                        `bson:"dispatch_intent,omitempty" json:"dispatchIntent,omitempty"`
+	DispatchCreateTime           *time.Time                    `bson:"dispatch_create_time,omitempty" json:"dispatchCreateTime,omitempty"`
+	DispatchReconcileAttemptTime *time.Time                    `bson:"dispatch_reconcile_attempt_time,omitempty" json:"-"`
+	ControlIntent                *TaskControlIntent            `bson:"control_intent,omitempty" json:"controlIntent,omitempty"`
+	CompletionReconciliation     *TaskCompletionReconciliation `bson:"completion_reconciliation,omitempty" json:"-"`
+	Progress                     int                           `bson:"progress" json:"progress"`
+	Result                       string                        `bson:"result" json:"result"`
+	IsCron                       bool                          `bson:"is_cron" json:"isCron"`
+	CronRule                     string                        `bson:"cron_rule" json:"cronRule"`
+	CronStatus                   string                        `bson:"cron_status" json:"cronStatus"`
+	NotifyId                     string                        `bson:"notify_id" json:"notifyId"`
+	CreateTime                   time.Time                     `bson:"create_time" json:"createTime"`
+	UpdateTime                   time.Time                     `bson:"update_time" json:"updateTime"`
+	StartTime                    *time.Time                    `bson:"start_time" json:"startTime"`
+	EndTime                      *time.Time                    `bson:"end_time" json:"endTime"`
+	CreatedBy                    string                        `bson:"created_by,omitempty" json:"createdBy,omitempty"` // 任务创建者用户ID
 	// 任务进度保存（用于暂停/继续）
 	TaskState    string `bson:"task_state" json:"taskState"`       // 任务执行状态JSON（保存已完成的阶段和数据）
 	Config       string `bson:"config" json:"config"`              // 任务配置JSON
@@ -313,17 +353,29 @@ type MainTask struct {
 }
 
 type ExecutorTask struct {
-	Id         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TaskId     string             `bson:"task_id" json:"taskId"`
-	MainTaskId string             `bson:"main_task_id" json:"mainTaskId"`
-	TaskName   string             `bson:"task_name" json:"taskName"`
-	Config     string             `bson:"config" json:"config"`
-	Status     string             `bson:"status" json:"status"`
-	Worker     string             `bson:"worker" json:"worker"`
-	Result     string             `bson:"result" json:"result"`
-	CreateTime time.Time          `bson:"create_time" json:"createTime"`
-	StartTime  *time.Time         `bson:"start_time" json:"startTime"`
-	EndTime    *time.Time         `bson:"end_time" json:"endTime"`
+	Id                      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	TaskId                  string             `bson:"task_id" json:"taskId"`
+	MainTaskId              string             `bson:"main_task_id" json:"mainTaskId"`
+	TaskName                string             `bson:"task_name" json:"taskName"`
+	Config                  string             `bson:"config" json:"config"`
+	Priority                int                `bson:"priority,omitempty" json:"priority,omitempty"`
+	DispatchGeneration      string             `bson:"dispatch_generation,omitempty" json:"dispatchGeneration,omitempty"`
+	DispatchCreateTime      *time.Time         `bson:"dispatch_create_time,omitempty" json:"dispatchCreateTime,omitempty"`
+	Status                  string             `bson:"status" json:"status"`
+	Worker                  string             `bson:"worker" json:"worker"`
+	Result                  string             `bson:"result" json:"result"`
+	TaskState               string             `bson:"task_state,omitempty" json:"taskState,omitempty"`
+	PauseLeaseGeneration    string             `bson:"pause_lease_generation,omitempty" json:"-"`
+	PauseWorker             string             `bson:"pause_worker,omitempty" json:"pauseWorker,omitempty"`
+	PauseInstanceID         string             `bson:"pause_instance_id,omitempty" json:"pauseInstanceId,omitempty"`
+	PauseTaskProtocol       int                `bson:"pause_task_protocol,omitempty" json:"pauseTaskProtocol,omitempty"`
+	PausePhase              string             `bson:"pause_phase,omitempty" json:"pausePhase,omitempty"`
+	PauseCommitTime         *time.Time         `bson:"pause_commit_time,omitempty" json:"pauseCommitTime,omitempty"`
+	PauseDispatchGeneration string             `bson:"pause_dispatch_generation,omitempty" json:"pauseDispatchGeneration,omitempty"`
+	CreateTime              time.Time          `bson:"create_time" json:"createTime"`
+	UpdateTime              time.Time          `bson:"update_time,omitempty" json:"updateTime,omitempty"`
+	StartTime               *time.Time         `bson:"start_time" json:"startTime"`
+	EndTime                 *time.Time         `bson:"end_time" json:"endTime"`
 }
 
 type TaskProfile struct {
@@ -357,6 +409,24 @@ func NewMainTaskModel(db *mongo.Database) *MainTaskModel {
 		{Keys: bson.D{{Key: "update_time", Value: -1}}},
 		// 复合索引：status + update_time（按状态筛选并按更新时间排序）
 		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "update_time", Value: -1}}},
+		// Durable reconciliation scans rotate by their owner-scoped attempt cursor,
+		// then use owner time and _id as deterministic fairness tie-breakers.
+		{Keys: bson.D{
+			{Key: "completion_reconciliation.reconcile_attempt_time", Value: 1},
+			{Key: "completion_reconciliation.updated_time", Value: 1},
+			{Key: "_id", Value: 1},
+		}},
+		{Keys: bson.D{
+			{Key: "control_intent.reconcile_attempt_time", Value: 1},
+			{Key: "control_intent.created_time", Value: 1},
+			{Key: "_id", Value: 1},
+		}},
+		{Keys: bson.D{
+			{Key: "status", Value: 1},
+			{Key: "dispatch_reconcile_attempt_time", Value: 1},
+			{Key: "dispatch_create_time", Value: 1},
+			{Key: "_id", Value: 1},
+		}},
 	}
 	if err := ensureIndexes(coll, indexes); err != nil {
 		logx.Errorf("[MainTaskModel] create indexes failed for %s: %v", coll.Name(), err)
@@ -861,9 +931,7 @@ type ExecutorTaskModel struct {
 }
 
 func NewExecutorTaskModel(db *mongo.Database) *ExecutorTaskModel {
-	return &ExecutorTaskModel{
-		coll: db.Collection("executor_task"),
-	}
+	return &ExecutorTaskModel{coll: db.Collection("executor_task")}
 }
 
 func (m *ExecutorTaskModel) Insert(ctx context.Context, doc *ExecutorTask) error {
@@ -871,9 +939,91 @@ func (m *ExecutorTaskModel) Insert(ctx context.Context, doc *ExecutorTask) error
 		doc.Id = primitive.NewObjectID()
 	}
 	doc.CreateTime = time.Now()
+	doc.UpdateTime = doc.CreateTime
 	doc.Status = TaskStatusPending
 	_, err := m.coll.InsertOne(ctx, doc)
 	return err
+}
+
+// UpsertTaskState atomically persists one sub-task's resumable pause snapshot.
+func (m *ExecutorTaskModel) UpsertTaskState(ctx context.Context, mainTaskId, taskId, taskState string) error {
+	if mainTaskId == "" {
+		return errors.New("executor main task id cannot be empty")
+	}
+	if taskId == "" {
+		return errors.New("executor task id cannot be empty")
+	}
+	if taskState == "" {
+		return errors.New("executor task state cannot be empty")
+	}
+	if !isValidExecutorTaskState(taskState) {
+		return errors.New("executor task state must be valid JSON")
+	}
+
+	now := time.Now()
+	_, err := m.coll.UpdateOne(
+		ctx,
+		bson.M{"main_task_id": mainTaskId, "task_id": taskId},
+		bson.M{
+			"$set": bson.M{
+				"task_state":  taskState,
+				"status":      TaskStatusPaused,
+				"update_time": now,
+			},
+			"$setOnInsert": bson.M{
+				"_id":          primitive.NewObjectID(),
+				"main_task_id": mainTaskId,
+				"task_id":      taskId,
+				"create_time":  now,
+			},
+		},
+		options.Update().SetUpsert(true),
+	)
+	return err
+}
+
+// FindTaskState returns the resumable snapshot for one sub-task.
+func (m *ExecutorTaskModel) FindTaskState(ctx context.Context, mainTaskId, taskId string) (string, error) {
+	var doc struct {
+		TaskState string `bson:"task_state"`
+	}
+	err := m.coll.FindOne(
+		ctx,
+		bson.M{"main_task_id": mainTaskId, "task_id": taskId},
+		options.FindOne().SetProjection(bson.M{"task_state": 1}),
+	).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return "", nil
+	}
+	return doc.TaskState, err
+}
+
+// FindTaskStatesByMainTaskId returns resumable snapshots keyed by sub-task ID.
+func (m *ExecutorTaskModel) FindTaskStatesByMainTaskId(ctx context.Context, mainTaskId string) (map[string]string, error) {
+	opts := options.Find().SetProjection(bson.M{"task_id": 1, "task_state": 1})
+	cursor, err := m.coll.Find(ctx, bson.M{
+		"main_task_id": mainTaskId,
+		"task_state":   bson.M{"$exists": true, "$ne": ""},
+	}, opts)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []struct {
+		TaskId    string `bson:"task_id"`
+		TaskState string `bson:"task_state"`
+	}
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, err
+	}
+	states := make(map[string]string, len(docs))
+	for _, doc := range docs {
+		if doc.TaskId != "" && doc.TaskState != "" {
+			states[doc.TaskId] = doc.TaskState
+		}
+	}
+	return states, nil
 }
 
 // UpdateByTaskId 按 task_id 更新执行任务字段（Worker 直连 MongoDB 写回状态/结果）
@@ -921,9 +1071,18 @@ func (m *ExecutorTaskModel) FindByMainTaskId(ctx context.Context, mainTaskId str
 	return docs, nil
 }
 
-// DeleteByMainTaskId deletes all executor tasks for a given main task
-func (m *ExecutorTaskModel) DeleteByMainTaskId(ctx context.Context, mainTaskId string) (int64, error) {
-	result, err := m.coll.DeleteMany(ctx, bson.M{"main_task_id": mainTaskId})
+// DeleteByMainTaskId deletes executor tasks for one or more historical main-task identifiers.
+func (m *ExecutorTaskModel) DeleteByMainTaskId(ctx context.Context, mainTaskIds ...string) (int64, error) {
+	ids := make([]string, 0, len(mainTaskIds))
+	for _, id := range mainTaskIds {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result, err := m.coll.DeleteMany(ctx, bson.M{"main_task_id": bson.M{"$in": ids}})
 	if err != nil {
 		return 0, err
 	}

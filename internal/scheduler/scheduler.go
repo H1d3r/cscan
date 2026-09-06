@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -25,6 +24,7 @@ const (
 	TaskStatusPartial = "PARTIAL"
 	TaskStatusFailure = "FAILURE"
 	TaskStatusRevoked = "REVOKED"
+	TaskStatusStopped = "STOPPED"
 )
 
 // PriorityQueueMetrics 优先级队列性能指标
@@ -88,13 +88,16 @@ func (m *PriorityQueueMetrics) GetStats() map[string]interface{} {
 
 // TaskInfo 任务信息
 type TaskInfo struct {
-	TaskId     string   `json:"taskId"`
-	MainTaskId string   `json:"mainTaskId"`
-	TaskName   string   `json:"taskName"`
-	Config     string   `json:"config"`
-	Priority   int      `json:"priority"`
-	CreateTime string   `json:"createTime"`
-	Workers    []string `json:"workers,omitempty"` // 指定执行任务的 Worker 列表，为空表示任意 Worker
+	TaskId             string   `json:"taskId"`
+	MainTaskId         string   `json:"mainTaskId"`
+	TaskName           string   `json:"taskName"`
+	Config             string   `json:"config"`
+	Priority           int      `json:"priority"`
+	CreateTime         string   `json:"createTime"`
+	Workers            []string `json:"workers,omitempty"` // 指定执行任务的 Worker 列表，为空表示任意 Worker
+	DispatchGeneration string   `json:"dispatchGeneration,omitempty"`
+	LeaseToken         string   `json:"-"` // 单次 pop 所有权令牌，不得写回队列 payload
+	RecoveryInstanceID string   `json:"-"` // recovery-only owner guard; never serialized into queue payloads
 }
 
 // WorkerLoad Worker负载信息
@@ -309,180 +312,6 @@ func BucketPriorityFromWorker(workerPriority int) int {
 	}
 }
 
-// atomicPopTaskScript 默认路径（非分桶）原子弹出 Lua 脚本
-// 与 checktasklogic.go 的 atomicPopTaskScript 保持一致：
-//  1. ZPOPMIN 从队列弹出
-//  2. pcall 解析 JSON，失败时移入 cscan:task:deadletter 死信队列
-//  3. SADD 加入 processing 集合
-//  4. SET taskInfo（24h TTL，供 TaskRecoveryManager 恢复读取）
-//  5. SET execution info（1h TTL）
-//
-// 修复 C-01：原默认路径脚本不持久化 taskInfo/execution，导致恢复链路断裂、任务永久丢失
-// 修复 C6：死信 PUBLISH 移出原子 Lua,避免订阅消费慢或缓冲满时阻塞整个 pop 事务。
-//
-//	Lua 仅做 ZADD 死信并返回 "__DL__" 前缀的哨兵字符串,由调用方在 Lua 返回后再 PUBLISH。
-var atomicPopTaskScript = redis.NewScript(`
-	local queueKey = KEYS[1]
-	local processingKey = KEYS[2]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	local result = redis.call('ZPOPMIN', queueKey, 1)
-	if #result == 0 then
-		return nil
-	end
-	local member = result[1]
-	local score = result[2]
-
-	-- 解析任务 JSON 提取 taskId
-	local data = nil
-	pcall(function() data = cjson.decode(member) end)
-	if not data or not data.taskId then
-		-- decode 失败移入死信队列，避免放回后形成无限循环阻塞整个队列
-		redis.call('ZADD', 'cscan:task:deadletter', score, member)
-		-- 返回 "__DL__" 前缀哨兵,由调用方在 Lua 外执行 PUBLISH,避免阻塞 pop 事务
-		return '__DL__' .. member
-	end
-	local taskId = data.taskId
-
-	-- 原子加入 processing 集合
-	redis.call('SADD', processingKey, taskId)
-
-	-- 持久化 taskInfo（24h TTL，供 TaskRecoveryManager 恢复读取）
-	local taskInfoKey = taskInfoPrefix .. taskId
-	redis.call('SET', taskInfoKey, member, 'EX', ttlSeconds)
-
-	-- 记录 execution info（与 TaskRecoveryManager.saveTaskExecutionInfo 格式一致）
-	local execKey = execPrefix .. taskId
-	local execInfo = cjson.encode({
-		taskId = taskId,
-		workerName = workerName,
-		startTime = nowStr,
-		lastUpdate = nowStr,
-		phase = "started",
-		progress = 0,
-		retryCount = 0,
-		maxRetries = 3
-	})
-	redis.call('SET', execKey, execInfo, 'EX', 3600)
-
-	return member
-`)
-
-// atomicPopForWorkerScript 默认路径（非分桶）Worker 优先原子弹出 Lua 脚本
-// 与 atomicPopTaskScript 一致，但先从 Worker 专属队列弹出，再回退到公共队列
-// 修复 C-01：持久化 taskInfo/execution，保证恢复链路完整
-// 修复 C6：死信 PUBLISH 移出原子 Lua,返回 "__DL__" 前缀哨兵,由调用方在 Lua 外 PUBLISH
-var atomicPopForWorkerScript = redis.NewScript(`
-	local workerQueueKey = KEYS[1]
-	local queueKey = KEYS[2]
-	local processingKey = KEYS[3]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	local member = nil
-	local score = 0
-	local result = redis.call('ZPOPMIN', workerQueueKey, 1)
-	if #result > 0 then
-		member = result[1]
-		score = result[2]
-	else
-		result = redis.call('ZPOPMIN', queueKey, 1)
-		if #result > 0 then
-			member = result[1]
-			score = result[2]
-		end
-	end
-	if member == nil then
-		return nil
-	end
-
-	-- 解析任务 JSON 提取 taskId
-	local data = nil
-	pcall(function() data = cjson.decode(member) end)
-	if not data or not data.taskId then
-		redis.call('ZADD', 'cscan:task:deadletter', score, member)
-		return '__DL__' .. member
-	end
-	local taskId = data.taskId
-
-	redis.call('SADD', processingKey, taskId)
-
-	local taskInfoKey = taskInfoPrefix .. taskId
-	redis.call('SET', taskInfoKey, member, 'EX', ttlSeconds)
-
-	local execKey = execPrefix .. taskId
-	local execInfo = cjson.encode({
-		taskId = taskId,
-		workerName = workerName,
-		startTime = nowStr,
-		lastUpdate = nowStr,
-		phase = "started",
-		progress = 0,
-		retryCount = 0,
-		maxRetries = 3
-	})
-	redis.call('SET', execKey, execInfo, 'EX', 3600)
-
-	return member
-`)
-
-// popFromPriorityBuckets 跨分桶原子弹出（p4 Urgent -> p0 Background 顺序）
-// 使用 Lua 脚本按优先级从高到低检查 5 个分桶，从第一个非空分桶弹出
-// 同时原子加入 processing 集合，持久化 taskInfo/execution（对齐 checktasklogic.go 的 atomicPopTaskScript）
-var popFromBucketsScript = redis.NewScript(`
-	local bucketPrefix = KEYS[1]
-	local processingKey = KEYS[2]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	-- 按 p4 -> p0 顺序检查 5 个分桶（urgent 先，background 后）
-	for i = 4, 0, -1 do
-		local bucketKey = bucketPrefix .. ":p" .. i
-		local result = redis.call('ZPOPMIN', bucketKey, 1)
-		if #result > 0 then
-			local member = result[1]
-			local score = result[2]
-			-- 使用 pcall 保护 cjson.decode，避免无效 member 抛错中断脚本
-			local data = nil
-			pcall(function() data = cjson.decode(member) end)
-			if not data or not data.taskId then
-				-- 修复 C2：decode 失败时移入死信队列，避免放回后形成无限循环阻塞整个分桶
-				-- 修复 C6：PUBLISH 移出 Lua,由调用方在 Lua 返回后执行,避免阻塞 pop 事务
-				redis.call('ZADD', 'cscan:task:deadletter', score, member)
-				return '__DL__' .. member
-			end
-			local taskId = data.taskId
-			redis.call('SADD', processingKey, taskId)
-			-- 持久化 taskInfo（24h TTL）
-			redis.call('SET', taskInfoPrefix .. taskId, member, 'EX', ttlSeconds)
-			-- 记录 execution info
-			local execInfo = cjson.encode({
-				taskId = taskId,
-				workerName = workerName,
-				startTime = nowStr,
-				lastUpdate = nowStr,
-				phase = "started",
-				progress = 0,
-				retryCount = 0,
-				maxRetries = 3
-			})
-			redis.call('SET', execPrefix .. taskId, execInfo, 'EX', 3600)
-			return member
-		end
-	end
-	return nil
-`)
-
 // pushToPriorityBucket 推送到指定优先级分桶
 func (s *Scheduler) pushToPriorityBucket(ctx context.Context, task *TaskInfo, score float64) error {
 	data, err := json.Marshal(task)
@@ -496,39 +325,10 @@ func (s *Scheduler) pushToPriorityBucket(ctx context.Context, task *TaskInfo, sc
 	}).Err()
 }
 
-// popFromPriorityBuckets 从优先级分桶弹出任务
+// popFromPriorityBuckets is retained for package compatibility and delegates
+// to the single leased acquisition primitive.
 func (s *Scheduler) popFromPriorityBuckets(ctx context.Context) (*TaskInfo, error) {
-	result, err := popFromBucketsScript.Run(ctx, s.rdb,
-		[]string{"cscan:task:queue", s.processingKey},
-		"cscan:task:info:",
-		"cscan:task:execution:",
-		"", // PopTask 无 worker 上下文
-		86400,
-		time.Now().Format(time.RFC3339),
-	).Result()
-	if err == redis.Nil || result == nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, fmt.Errorf("unexpected script result type: %T", result)
-	}
-
-	// 修复 C6：死信哨兵在 Lua 外执行 PUBLISH,避免阻塞 pop 事务
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.publishDeadLetterAlert(ctx, strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-	return &task, nil
+	return s.popLeasedTask(ctx, "", "", 0, false)
 }
 
 // publishDeadLetterAlert 在 pop 脚本外执行死信告警 PUBLISH。
@@ -553,59 +353,7 @@ func (s *Scheduler) PushTask(ctx context.Context, task *TaskInfo) error {
 	defer func() {
 		s.metrics.RecordPush(time.Since(startTime))
 	}()
-
-	if task.TaskId == "" {
-		task.TaskId = uuid.New().String()
-	}
-	now := time.Now()
-	task.CreateTime = now.Local().Format("2006-01-02 15:04:05")
-
-	// 使用统一的优先级分数计算
-	score := s.calculatePriorityScore(task.Priority, now)
-
-	var err error
-	notifyWorkers := false
-
-	// 如果指定了 Workers，推送到每个 Worker 的专属队列（不受分桶影响）
-	// 专属队列任务量小，分桶收益有限，保留原行为
-	if len(task.Workers) > 0 {
-		pipe := s.rdb.Pipeline()
-		for _, workerName := range task.Workers {
-			taskCopy := *task
-			taskCopy.Workers = []string{workerName}
-			data, _ := json.Marshal(taskCopy)
-			workerQueueKey := s.GetWorkerQueueKey(workerName)
-			pipe.ZAdd(ctx, workerQueueKey, redis.Z{
-				Score:  score,
-				Member: string(data),
-			})
-		}
-		_, err = pipe.Exec(ctx)
-		notifyWorkers = err == nil
-	} else if s.enablePriorityBucket.Load() {
-		// 公共队列：分桶路径
-		err = s.pushToPriorityBucket(ctx, task, score)
-		notifyWorkers = err == nil
-	} else {
-		// 默认路径：单 ZSet（保持向后兼容）
-		var data []byte
-		data, err = json.Marshal(task)
-		if err != nil {
-			return fmt.Errorf("marshal task: %w", err)
-		}
-		err = s.rdb.ZAdd(ctx, s.queueKey, redis.Z{
-			Score:  score,
-			Member: string(data),
-		}).Err()
-		notifyWorkers = err == nil
-	}
-
-	// 推送成功后通知等待中的 Worker（Pub/Sub 长轮询唤醒）
-	if notifyWorkers {
-		s.notifyTaskAvailable(ctx)
-	}
-
-	return err
+	return s.publishTaskBatch(ctx, []*TaskInfo{task}, "", true)
 }
 
 // notifyTaskAvailable 通过 Pub/Sub 通知空闲 Worker 有新任务可用
@@ -626,70 +374,12 @@ func (s *Scheduler) PushTaskBatch(ctx context.Context, tasks []*TaskInfo) error 
 
 	startTime := time.Now()
 	defer func() {
-		// 记录每个任务的平均推送时间
 		avgLatency := time.Since(startTime) / time.Duration(len(tasks))
 		for range tasks {
 			s.metrics.RecordPush(avgLatency)
 		}
 	}()
-
-	pipe := s.rdb.Pipeline()
-	baseTime := time.Now()
-
-	for i, task := range tasks {
-		if task.TaskId == "" {
-			task.TaskId = uuid.New().String()
-		}
-		task.CreateTime = baseTime.Local().Format("2006-01-02 15:04:05")
-
-		// 使用统一的优先级分数计算
-		// 同一批次的任务按 i 微秒递增创建时间，保持顺序
-		// 修复：原 float64(i)*0.001 在 UnixMicro（~1.75e15）量级被 float64 ULP（~0.25）吞掉
-		score := s.calculatePriorityScore(task.Priority, baseTime.Add(time.Duration(i)*time.Microsecond))
-
-		// 如果指定了 Workers，推送到每个 Worker 的专属队列
-		if len(task.Workers) > 0 {
-			for _, workerName := range task.Workers {
-				taskCopy := *task
-				taskCopy.Workers = []string{workerName}
-				data, err := json.Marshal(taskCopy)
-				if err != nil {
-					return fmt.Errorf("marshal task for worker %s: %w", workerName, err)
-				}
-				workerQueueKey := s.GetWorkerQueueKey(workerName)
-				pipe.ZAdd(ctx, workerQueueKey, redis.Z{
-					Score:  score,
-					Member: string(data),
-				})
-			}
-		} else if s.enablePriorityBucket.Load() {
-			// 分桶路径：按 task.Priority 路由到对应分桶 ZSet
-			data, err := json.Marshal(task)
-			if err != nil {
-				return fmt.Errorf("marshal task %s: %w", task.TaskId, err)
-			}
-			bucketKey := priorityBucketKey(task.Priority)
-			pipe.ZAdd(ctx, bucketKey, redis.Z{
-				Score:  score,
-				Member: string(data),
-			})
-		} else {
-			data, err := json.Marshal(task)
-			if err != nil {
-				return fmt.Errorf("marshal task %s: %w", task.TaskId, err)
-			}
-			pipe.ZAdd(ctx, s.queueKey, redis.Z{
-				Score:  score,
-				Member: string(data),
-			})
-		}
-	}
-
-	_, err := pipe.Exec(ctx)
-	if err == nil {
-		s.notifyTaskAvailable(ctx)
-	}
-	return err
+	return s.publishTaskBatch(ctx, tasks, "", true)
 }
 
 func (s *Scheduler) PopTask(ctx context.Context) (*TaskInfo, error) {
@@ -697,198 +387,40 @@ func (s *Scheduler) PopTask(ctx context.Context) (*TaskInfo, error) {
 	defer func() {
 		s.metrics.RecordPop(time.Since(startTime))
 	}()
-
-	// 分桶路径：跨 5 个分桶按 P4 -> P0 顺序原子弹出（urgent 先，background 后）
-	if s.enablePriorityBucket.Load() {
-		return s.popFromPriorityBuckets(ctx)
-	}
-
-	// 默认路径：单 ZSet（保持向后兼容）
-	// 修复 C-01：使用与 checktasklogic.go 一致的 atomicPopTaskScript，持久化 taskInfo/execution
-	// 避免恢复链路断裂导致任务永久丢失
-	result, err := atomicPopTaskScript.Run(ctx, s.rdb,
-		[]string{s.queueKey, s.processingKey},
-		"cscan:task:info:",
-		"cscan:task:execution:",
-		"", // 默认路径无 worker 上下文
-		86400,
-		time.Now().Format(time.RFC3339),
-	).Result()
-	if err == redis.Nil || result == nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, fmt.Errorf("unexpected script result type: %T", result)
-	}
-	// 修复 C6：死信哨兵在 Lua 外 PUBLISH
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.publishDeadLetterAlert(ctx, strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-
-	return &task, nil
+	return s.popLeasedTask(ctx, "", "", 0, false)
 }
 
-// PopTaskForWorker 从队列获取任务（考虑Worker负载）
-// 优先从Worker专属队列获取，然后从公共队列获取
-//
-// 分桶路径下，公共队列弹出改为跨 5 个分桶按 P4 -> P0 顺序原子弹出（urgent 先）
-// 专属队列保持单 ZSet（任务量小，分桶收益有限）
+// PopTaskForWorker is the legacy worker-name-only acquisition wrapper. New
+// workers must use PopTaskForWorkerInstance so recovery can fence process
+// generations with per-instance heartbeats.
 func (s *Scheduler) PopTaskForWorker(ctx context.Context, workerName string) (*TaskInfo, error) {
 	startTime := time.Now()
 	defer func() {
 		s.metrics.RecordPop(time.Since(startTime))
 	}()
-
-	workerQueueKey := s.GetWorkerQueueKey(workerName)
-
-	// 分桶路径：专属队列 + 跨分桶公共队列
-	if s.enablePriorityBucket.Load() {
-		return s.popForWorkerFromBuckets(ctx, workerQueueKey, workerName)
-	}
-
-	// 默认路径：专属队列 + 单 ZSet 公共队列
-	// 修复 C-01：使用 atomicPopForWorkerScript，持久化 taskInfo/execution，保证恢复链路完整
-	result, err := atomicPopForWorkerScript.Run(ctx, s.rdb,
-		[]string{workerQueueKey, s.queueKey, s.processingKey},
-		"cscan:task:info:",
-		"cscan:task:execution:",
-		workerName,
-		86400,
-		time.Now().Format(time.RFC3339),
-	).Result()
-	if err == redis.Nil || result == nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, fmt.Errorf("unexpected script result type: %T", result)
-	}
-	// 修复 C6：死信哨兵在 Lua 外 PUBLISH
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.publishDeadLetterAlert(ctx, strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-
-	return &task, nil
+	return s.popLeasedTask(ctx, workerName, "", 0, true)
 }
 
-// popForWorkerFromBuckets 分桶路径下的 Worker 弹出
-// 先查专属队列，再跨 5 个公共分桶按 p4 Urgent -> p0 Background 顺序原子弹出
-// 同时原子加入 processing 集合，持久化 taskInfo/execution（对齐 checktasklogic.go 的 atomicPopTaskScript）
-var popForWorkerFromBucketsScript = redis.NewScript(`
-	local workerQueueKey = KEYS[1]
-	local bucketPrefix = KEYS[2]
-	local processingKey = KEYS[3]
-	local taskInfoPrefix = ARGV[1]
-	local execPrefix = ARGV[2]
-	local workerName = ARGV[3]
-	local ttlSeconds = tonumber(ARGV[4])
-	local nowStr = ARGV[5]
-
-	-- 1. 先从 Worker 专属队列弹出
-	local sourceKey = workerQueueKey
-	local result = redis.call('ZPOPMIN', sourceKey, 1)
-
-	-- 2. 若为空，跨 5 个公共分桶按 p4 -> p0 顺序弹出（urgent 先，background 后）
-	if #result == 0 then
-		for i = 4, 0, -1 do
-			sourceKey = bucketPrefix .. ":p" .. i
-			result = redis.call('ZPOPMIN', sourceKey, 1)
-			if #result > 0 then
-				break
-			end
-		end
-	end
-
-	if #result == 0 then
-		return nil
-	end
-
-	local member = result[1]
-	local score = result[2]
-	-- 使用 pcall 保护 cjson.decode，避免无效 member 抛错中断脚本
-	local data = nil
-	pcall(function() data = cjson.decode(member) end)
-	if not data or not data.taskId then
-		-- 修复 C2：decode 失败时移入死信队列，避免放回后形成无限循环阻塞整个队列
-		-- 修复 C6：PUBLISH 移出 Lua,由调用方在 Lua 返回后执行,避免阻塞 pop 事务
-		redis.call('ZADD', 'cscan:task:deadletter', score, member)
-		return '__DL__' .. member
-	end
-	local taskId = data.taskId
-
-	redis.call('SADD', processingKey, taskId)
-	-- 持久化 taskInfo（24h TTL）
-	redis.call('SET', taskInfoPrefix .. taskId, member, 'EX', ttlSeconds)
-	-- 记录 execution info
-	local execInfo = cjson.encode({
-		taskId = taskId,
-		workerName = workerName,
-		startTime = nowStr,
-		lastUpdate = nowStr,
-		phase = "started",
-		progress = 0,
-		retryCount = 0,
-		maxRetries = 3
-	})
-	redis.call('SET', execPrefix .. taskId, execInfo, 'EX', 3600)
-
-	return member
-`)
-
-// popForWorkerFromBuckets 执行分桶路径的 Worker 弹出
-func (s *Scheduler) popForWorkerFromBuckets(ctx context.Context, workerQueueKey, workerName string) (*TaskInfo, error) {
-	result, err := popForWorkerFromBucketsScript.Run(ctx, s.rdb,
-		[]string{workerQueueKey, s.queueKey, s.processingKey},
-		"cscan:task:info:",
-		"cscan:task:execution:",
-		workerName,
-		86400,
-		time.Now().Format(time.RFC3339),
-	).Result()
-	if err == redis.Nil || result == nil {
-		return nil, nil
+// PopTaskForWorkerInstance acquires a leased-task-v1 execution for one
+// immutable worker process instance.
+func (s *Scheduler) PopTaskForWorkerInstance(ctx context.Context, workerName, instanceID string) (*TaskInfo, error) {
+	if strings.TrimSpace(workerName) == "" {
+		return nil, fmt.Errorf("worker name is required")
 	}
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(instanceID) == "" {
+		return nil, fmt.Errorf("worker instance id is required")
 	}
+	startTime := time.Now()
+	defer func() {
+		s.metrics.RecordPop(time.Since(startTime))
+	}()
+	return s.popLeasedTask(ctx, workerName, instanceID, TaskProtocolV1, true)
+}
 
-	taskData, ok := result.(string)
-	if !ok {
-		return nil, fmt.Errorf("unexpected script result type: %T", result)
-	}
-
-	// 修复 C6：死信哨兵在 Lua 外 PUBLISH
-	if strings.HasPrefix(taskData, "__DL__") {
-		s.publishDeadLetterAlert(ctx, strings.TrimPrefix(taskData, "__DL__"))
-		return nil, nil
-	}
-
-	var task TaskInfo
-	if err := json.Unmarshal([]byte(taskData), &task); err != nil {
-		return nil, err
-	}
-	return &task, nil
+// popForWorkerFromBuckets is retained for package compatibility and delegates
+// to the legacy acquisition primitive.
+func (s *Scheduler) popForWorkerFromBuckets(ctx context.Context, _ string, workerName string) (*TaskInfo, error) {
+	return s.popLeasedTask(ctx, workerName, "", 0, true)
 }
 
 // PeekTask 查看队列中优先级最高的任务（不移除）
@@ -1020,11 +552,6 @@ func (s *Scheduler) getTasksByPriorityFromBuckets(ctx context.Context, minPriori
 	}
 
 	return tasks, nil
-}
-
-// CompleteTask 完成任务
-func (s *Scheduler) CompleteTask(ctx context.Context, taskId string) error {
-	return s.rdb.SRem(ctx, s.processingKey, taskId).Err()
 }
 
 // GetQueueLength 获取队列长度
@@ -1403,188 +930,4 @@ func (s *Scheduler) SelectWorkerForTask(ctx context.Context) (*WorkerLoad, error
 // RemoveWorkerLoad 移除Worker负载信息（Worker下线时调用）
 func (s *Scheduler) RemoveWorkerLoad(ctx context.Context, workerName string) error {
 	return s.rdb.HDel(ctx, s.workerLoadKey, workerName).Err()
-}
-
-// ==================== Task Cancellation ====================
-
-// CancelSignal 取消信号
-type CancelSignal struct {
-	TaskId    string    `json:"taskId"`
-	Action    string    `json:"action"` // STOP, PAUSE
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// GetCancelSignalKey 获取控制信号的Redis Key
-// 统一使用 cscan:task:ctrl:{taskId} 命名，与 API 端 tasklogic.go 和 taskhandler.go 保持一致
-// 修复历史问题：原为 cscan:task:cancel:{taskId}，导致 HTTP 轮询回退读不到信号
-func (s *Scheduler) GetCancelSignalKey(taskId string) string {
-	return fmt.Sprintf("cscan:task:ctrl:%s", taskId)
-}
-
-// SendCancelSignal 发送取消信号
-func (s *Scheduler) SendCancelSignal(ctx context.Context, taskId, action string) error {
-	signal := &CancelSignal{
-		TaskId:    taskId,
-		Action:    action,
-		Timestamp: time.Now(),
-	}
-	data, err := json.Marshal(signal)
-	if err != nil {
-		return err
-	}
-
-	key := s.GetCancelSignalKey(taskId)
-	// 设置信号，5分钟后自动过期
-	return s.rdb.Set(ctx, key, data, 5*time.Minute).Err()
-}
-
-// CheckCancelSignal 检查取消信号
-func (s *Scheduler) CheckCancelSignal(ctx context.Context, taskId string) (*CancelSignal, error) {
-	key := s.GetCancelSignalKey(taskId)
-	data, err := s.rdb.Get(ctx, key).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var signal CancelSignal
-	if err := json.Unmarshal([]byte(data), &signal); err != nil {
-		return nil, err
-	}
-	return &signal, nil
-}
-
-// ClearCancelSignal 清除取消信号
-func (s *Scheduler) ClearCancelSignal(ctx context.Context, taskId string) error {
-	key := s.GetCancelSignalKey(taskId)
-	return s.rdb.Del(ctx, key).Err()
-}
-
-// PublishCancelSignal 通过Pub/Sub发布取消信号（实时通知）
-func (s *Scheduler) PublishCancelSignal(ctx context.Context, taskId, action string) error {
-	signal := &CancelSignal{
-		TaskId:    taskId,
-		Action:    action,
-		Timestamp: time.Now(),
-	}
-	data, err := json.Marshal(signal)
-	if err != nil {
-		return err
-	}
-
-	// 同时设置Key（用于轮询检查）和发布消息（用于实时通知）
-	// Key 用 cscan:task:ctrl:{taskId}；Pub/Sub 频道发布到 cscan:task:ctrl:{taskId}，
-	// worker 与 wshandler.go 均通过 PSubscribe "cscan:task:ctrl:*" 接收，按频道名解析 taskId
-	key := s.GetCancelSignalKey(taskId)
-	if err := s.rdb.Set(ctx, key, data, 5*time.Minute).Err(); err != nil {
-		return err
-	}
-
-	// 发布到带 taskId 的控制信号频道，确保 PSubscribe("cscan:task:ctrl:*") 能匹配
-	return s.rdb.Publish(ctx, "cscan:task:ctrl:"+taskId, data).Err()
-}
-
-// SubscribeCancelSignals 订阅取消信号
-// 修复 C-07：原实现存在两个问题
-//  1. msg.Payload 在 pubsub.Channel() 关闭时 msg 为 nil，导致 nil pointer panic
-//  2. 连接断开后无重连逻辑，订阅永久失效，取消信号无法送达
-//
-// 现增加 nil 检查、订阅状态校验和指数退避重连
-func (s *Scheduler) SubscribeCancelSignals(ctx context.Context) <-chan *CancelSignal {
-	ch := make(chan *CancelSignal, 100)
-
-	go func() {
-		defer close(ch)
-
-		const maxBackoff = 30 * time.Second
-		backoff := time.Second
-
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-
-			pubsub := s.rdb.PSubscribe(ctx, "cscan:task:ctrl:*")
-			// sync.Once 保证 pubsub.Close() 只被调用一次,避免:
-			//   - msg==nil 分支与 ctx.Done() 分支并发 Close
-			//   - 我们主动 Close 与 go-redis 内部读循环退出时二次 Close
-			var closeOnce sync.Once
-			closePubsub := func() { closeOnce.Do(func() { pubsub.Close() }) }
-			msgCh := pubsub.Channel()
-
-			// 等待订阅确认，避免在订阅未就绪时消费
-			_, err := pubsub.Receive(ctx)
-			if err != nil {
-				logx.Errorf("[Scheduler] Subscribe cscan:task:ctrl failed: %v, retry in %v", err, backoff)
-				closePubsub()
-				s.sleepCtx(ctx, backoff)
-				backoff = s.nextBackoff(backoff, maxBackoff)
-				continue
-			}
-			// 订阅成功，重置退避
-			backoff = time.Second
-			logx.Infof("[Scheduler] Subscribed to cscan:task:ctrl:* (pattern)")
-
-		consumeLoop:
-			for {
-				select {
-				case <-ctx.Done():
-					closePubsub()
-					return
-				case msg, ok := <-msgCh:
-					// 通道关闭（连接断开/错误）：退出内层循环，外层重连
-					if !ok || msg == nil {
-						logx.Errorf("[Scheduler] Pub/Sub channel closed, reconnecting")
-						closePubsub()
-						break consumeLoop
-					}
-					var signal CancelSignal
-					if err := json.Unmarshal([]byte(msg.Payload), &signal); err != nil {
-						// 回退：API 发布的是明文字符串（"STOP"/"PAUSE"），非 JSON
-						taskId := strings.TrimPrefix(msg.Channel, "cscan:task:ctrl:")
-						signal = CancelSignal{
-							TaskId: taskId,
-							Action: msg.Payload,
-						}
-						upper := strings.ToUpper(msg.Payload)
-						if upper != "STOP" && upper != "PAUSE" {
-							logx.Errorf("[Scheduler] Unrecognized task control payload: channel=%s, payload=%s", msg.Channel, msg.Payload)
-						}
-					}
-					select {
-					case ch <- &signal:
-					default:
-						// 通道满了，丢弃旧信号
-					}
-				}
-			}
-
-			// 断线后短暂退避再重连
-			s.sleepCtx(ctx, backoff)
-			backoff = s.nextBackoff(backoff, maxBackoff)
-		}
-	}()
-
-	return ch
-}
-
-// sleepCtx 可被 ctx 取消的 sleep
-func (s *Scheduler) sleepCtx(ctx context.Context, d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
-	}
-}
-
-// nextBackoff 指数退避，上限为 max
-func (s *Scheduler) nextBackoff(cur, max time.Duration) time.Duration {
-	next := cur * 2
-	if next > max {
-		next = max
-	}
-	return next
 }

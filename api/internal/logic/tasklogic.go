@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -585,18 +586,11 @@ func NewMainTaskDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ma
 func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq) (resp *types.BaseResp, err error) {
 	taskModel := l.svcCtx.GetMainTaskModel()
 
-	// 先获取任务信息，发送停止信号
+	// Notify only the exact active generation; plaintext task-ID controls are
+	// intentionally unsupported by leased-task-v1 workers.
 	task, err := taskModel.FindById(l.ctx, req.Id)
 	if err == nil && task != nil {
-		// 发送停止信号到Redis（Set用于HTTP轮询，Publish用于WebSocket推送）
-		ctrlKey := "cscan:task:ctrl:" + task.TaskId
-		l.svcCtx.RedisClient.Set(l.ctx, ctrlKey, "STOP", 24*time.Hour)
-		l.svcCtx.RedisClient.Publish(l.ctx, ctrlKey, "STOP")
-		l.Logger.Infof("Sent stop signal before delete: taskId=%s", task.TaskId)
-
-		// 清理任务相关的Redis数据
-		taskInfoKey := "cscan:task:info:" + task.TaskId
-		l.svcCtx.RedisClient.Del(l.ctx, taskInfoKey)
+		PublishDeleteStopSoon(l.ctx, l.svcCtx, task)
 	}
 
 	// 先删除父文档，成功后再级联删除子数据（避免父删除失败时子数据已丢失）
@@ -606,13 +600,13 @@ func (l *MainTaskDeleteLogic) MainTaskDelete(req *types.MainTaskDeleteReq) (resp
 	}
 
 	if task != nil {
-		l.cascadeDeleteTaskData(task.TaskId)
+		l.cascadeDeleteTaskData(task.TaskId, task.Id.Hex())
 	}
 	return &types.BaseResp{Code: 0, Msg: "删除成功"}, nil
 }
 
 // cascadeDeleteTaskData 级联删除任务相关数据（资产、漏洞、扫描结果、目录扫描、JSFinder、执行任务）
-func (l *MainTaskDeleteLogic) cascadeDeleteTaskData(taskId string) {
+func (l *MainTaskDeleteLogic) cascadeDeleteTaskData(taskId, mainTaskId string) {
 	assetModel := l.svcCtx.GetAssetModel()
 	vulModel := l.svcCtx.GetVulModel()
 	scanResultModel := model.NewScanResultModel(l.svcCtx.MongoDB)
@@ -641,8 +635,8 @@ func (l *MainTaskDeleteLogic) cascadeDeleteTaskData(taskId string) {
 	}
 	// 按 main_task_id 删除执行任务
 	executorModel := l.svcCtx.GetExecutorTaskModel()
-	if _, err := executorModel.DeleteByMainTaskId(l.ctx, taskId); err != nil {
-		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, taskId=%s, error=%v", taskId, err)
+	if _, err := executorModel.DeleteByMainTaskId(l.ctx, mainTaskId, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, mainTaskId=%s, error=%v", mainTaskId, err)
 	}
 	l.Logger.Infof("cascadeDeleteTaskData: all related data deleted for taskId=%s", taskId)
 }
@@ -663,7 +657,7 @@ func NewMainTaskBatchDeleteLogic(ctx context.Context, svcCtx *svc.ServiceContext
 }
 
 // cascadeDeleteTaskData 级联删除任务相关数据（资产、漏洞、扫描结果、执行任务）
-func (l *MainTaskBatchDeleteLogic) cascadeDeleteTaskData(taskId string) {
+func (l *MainTaskBatchDeleteLogic) cascadeDeleteTaskData(taskId, mainTaskId string) {
 	assetModel := l.svcCtx.GetAssetModel()
 	vulModel := l.svcCtx.GetVulModel()
 	scanResultModel := model.NewScanResultModel(l.svcCtx.MongoDB)
@@ -682,8 +676,8 @@ func (l *MainTaskBatchDeleteLogic) cascadeDeleteTaskData(taskId string) {
 	}
 
 	executorModel := l.svcCtx.GetExecutorTaskModel()
-	if _, err := executorModel.DeleteByMainTaskId(l.ctx, taskId); err != nil {
-		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, taskId=%s, error=%v", taskId, err)
+	if _, err := executorModel.DeleteByMainTaskId(l.ctx, mainTaskId, taskId); err != nil {
+		l.Logger.Errorf("cascadeDeleteTaskData: delete executor_task failed, mainTaskId=%s, error=%v", mainTaskId, err)
 	}
 	l.Logger.Infof("cascadeDeleteTaskData: all related data deleted for taskId=%s", taskId)
 }
@@ -695,22 +689,14 @@ func (l *MainTaskBatchDeleteLogic) MainTaskBatchDelete(req *types.MainTaskBatchD
 
 	taskModel := l.svcCtx.GetMainTaskModel()
 
-	// 先获取所有任务信息，发送停止信号并级联删除相关数据
+	// Resolve and publish only exact-generation controls before deleting data.
 	for _, id := range req.Ids {
 		task, err := taskModel.FindById(l.ctx, id)
 		if err == nil && task != nil {
-			// 发送停止信号到Redis（Set用于HTTP轮询，Publish用于WebSocket推送）
-			ctrlKey := "cscan:task:ctrl:" + task.TaskId
-			l.svcCtx.RedisClient.Set(l.ctx, ctrlKey, "STOP", 24*time.Hour)
-			l.svcCtx.RedisClient.Publish(l.ctx, ctrlKey, "STOP")
-			l.Logger.Infof("Sent stop signal before batch delete: taskId=%s", task.TaskId)
-
-			// 清理任务相关的Redis数据
-			taskInfoKey := "cscan:task:info:" + task.TaskId
-			l.svcCtx.RedisClient.Del(l.ctx, taskInfoKey)
+			PublishDeleteStopSoon(l.ctx, l.svcCtx, task)
 
 			// 级联删除任务相关数据
-			l.cascadeDeleteTaskData(task.TaskId)
+			l.cascadeDeleteTaskData(task.TaskId, task.Id.Hex())
 		}
 	}
 
@@ -914,41 +900,41 @@ func (l *MainTaskPauseLogic) MainTaskPause(req *types.MainTaskControlReq) (resp 
 	l.Logger.Infof("MainTaskPause: found task, id=%s, taskId=%s, status='%s', progress=%d, subTaskCount=%d, subTaskDone=%d",
 		req.Id, task.TaskId, task.Status, task.Progress, task.SubTaskCount, task.SubTaskDone)
 
-	// 只有已完成（SUCCESS）或已失败（FAILURE）的任务不能暂停
-	// 其他状态（CREATED、PENDING、STARTED、PAUSED 或空）都允许暂停
-	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
-		return &types.BaseResp{Code: 400, Msg: "已完成或已失败的任务不能暂停，当前状态: " + task.Status}, nil
+	// Pause requires an already-claimed durable dispatch. A CREATED task has no
+	// immutable executor manifest or generation to resume, so it must be started
+	// rather than transitioned into an unrecoverable PAUSED state.
+	if task.Status == model.TaskStatusCreated || task.Status == "" || task.DispatchGeneration == "" {
+		return &types.BaseResp{Code: 400, Msg: "任务尚未启动，无法暂停"}, nil
 	}
-
-	// 如果已经是暂停状态，提示用户
-	if task.Status == model.TaskStatusPaused {
-		return &types.BaseResp{Code: 400, Msg: "任务已经处于暂停状态"}, nil
-	}
-
-	// 发送暂停信号到Redis（Set用于HTTP轮询，Publish用于WebSocket推送）
-	// 1. 发送给主任务
-	ctrlKey := "cscan:task:ctrl:" + task.TaskId
-	l.svcCtx.RedisClient.Set(l.ctx, ctrlKey, "PAUSE", 24*time.Hour)
-	l.svcCtx.RedisClient.Publish(l.ctx, ctrlKey, "PAUSE")
-
-	// 2. 如果有子任务，也发送给所有子任务（按 BatchCount 分发）
-	if task.BatchCount > 1 {
-		for i := 0; i < task.BatchCount; i++ {
-			subTaskId := fmt.Sprintf("%s-%d", task.TaskId, i)
-			subCtrlKey := "cscan:task:ctrl:" + subTaskId
-			l.svcCtx.RedisClient.Set(l.ctx, subCtrlKey, "PAUSE", 24*time.Hour)
-			l.svcCtx.RedisClient.Publish(l.ctx, subCtrlKey, "PAUSE")
+	canPause := task.Status == model.TaskStatusPending || task.Status == model.TaskStatusStarted
+	if !canPause {
+		if task.Status == model.TaskStatusPaused {
+			return &types.BaseResp{Code: 400, Msg: "任务已经处于暂停状态"}, nil
 		}
-		l.Logger.Infof("Task pause signal sent to %d sub-tasks", task.BatchCount)
+		return &types.BaseResp{Code: 400, Msg: "当前状态不可暂停: " + task.Status}, nil
 	}
 
-	// 更新状态为PAUSED
-	update := bson.M{"status": model.TaskStatusPaused}
-	if err := taskModel.Update(l.ctx, req.Id, update); err != nil {
+	intent := model.TaskControlIntent{
+		IntentID:           uuid.NewString(),
+		Action:             model.TaskControlActionPause,
+		DispatchGeneration: task.DispatchGeneration,
+		CreatedTime:        time.Now().UTC().Truncate(time.Millisecond),
+	}
+	committed, err := taskModel.CommitControlIntent(l.ctx, req.Id, task.DispatchGeneration,
+		[]string{task.Status}, model.TaskStatusPaused, intent, nil)
+	if err != nil {
+		if errors.Is(err, model.ErrTaskDispatchConflict) {
+			return &types.BaseResp{Code: 409, Msg: "任务状态或执行批次已发生变化"}, nil
+		}
 		return &types.BaseResp{Code: 500, Msg: "更新任务状态失败"}, nil
 	}
 
-	l.Logger.Infof("Task paused: taskId=%s, subTaskCount=%d", task.TaskId, task.SubTaskCount)
+	// Redis is a latency optimization after the durable CAS. A bounded,
+	// request-independent pass publishes every exact canonical child and the
+	// periodic reconciler repairs any failure.
+	ReconcileControlIntentSoon(l.svcCtx, committed.Id.Hex())
+	l.Logger.Infof("Task pause intent persisted: taskId=%s generation=%s intentId=%s",
+		committed.TaskId, committed.DispatchGeneration, committed.ControlIntent.IntentID)
 	return &types.BaseResp{Code: 0, Msg: "任务已暂停"}, nil
 }
 
@@ -977,124 +963,104 @@ func (l *MainTaskResumeLogic) MainTaskResume(req *types.MainTaskControlReq) (res
 		return &types.BaseResp{Code: 500, Msg: "查询任务失败"}, nil
 	}
 	if task == nil {
-		l.Logger.Errorf("MainTaskResume: task not found, id=%s", req.Id)
 		return &types.BaseResp{Code: 400, Msg: "任务不存在"}, nil
 	}
-
-	l.Logger.Infof("MainTaskResume: found task, taskId=%s, status=%s, subTaskCount=%d, subTaskDone=%d",
-		task.TaskId, task.Status, task.SubTaskCount, task.SubTaskDone)
-
-	// 检查状态：只有PAUSED状态可以继续
 	if task.Status != model.TaskStatusPaused {
 		return &types.BaseResp{Code: 400, Msg: "只有已暂停的任务可以继续"}, nil
 	}
-
-	// 清除暂停信号
-	ctrlKey := "cscan:task:ctrl:" + task.TaskId
-	l.svcCtx.RedisClient.Del(l.ctx, ctrlKey)
-
-	// 如果有子任务，也清除所有子任务的暂停信号（按 BatchCount 分发）
-	if task.BatchCount > 1 {
-		for i := 0; i < task.BatchCount; i++ {
-			subTaskId := fmt.Sprintf("%s-%d", task.TaskId, i)
-			subCtrlKey := "cscan:task:ctrl:" + subTaskId
-			l.svcCtx.RedisClient.Del(l.ctx, subCtrlKey)
+	previousGeneration := task.DispatchGeneration
+	var pauseIntent *model.TaskControlIntent
+	if task.ControlIntent != nil {
+		intentCopy := *task.ControlIntent
+		if !intentCopy.IsValid() || intentCopy.Action != model.TaskControlActionPause ||
+			intentCopy.DispatchGeneration != previousGeneration {
+			return &types.BaseResp{Code: 409, Msg: "暂停控制意图已发生变化"}, nil
 		}
-		l.Logger.Infof("MainTaskResume: cleared pause signals for %d sub-tasks", task.BatchCount)
+		pauseIntent = &intentCopy
 	}
 
-	// 更新状态为STARTED
-	update := bson.M{"status": model.TaskStatusPending}
-	if err := taskModel.Update(l.ctx, req.Id, update); err != nil {
-		l.Logger.Errorf("MainTaskResume: failed to update status, error=%v", err)
-		return &types.BaseResp{Code: 500, Msg: "更新任务状态失败"}, nil
+	// Preparation is read-only. Any model/cache/config failure leaves PAUSED and
+	// all control keys intact, so the same request can be retried safely.
+	schedTasks, subTaskIDs, err := prepareResumeTaskPlan(l.ctx, l.svcCtx, task)
+	if err != nil {
+		l.Logger.Errorf("MainTaskResume: prepare resume plan failed: %v", err)
+		return &types.BaseResp{Code: 409, Msg: "无法安全恢复任务: " + err.Error()}, nil
 	}
-	l.Logger.Infof("MainTaskResume: status updated to STARTED")
-
-	// 解析任务配置
-	var taskConfig map[string]interface{}
-	if err := json.Unmarshal([]byte(task.Config), &taskConfig); err != nil {
-		l.Logger.Errorf("MainTaskResume: failed to parse config, error=%v", err)
-		return &types.BaseResp{Code: 500, Msg: "解析任务配置失败"}, nil
+	quiescent, err := l.svcCtx.Scheduler.IsTaskBatchQuiescent(l.ctx, subTaskIDs)
+	if err != nil {
+		l.Logger.Errorf("MainTaskResume: quiescence check failed: %v", err)
+		return &types.BaseResp{Code: 500, Msg: "检查暂停提交状态失败"}, nil
 	}
-
-	// 从配置中获取指定的 Worker 列表
-	var workers []string
-	if w, ok := taskConfig["workers"].([]interface{}); ok {
-		for _, v := range w {
-			if s, ok := v.(string); ok {
-				workers = append(workers, s)
-			}
-		}
+	if !quiescent {
+		return &types.BaseResp{Code: 409, Msg: "任务仍在提交暂停快照，请稍后重试"}, nil
 	}
-
-	// 获取目标
-	target, _ := taskConfig["target"].(string)
-
-	// 从配置中获取批次大小，使用 TaskBuilder 自动计算逻辑
-	builder := common.NewTaskBuilder(l.ctx, l.svcCtx)
-	batchSize := builder.CalculateOptimalBatchSize(target, taskConfig)
-	l.Logger.Infof("MainTaskResume: auto-calculated batchSize=%d for task %s", batchSize, task.TaskId)
-
-	// 使用目标拆分器判断是否需要拆分
-	splitter := scheduler.NewTargetSplitter(batchSize)
-	batches := splitter.SplitTargets(target)
-
-	// 如果任务有保存的状态，注入到配置中
-	if task.TaskState != "" {
-		taskConfig["resumeState"] = task.TaskState
-	}
-
-	// 重新推送所有子任务到队列（从已完成的位置继续）
-	// 注意：这里简化处理，重新推送所有批次，Worker 会根据 resumeState 跳过已完成的阶段
-	var schedTasks []*scheduler.TaskInfo
-	for i, batch := range batches {
-		// 复制配置并替换目标
-		subConfig := make(map[string]interface{})
-		for k, v := range taskConfig {
-			subConfig[k] = v
-		}
-		subConfig["target"] = batch
-		subConfig["subTaskIndex"] = i
-		subConfig["subTaskTotal"] = len(batches)
-		subConfigBytes, _ := json.Marshal(subConfig)
-
-		// 生成子任务ID
-		subTaskId := task.TaskId
-		if len(batches) > 1 {
-			subTaskId = task.TaskId + "-" + strconv.Itoa(i)
-		}
-
-		schedTask := &scheduler.TaskInfo{
-			TaskId:     subTaskId,
-			MainTaskId: task.Id.Hex(),
-			TaskName:   task.Name,
-			Config:     string(subConfigBytes),
-			Priority:   1,
-			Workers:    workers,
-		}
-		schedTasks = append(schedTasks, schedTask)
-
-		// 保存子任务信息到 Redis（多批次时）
-		if len(batches) > 1 {
-			subTaskInfoKey := "cscan:task:info:" + subTaskId
-			subTaskInfoData, _ := json.Marshal(map[string]interface{}{
-				"mainTaskId":   task.Id.Hex(),
-				"parentTaskId": task.TaskId,
-				"subTaskCount": task.SubTaskCount,
+	pauseControls := make([]scheduler.TaskControlEnvelope, 0, len(subTaskIDs))
+	if pauseIntent != nil {
+		for _, childID := range subTaskIDs {
+			pauseControls = append(pauseControls, scheduler.TaskControlEnvelope{
+				IntentID:           pauseIntent.IntentID,
+				MainTaskID:         task.Id.Hex(),
+				TaskID:             childID,
+				Action:             scheduler.TaskControlActionPause,
+				DispatchGeneration: previousGeneration,
+				Timestamp:          pauseIntent.CreatedTime,
 			})
-			l.svcCtx.RedisClient.Set(l.ctx, subTaskInfoKey, subTaskInfoData, 24*time.Hour)
 		}
 	}
-
-	// 批量推送任务
-	l.Logger.Infof("MainTaskResume: pushing %d sub-tasks to queue", len(schedTasks))
-	if err := l.svcCtx.Scheduler.PushTaskBatch(l.ctx, schedTasks); err != nil {
-		l.Logger.Errorf("MainTaskResume: push tasks to queue failed: %v", err)
-		return &types.BaseResp{Code: 500, Msg: "任务入队失败"}, nil
+	dispatchGeneration := uuid.NewString()
+	dispatchTime := model.NextDispatchCreateTime(task.DispatchCreateTime)
+	stableCreateTime := dispatchTime.Local().Format("2006-01-02 15:04:05")
+	definitions := make([]model.ExecutorTask, 0, len(schedTasks))
+	for _, schedTask := range schedTasks {
+		schedTask.CreateTime = stableCreateTime
+		schedTask.DispatchGeneration = dispatchGeneration
+		definitions = append(definitions, model.ExecutorTask{
+			TaskId:             schedTask.TaskId,
+			MainTaskId:         task.Id.Hex(),
+			TaskName:           schedTask.TaskName,
+			Config:             schedTask.Config,
+			Priority:           schedTask.Priority,
+			DispatchGeneration: dispatchGeneration,
+		})
+	}
+	if err := model.NewTaskDispatchManifestModel(l.svcCtx.MongoDB).Persist(
+		l.ctx, task.Id.Hex(), dispatchGeneration, model.DispatchIntentResume, dispatchTime, definitions,
+	); err != nil {
+		l.Logger.Errorf("MainTaskResume: persist immutable resume manifest failed: %v", err)
+		return &types.BaseResp{Code: 500, Msg: "持久化恢复批次失败"}, nil
 	}
 
-	l.Logger.Infof("MainTaskResume: task resumed successfully, taskId=%s, subTasks=%d", task.TaskId, len(schedTasks))
+	// The new generation and retirement of the exact old PAUSE intent share one
+	// Mongo CAS. An absent intent is allowed only when reconciliation already
+	// acknowledged it; a racing STOP changes the status/intent and wins.
+	claimed, err := taskModel.ClaimResumeDispatch(l.ctx, task.Id.Hex(), previousGeneration,
+		dispatchGeneration, pauseIntent, bson.M{"dispatch_create_time": dispatchTime})
+	if err != nil {
+		l.Logger.Errorf("MainTaskResume: durable dispatch claim failed: %v", err)
+		return &types.BaseResp{Code: 409, Msg: "任务状态已发生变化"}, nil
+	}
+	task.DispatchGeneration = claimed.DispatchGeneration
+	task.DispatchIntent = claimed.DispatchIntent
+	task.DispatchCreateTime = claimed.DispatchCreateTime
+	task.Status = claimed.Status
+
+	if err := l.svcCtx.GetExecutorTaskModel().ActivateDispatchDefinitions(
+		l.ctx, task.Id.Hex(), dispatchGeneration, dispatchTime, definitions,
+	); err != nil {
+		l.Logger.Errorf("MainTaskResume: activate exact resume dispatch failed: %v", err)
+		return &types.BaseResp{Code: 500, Msg: "恢复批次已认领，后台将安全重试"}, nil
+	}
+
+	markerKey := fmt.Sprintf("cscan:task:resume:%s:%s", task.Id.Hex(), dispatchGeneration)
+	if err := l.svcCtx.Scheduler.ResumeTaskBatch(l.ctx, schedTasks, pauseControls, markerKey); err != nil {
+		l.Logger.Errorf("MainTaskResume: atomic queue commit failed: %v", err)
+		if errors.Is(err, scheduler.ErrTaskAlreadyProcessing) || errors.Is(err, scheduler.ErrTaskOperationBusy) {
+			return &types.BaseResp{Code: 409, Msg: "任务仍有活动执行或提交操作；后台将安全重试"}, nil
+		}
+		return &types.BaseResp{Code: 500, Msg: "任务发布结果不确定，后台将安全重试"}, nil
+	}
+
+	l.Logger.Infof("MainTaskResume: task resumed successfully, taskId=%s, generation=%s, subTasks=%d", task.TaskId, dispatchGeneration, len(schedTasks))
 	return &types.BaseResp{Code: 0, Msg: "任务已继续"}, nil
 }
 
@@ -1134,35 +1100,44 @@ func (l *MainTaskStopLogic) MainTaskStop(req *types.MainTaskControlReq) (resp *t
 		return &types.BaseResp{Code: 400, Msg: "当前状态不可停止"}, nil
 	}
 
-	// 发送停止信号到Redis（Set用于HTTP轮询，Publish用于WebSocket推送）
-	// 1. 发送给主任务
-	ctrlKey := "cscan:task:ctrl:" + task.TaskId
-	l.svcCtx.RedisClient.Set(l.ctx, ctrlKey, "STOP", 24*time.Hour)
-	l.svcCtx.RedisClient.Publish(l.ctx, ctrlKey, "STOP")
-
-	// 2. 如果有子任务，也发送给所有子任务（按 BatchCount 分发）
-	if task.BatchCount > 1 {
-		for i := 0; i < task.BatchCount; i++ {
-			subTaskId := fmt.Sprintf("%s-%d", task.TaskId, i)
-			subCtrlKey := "cscan:task:ctrl:" + subTaskId
-			l.svcCtx.RedisClient.Set(l.ctx, subCtrlKey, "STOP", 24*time.Hour)
-			l.svcCtx.RedisClient.Publish(l.ctx, subCtrlKey, "STOP")
-		}
-		l.Logger.Infof("Task stop signal sent to %d sub-tasks", task.BatchCount)
-	}
-
-	// 更新状态为STOPPED，设置结束时间
-	now := time.Now()
-	update := bson.M{
-		"status":   model.TaskStatusStopped,
+	now := time.Now().UTC()
+	fields := bson.M{
 		"result":   "任务已手动停止",
 		"end_time": now,
 	}
-	if err := taskModel.Update(l.ctx, req.Id, update); err != nil {
+	// A never-dispatched task has no workers or generation to notify, so status
+	// alone is the durable result and no control intent is created.
+	if task.Status == model.TaskStatusCreated || task.Status == "" || task.DispatchGeneration == "" {
+		transitioned, err := taskModel.TransitionDispatchStatus(l.ctx, req.Id, task.DispatchGeneration,
+			[]string{task.Status}, model.TaskStatusStopped, fields)
+		if err != nil {
+			return &types.BaseResp{Code: 500, Msg: "更新任务状态失败"}, nil
+		}
+		if !transitioned {
+			return &types.BaseResp{Code: 409, Msg: "任务状态或执行批次已发生变化"}, nil
+		}
+		return &types.BaseResp{Code: 0, Msg: "任务已停止"}, nil
+	}
+
+	intent := model.TaskControlIntent{
+		IntentID:           uuid.NewString(),
+		Action:             model.TaskControlActionStop,
+		DispatchGeneration: task.DispatchGeneration,
+		CreatedTime:        now.Truncate(time.Millisecond),
+	}
+	committed, err := taskModel.CommitControlIntent(l.ctx, req.Id, task.DispatchGeneration,
+		[]string{model.TaskStatusPending, model.TaskStatusStarted, model.TaskStatusPaused},
+		model.TaskStatusStopped, intent, fields)
+	if err != nil {
+		if errors.Is(err, model.ErrTaskDispatchConflict) {
+			return &types.BaseResp{Code: 409, Msg: "任务状态或执行批次已发生变化"}, nil
+		}
 		return &types.BaseResp{Code: 500, Msg: "更新任务状态失败"}, nil
 	}
 
-	l.Logger.Infof("Task stopped: taskId=%s", task.TaskId)
+	ReconcileControlIntentSoon(l.svcCtx, committed.Id.Hex())
+	l.Logger.Infof("Task stop intent persisted: taskId=%s generation=%s intentId=%s",
+		committed.TaskId, committed.DispatchGeneration, committed.ControlIntent.IntentID)
 	return &types.BaseResp{Code: 0, Msg: "任务已停止"}, nil
 }
 
